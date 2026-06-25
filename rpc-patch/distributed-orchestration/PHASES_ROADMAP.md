@@ -85,3 +85,18 @@ Workers become more autonomous. They can participate in workflow decisions, pote
 ---
 
 *This roadmap is intentionally high-level. Details will be filled in as we complete Phase 1 architecture.*
+
+---
+
+## Future Concepts / Phase 3+ Ideas
+
+### Hot Layer Replication
+
+Once we have profiling data about which layers/experts are frequently used ("hot"), we can explore duplicating those layers across multiple workers.
+
+**Potential Benefits:**
+
+- **Failure resilience:** If a worker fails, work can be redeployed to another worker that holds a copy of the required hot layers.
+- **Performance boost:** Hot layers can be treated similarly to extra execution units. The orchestrator could route tokens to any available replica, increasing parallelism on the critical path.
+
+This concept would require coordinated KV cache handling and more advanced scheduling. It is considered a Phase 3+ idea.

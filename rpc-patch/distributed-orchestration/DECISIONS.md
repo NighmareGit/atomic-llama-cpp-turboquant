@@ -47,4 +47,19 @@ struct WorkflowMetadata {
 };
 ```
 
-This provides good tracing, basic error propagation, and cheap future extensibility while staying lightweight for Phase 1.
+### Topic 4: Routing Table & Discovery
+- **Decision**: Use a capabilities bitfield in the HELLO response.
+- Introduce a new command (`RPC_CMD_SEND_ROUTING_TABLE`) instead of extending HELLO.
+- Send the Routing Table lazily — only when the server needs to coordinate multiple workers.
+- Include status + error_code support in the routing response.
+- Routing Table entries contain at minimum: worker_id, layer_start, layer_end.
+
+### Topic 5: Orchestration Model (Phase 1)
+- **Decision**: Server remains the central orchestrator in Phase 1.
+- Use simple in-memory tracking (e.g. map of workflow_id + step_id) to follow in-flight work.
+- When a work package returns:
+  - If status != 0 (error) → Fail the generation (simple and safe model for Phase 1).
+  - If there is no further `destination_worker_id` → Treat it as the final result.
+  - Otherwise → Forward the package to the next worker based on metadata.
+- Include basic `step_id` tracking/validation from the beginning.
+- Prioritize a reliable sequential flow in the first implementation. Design the system so out-of-order / more advanced async behavior can be added later.
