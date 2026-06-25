@@ -1,0 +1,34 @@
+=== qwen72b-b4-v6 ===
+model=/mnt/models/Qwen3-72B-Instruct.IQ4_XS.gguf
+rpc=127.0.0.1:50051 ngl=30 split=layer ts=12,88 ctk=q4_0 ctv=q4_0
+load_timeout=600s gen_timeout=600s
+2026-06-25T15:46:44Z
+container=6ec4e71033aa99592e97831f549eddaf0b939e69ffd11f83686415368df83e23
+poll 0s: START-1782402404
+poll 10s: > Hi
+container exited at 20s
+exit_code=0
+FAIL: no generation throughput line
+FAIL: RPC abort
+EXIT-134-1782402419
+> Hi
+/app/a2/ggml/src/ggml-rpc/ggml-rpc.cpp:677: Remote RPC server crashed or returned malformed response
+/app/bin/libggml-base.so.0(+0x1c8fb)[0x743a5a9fc8fb]
+/app/bin/libggml-base.so.0(ggml_print_backtrace+0x21f)[0x743a5a9fcd7f]
+/app/bin/libggml-base.so.0(ggml_abort+0x152)[0x743a5a9fcf52]
+/app/bin/libggml-rpc.so.0(+0xd579)[0x743a5b117579]
+/app/bin/libggml-base.so.0(ggml_backend_tensor_copy+0x156)[0x743a5aa15ce6]
+/app/bin/libggml-base.so.0(ggml_backend_sched_graph_compute_async+0x1ee)[0x743a5aa1ad9e]
+/app/bin/libllama.so.0(_ZN13llama_context13graph_computeEP11ggml_cgraphb+0xa1)[0x743a5a6dc7e1]
+/app/bin/libllama.so.0(_ZN13llama_context14process_ubatchERK12llama_ubatch14llm_graph_typeP22llama_memory_context_iR11ggml_status+0x11b)[0x743a5a6df6fb]
+/app/bin/libllama.so.0(_ZN13llama_context6decodeERK11llama_batch+0x38a)[0x743a5a6e64ca]
+/app/bin/libllama.so.0(llama_decode+0x10)[0x743a5a6e7cf0]
+/app/bin/libllama-cli-impl.so(_ZN19server_context_impl12update_slotsEv+0xa7d)[0x743a5b6cfa7d]
+/app/bin/libllama-cli-impl.so(_ZN12server_queue10start_loopEl+0x221)[0x743a5b6737a1]
+/lib/x86_64-linux-gnu/libstdc++.so.6(+0xdc253)[0x743a5b462253]
+/lib/x86_64-linux-gnu/libc.so.6(+0x94ac3)[0x743a5b1d1ac3]
+/lib/x86_64-linux-gnu/libc.so.6(clone+0x44)[0x743a5b262a04]
+timeout: the monitored command dumped core
+bash: line 10:     8 Aborted                 timeout "$PATHB_GEN_TIMEOUT" stdbuf -oL -eL /app/bin/llama-cli --rpc "$PATHB_RPC" -m "$PATHB_MODEL" -p "$PATHB_PROMPT" -n "$PATHB_N_PREDICT" -ngl "$PATHB_NGL" -ctk "$PATHB_CTK" -ctv "$PATHB_CTV" -sm "$PATHB_SPLIT_MODE" $TS_ARGS $CTX_ARGS --single-turn --simple-io --no-conversation $PATHB_EXTRA_ARGS
+EXIT-134-1782402419
+RESULT=FAIL

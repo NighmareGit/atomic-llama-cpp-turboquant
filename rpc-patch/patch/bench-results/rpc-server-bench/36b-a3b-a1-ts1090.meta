@@ -1,0 +1,17 @@
+=== 36b-a3b-a1-ts1090 ===
+variant=a1 proto=A1 (v4.1.0 image)
+model=/mnt/models/Qwen3.6-35B-A3B-APEX-I-Quality.gguf ctx=4096 ctk=q4_0 ctv=q4_0 ngl=99 ts=10,90 ncmoe=8 np=1 no_warmup=1 load_timeout=600s
+server_extra=--no-warmup -np 1 --n-cpu-moe 8
+2026-06-25T12:51:19Z
+starting rpc-server (CUDA device 0)...
+a2a98d02696ea1416f1e5b328813d7d3853e3752b636be00048c2b2c58d87d2f
+starting llama-server (ROCm HIP device 0)...
+08cdb2a8a91f664d9766fb24a2d87af6af991a8a8560900b1e26b0338a64fd04
+polling server health (max 600s)...
+server ready at 15s
+benchmark 3 runs...
+run=1 P=59.4 G=56.8 preview=''
+run=2 P=198.6 G=56.5 preview=''
+run=3 P=193.2 G=57.9 preview=''
+RESULT=PASS
+results in /tmp/rpc-server-bench/36b-a3b-a1-ts1090.result

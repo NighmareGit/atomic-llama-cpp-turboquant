@@ -1,0 +1,15 @@
+=== long-gen-512-b4-server ===
+variant=pathb proto=Path B (v4.2.2 workspace)
+model=/mnt/models/Qwen3.5-4B-Q4_K_M.gguf ctx=4096 ctk=q4_0 ctv=q4_0 ngl=99 ts=1,1 ncmoe=none np=1 no_warmup=1 load_timeout=180s
+server_extra=--no-warmup -np 1
+2026-06-25T15:46:18Z
+starting rpc-server (CUDA device 0)...
+35ddd9c6b5de74d87e2fc922a50cf08b6351bb906c2bd5878228ffb50ed59c39
+starting llama-server (ROCm HIP device 0)...
+f1e2f10611c19bd0fc75ab6f53d1b9d4aeea13f0c0a2fc050bd9c52f081e7e29
+polling server health (max 180s)...
+server ready at 5s
+benchmark 1 runs...
+run=1 P=113.3 G=83.6 preview=''
+RESULT=PASS
+results in /home/hunter/projects/atomic-llama-cpp-patch/patch/bench-results/rpc-server-bench/long-gen-512-b4-server.result

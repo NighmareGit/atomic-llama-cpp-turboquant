@@ -1,0 +1,17 @@
+=== 35b-a3b-pathb-ts1090 ===
+variant=pathb proto=Path B (v4.2.2 workspace)
+model=/mnt/models/Qwen3.5-35B-A3B.i1-Q4_K_M.gguf ctx=4096 ctk=q4_0 ctv=q4_0 ngl=99 ts=10,90 ncmoe=8 np=1 no_warmup=1 load_timeout=600s
+server_extra=--no-warmup -np 1 --n-cpu-moe 8
+2026-06-25T12:51:01Z
+starting rpc-server (CUDA device 0)...
+fade5d3129d9fc7e78b57b10f5d37e828cb0fbd503f07b9c221bf0752c4ca1b5
+starting llama-server (ROCm HIP device 0)...
+6de3becc0fbdcafcd6b77206d17fd89c50044e0f04edafa76c643e441ee10849
+polling server health (max 600s)...
+server ready at 10s
+benchmark 3 runs...
+run=1 P=54.4 G=65.0 preview=''
+run=2 P=92.8 G=65.6 preview=''
+run=3 P=97.9 G=62.0 preview=''
+RESULT=PASS
+results in /tmp/rpc-server-bench/35b-a3b-pathb-ts1090.result

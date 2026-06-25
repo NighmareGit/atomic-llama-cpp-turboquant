@@ -1,0 +1,33 @@
+=== b4-sched-debug-v ===
+model=/mnt/models/Qwen3.5-4B-Q4_K_M.gguf
+rpc=127.0.0.1:50051 ngl=99 split=layer ts=auto ctk=q4_0 ctv=q4_0
+load_timeout=180s gen_timeout=300s
+2026-06-25T15:42:17Z
+container=f2559decf180cd86d7e17e22383c1fdb21ca68da14d9fc6d7754cf377aa74677
+poll 0s: START-1782402137
+container exited at 10s
+exit_code=0
+FAIL: RPC abort
+[ Prompt: 117.0 t/s | Generation: 109.8 t/s ]
+EXIT-0-1782402141
+0.04.047.196 I slot print_timing: id  0 | task 0 |    graphs reused =         62
+0.04.047.215 D res          send: sending result for task id = 0
+0.04.047.216 D res          send: task id = 0 pushed to result queue
+0.04.047.217 I slot      release: id  0 | task 0 | stop processing: n_tokens = 83, truncated = 0
+0.04.047.217 D slot        reset: id  0 | task 0 | 
+0.04.047.219 D srv  update_slots: run slots completed
+0.04.047.219 D que    start_loop: waiting for new tasks
+0.04.047.220 D que    start_loop: processing new tasks
+0.04.047.221 D que    start_loop: processing task, id = 65
+0.04.047.221 D que    start_loop: update slots
+0.04.047.222 I srv  update_slots: all slots are idle
+0.04.047.222 D que    start_loop: waiting for new tasks
+ likely0.04.047.263 D Parsed message: {"role":"assistant","content":"","reasoning_content":"Thinking Process:\n\n1.  **Analyze the Request:**\n    *   Input: \"The quick brown fox jumps over the lazy dog.\"\n    *   Context: This is a pangram (a sentence containing every letter of the alphabet at least once).\n    *   Intent: The user is likely"}
+0.04.047.271 D res  remove_waiti: remove task 0 from waiting list. current waiting = 1 (before remove)
+0.04.047.273 D srv          stop: all tasks already finished, no need to cancel
+[ Prompt: 117.0 t/s | Generation: 109.8 t/s ]
+Exiting...
+0.04.047.326 D que    start_loop: processing new tasks
+0.04.047.328 D que    start_loop: terminate
+EXIT-0-1782402141
+RESULT=FAIL

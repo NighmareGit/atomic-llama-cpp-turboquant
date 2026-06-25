@@ -21,6 +21,9 @@ struct socket_t {
     void get_caps(uint8_t * local_caps);
     void update_caps(const uint8_t * remote_caps);
 
+    // Set after HELLO: server supports RPC_CMD_SET_TENSOR_BATCH when minor >= 1
+    bool server_supports_batch = false;
+
     static socket_ptr create_server(const char * host, int port);
     static socket_ptr connect(const char * host, int port);
 

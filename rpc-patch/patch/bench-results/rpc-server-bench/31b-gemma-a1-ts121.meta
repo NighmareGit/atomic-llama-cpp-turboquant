@@ -1,0 +1,40 @@
+=== 31b-gemma-a1-ts121 ===
+variant=a1 proto=A1 (v4.1.0 image)
+model=/mnt/models/gemma-4-31B-it-Q4_K_M.gguf ctx=4096 ctk=q8_0 ctv=turbo3 ngl=35 ts=12,1 load_timeout=600s
+2026-06-25T11:21:34Z
+starting rpc-server (CUDA device 0)...
+a5632654e7744d182824c654f56d093ffc18d83760b4cd6bb7b418327482d2a1
+starting llama-server (ROCm HIP device 0)...
+809855685a1d9b822a097e23c5f868c9ef1bcb4f6410fad23ac36d0fe10a8bc5
+polling server health (max 600s)...
+ERROR: llama-server container exited during load
+print_info: n_embd_head_v_swa     = 256
+print_info: n_rot_swa             = 256
+print_info: n_ctx_orig_yarn       = 262144
+print_info: rope_yarn_log_mul     = 0.0000
+print_info: rope_finetuned        = unknown
+print_info: model type            = ?B
+print_info: model params          = 30.70 B
+print_info: general.name          = Gemma-4-31B-It
+print_info: vocab type            = BPE
+print_info: n_vocab               = 262144
+print_info: n_merges              = 514906
+print_info: BOS token             = 2 '<bos>'
+print_info: EOS token             = 106 '<turn|>'
+print_info: UNK token             = 3 '<unk>'
+print_info: PAD token             = 0 '<pad>'
+print_info: MASK token            = 4 '<mask>'
+print_info: LF token              = 107 '
+'
+print_info: EOG token             = 1 '<eos>'
+print_info: EOG token             = 50 '<|tool_response>'
+print_info: EOG token             = 106 '<turn|>'
+print_info: max token length      = 93
+load_tensors: loading model tensors, this can take a while... (mmap = true, direct_io = false)
+alloc_tensor_range: failed to allocate RPC0[127.0.0.1:50051] buffer of size 9604412544
+llama_model_load: error loading model: unable to allocate RPC0[127.0.0.1:50051] buffer
+llama_model_load_from_file_impl: failed to load model
+common_init_from_params: failed to load model '/mnt/models/gemma-4-31B-it-Q4_K_M.gguf'
+srv    load_model: failed to load model, '/mnt/models/gemma-4-31B-it-Q4_K_M.gguf'
+srv    operator(): operator(): cleaning up before exit...
+main: exiting due to model loading error

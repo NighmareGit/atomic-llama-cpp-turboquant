@@ -1,0 +1,20 @@
+=== 27b-ts1090-fitoff ===
+model=/mnt/models/Qwen3.5-27B-Q5_K_M.gguf ctx=4096 ctk=q4_0 ctv=q4_0 ts=10,90 ngl=99 fit=off fitt=none ncmoe=none
+extra= variant=a1
+starting rpc-server...
+b44c4f25393309fa6d62fc01be090e5c462669bfd8a56f64e3323580c6a00e1f
+starting llama-server: /app/llama.cpp/build/bin/llama-server --rpc 127.0.0.1:50051 -m /mnt/models/Qwen3.5-27B-Q5_K_M.gguf -c 4096 -ctk q4_0 -ctv q4_0     -sm layer -ts 10,90 -ngl 99 --fit off --host 127.0.0.1 --port 8081 --no-warmup -np 1 
+90a138c0279ba887515765624b12b3415ed26fb3a2def4fc2e550a0758563610
+ready at 36s
+--- device_info ---
+system_info: n_threads = 8 (n_threads_batch = 8) / 28 | ROCm : NO_VMM = 1 | PEER_MAX_BATCH_SIZE = 128 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 | 
+llama_model_load_from_file_impl: using device RPC0 (127.0.0.1:50051) (unknown id) - 7687 MiB free
+llama_model_load_from_file_impl: using device ROCm0 (Radeon RX 7900 XTX) (0000:03:00.0) - 24524 MiB free
+load_tensors:   CPU_Mapped model buffer size =   833.59 MiB
+load_tensors:        ROCm0 model buffer size = 16220.93 MiB
+load_tensors: RPC0[127.0.0.1:50051] model buffer size =  1960.44 MiB
+llama_kv_cache:      ROCm0 KV buffer size =    67.50 MiB
+llama_kv_cache: RPC0[127.0.0.1:50051] KV buffer size =     4.50 MiB
+llama_memory_recurrent:      ROCm0 RS buffer size =   130.92 MiB
+llama_memory_recurrent: RPC0[127.0.0.1:50051] RS buffer size =    18.70 MiB
+--- fit ---

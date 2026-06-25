@@ -1,0 +1,23 @@
+=== qwen72b-b4-v2 ===
+model=/mnt/models/Qwen3-72B-Instruct.IQ4_XS.gguf
+rpc=127.0.0.1:50051 ngl=50 split=layer ts=10,1 ctk=q4_0 ctv=q4_0
+load_timeout=600s gen_timeout=600s
+2026-06-25T15:44:10Z
+container=c33cbd9accea7e1e0d36c6891d4920d7aa87ddafcf2bdd5e509ce3aa9c4c9d45
+poll 0s: START-1782402250
+container exited at 10s
+exit_code=0
+FAIL: no generation throughput line
+EXIT-1-1782402254
+START-1782402250
+--no-conversation is not supported by llama-cli
+please use llama-completion instead
+0.02.770.753 E alloc_tensor_range: failed to allocate RPC0[127.0.0.1:50051] buffer of size 21859323648
+Loading model... 
+Failed to load the model
+0.03.363.810 E llama_model_load: error loading model: unable to allocate RPC0[127.0.0.1:50051] buffer
+0.03.363.857 E llama_model_load_from_file_impl: failed to load model
+0.03.363.859 E common_init_from_params: failed to load model '/mnt/models/Qwen3-72B-Instruct.IQ4_XS.gguf'
+0.03.363.866 E srv    load_model: failed to load model, '/mnt/models/Qwen3-72B-Instruct.IQ4_XS.gguf'
+EXIT-1-1782402254
+RESULT=FAIL

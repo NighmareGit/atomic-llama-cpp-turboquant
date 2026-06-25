@@ -156,3 +156,11 @@ a.out.*
 
 AGENTS.local.md
 .pi/SYSTEM.md
+
+# rpc-patch bench artifacts: track meta/result/summary; skip bulky runtime logs
+rpc-patch/patch/bench-results/**/*.raw
+rpc-patch/patch/bench-results/**/*.gpu
+rpc-patch/patch/bench-results/**/*-server.log
+rpc-patch/patch/bench-results/**/*-rpc.log
+rpc-patch/patch/bench-results/**/*-curl.err
+rpc-patch/patch/bench-results/archive/

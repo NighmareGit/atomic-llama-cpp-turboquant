@@ -1,0 +1,16 @@
+=== 31b-gemma-a1-ts201 ===
+variant=a1 proto=A1 (v4.1.0 image)
+model=/mnt/models/gemma-4-31B-it-Q4_K_M.gguf ctx=4096 ctk=q4_0 ctv=q4_0 ngl=25 ts=20,1 load_timeout=600s
+2026-06-25T11:21:57Z
+starting rpc-server (CUDA device 0)...
+02dfc51fcee804b1ffbe951287eb5dd127bb630f51aa644a5fff27eab2e38f38
+starting llama-server (ROCm HIP device 0)...
+38e8c5326ed33acba94cd02a30c4710e80dad5e2ebff7987ce859254b666d28e
+polling server health (max 600s)...
+server ready at 16s
+benchmark 3 runs...
+run=1 P=17.9 G=5.9 preview=''
+run=2 P=18.0 G=5.9 preview=''
+run=3 P=18.2 G=5.9 preview=''
+RESULT=PASS
+results in /tmp/rpc-server-bench/31b-gemma-a1-ts201.result

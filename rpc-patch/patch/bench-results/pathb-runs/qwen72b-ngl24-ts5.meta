@@ -1,0 +1,33 @@
+=== qwen72b-ngl24-ts5 ===
+model=/mnt/models/Qwen3-72B-Instruct.IQ4_XS.gguf
+rpc=127.0.0.1:50051 ngl=24 split=layer ts=5,95 ctk=q4_0 ctv=q4_0
+load_timeout=600s gen_timeout=600s
+2026-06-25T15:49:50Z
+container=8836a54eb49f1529515b317ba1ff4f8d6f382b6241ccda6bb7d961d7acd88f17
+poll 0s: START-1782402590
+inference done at 10s
+exit_code=0
+FAIL: bogus generation metric
+[ Prompt: 4.0 t/s | Generation: 1000000.0 t/s ]
+EXIT-0-1782402601
+    
+    
+    
+                                    
+    
+                                    
+    
+build      : b0-unknown
+model      : Qwen3-72B-Instruct.IQ4_XS.gguf
+modalities : text
+available commands:
+  /exit or Ctrl+C     stop or exit
+  /regen              regenerate the last response
+  /clear              clear the chat history
+  /read <file>        add a text file
+  /glob <pattern>     add text files using globbing pattern
+> Hi
+[ Prompt: 4.0 t/s | Generation: 1000000.0 t/s ]
+Exiting...
+EXIT-0-1782402601
+RESULT=FAIL

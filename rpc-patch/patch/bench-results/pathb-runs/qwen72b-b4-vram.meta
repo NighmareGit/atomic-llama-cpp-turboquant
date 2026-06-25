@@ -1,0 +1,15 @@
+=== qwen72b-b4-vram ===
+variant=pathb proto=Path B (v4.2.2 workspace)
+model=/mnt/models/Qwen3-72B-Instruct.IQ4_XS.gguf ctx=1024 ctk=q4_0 ctv=q4_0 ngl=0 ts=10,90 ncmoe=none np=1 no_warmup=1 load_timeout=600s
+server_extra=--no-warmup -np 1 --fit on --fit-target 512,1024 --reasoning off
+2026-06-25T15:52:44Z
+starting rpc-server (CUDA device 0)...
+497d2ae3faf4a8c7ed8597888c938bc7e8c7716c21d26e494d274e678af53c50
+starting llama-server (ROCm HIP device 0)...
+22a3f9d6919e6b19bb211067414de3432af930f0c39935021fd81a7433273290
+polling server health (max 600s)...
+server ready at 5s
+benchmark 1 runs...
+run=1 P=3.6 G=2.0 preview='##  10   1)  1.  1 1  0 1'
+RESULT=PASS
+results in /home/hunter/projects/atomic-llama-cpp-patch/patch/bench-results/pathb-runs/qwen72b-b4-vram.result
