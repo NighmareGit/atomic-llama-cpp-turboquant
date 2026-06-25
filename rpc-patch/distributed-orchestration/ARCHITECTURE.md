@@ -25,20 +25,32 @@ This is the most important structure. It travels with every work package.
 
 ```cpp
 struct WorkflowMetadata {
-    uint64_t workflow_id;           // Unique ID for this generation/session
-    uint64_t step_id;               // Current step in the workflow
-    uint32_t next_hop;              // Worker ID or endpoint index for next stage
-    uint32_t layer_start;
-    uint32_t layer_end;
-    uint32_t sequence_id;           // Which sequence this belongs to
-    uint32_t token_position;        // Position in the sequence
-    // Future: flags for KV update, activation size hint, etc.
+    // === Identification ===
+    uint64_t workflow_id;           // Unique identifier for this generation/session
+    uint64_t step_id;               // Monotonic step counter in the workflow
+
+    // === Sequence Information ===
+    uint32_t sequence_id;           // Which sequence this work belongs to
+    uint32_t token_position;        // Current token position in the sequence
+
+    // === Routing ===
+    uint32_t source_worker_id;      // Worker that processed this package before
+    uint32_t destination_worker_id; // Worker that should process this next
+
+    // === Layer Range ===
+    uint32_t layer_start;           // Start of the layer range this package targets
+    uint32_t layer_end;             // End of the layer range this package targets
+
+    // === Status & Control ===
+    uint32_t status;                // 0 = Success, >0 = Error/Warning
+    uint32_t error_code;            // Specific error identifier
+    uint32_t flags;                 // Bitfield for optional/future behavior
 };
 ```
 
 **Design Notes:**
 - Must be small and efficient to serialize.
-- `next_hop` can be a worker ID that the routing table resolves.
+- `destination_worker_id` is resolved via the routing table.
 - Designed to support both server-orchestrated and future worker-driven forwarding.
 
 ### 2.2 Work Package
@@ -80,7 +92,7 @@ struct RoutingTable {
 ```
 
 **Usage in Phase 1:**
-- Server uses this table to resolve `next_hop` → actual destination.
+- Server uses this table to resolve `destination_worker_id` → actual destination.
 - In later phases, workers can also use this table for direct forwarding.
 
 ---
@@ -102,7 +114,7 @@ struct RoutingTable {
 3. For each token:
    - Server creates `WorkPackage` with initial metadata.
    - Server sends package to first worker asynchronously.
-   - Worker processes its layers → updates `step_id` + `next_hop`.
+   - Worker processes its layers → updates `step_id` + `destination_worker_id`.
    - Worker returns result to server (or forwards in future phases).
 4. Server collects completed packages and continues.
 
