@@ -64,6 +64,12 @@ struct WorkflowMetadata {
 - Include basic step_id tracking/validation from the beginning.
 - Prioritize a reliable sequential flow in the first implementation. Design the system so out-of-order / more advanced async behavior can be added later.
 
+### Topic 6: Worker Local Queuing & Execution
+- **Decision**: Workers have a small local FIFO queue in Phase 1.
+- The server actively sends new work to idle workers when possible (in-order-async pipelining).
+- Workers remain single-threaded (one sequence at a time) in Phase 1.
+- The design should allow future expansion to concurrent sequence processing on a worker.
+
 ### Topic 7: Failure Modes & Recovery
 - **Decision**: Use a **fail-fast** approach with good diagnostics ("graceful death") in Phase 1.
 - Any significant error results in failing the generation cleanly.
