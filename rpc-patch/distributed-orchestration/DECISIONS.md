@@ -63,3 +63,10 @@ struct WorkflowMetadata {
   - Otherwise -> Forward the package to the next worker based on metadata.
 - Include basic step_id tracking/validation from the beginning.
 - Prioritize a reliable sequential flow in the first implementation. Design the system so out-of-order / more advanced async behavior can be added later.
+
+### Topic 7: Failure Modes & Recovery
+- **Decision**: Use a **fail-fast** approach with good diagnostics ("graceful death") in Phase 1.
+- Any significant error results in failing the generation cleanly.
+- **No retry logic** in Phase 1 (revisit in Phase 2).
+- Add (or at least blueprint) **explicit timeout detection** for unresponsive workers.
+- Define a small initial set of meaningful `error_code` values to improve debugging and tracing.
