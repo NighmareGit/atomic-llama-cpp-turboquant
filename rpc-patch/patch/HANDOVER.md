@@ -5,6 +5,18 @@
 **Patch collateral:** `rpc-patch/` (this handover, docs, scripts, bench-results)  
 **Status:** Path B (v4.2.2) implemented, benchmarked, documented. Ready for review / merge planning.
 
+### Sync baseline (2026-06-25)
+
+`Path-B-Event-Support` and `Path-C-Distributed-Orchestration` already branch from `sync/upstream-2026-06-19`. No rebase or cherry-pick onto sync is required at this time.
+
+| Branch | Tip | Commits above sync |
+|--------|-----|-------------------|
+| `sync/upstream-2026-06-19` | `dd27e6d34` | - |
+| `Path-B-Event-Support` | `b4ac1555b` | 3 (CI fix + RPC + patch collateral) |
+| `Path-C-Distributed-Orchestration` | `2f3cea5f1` | 13 (Path B + `rpc-patch/distributed-orchestration/` docs) |
+
+When `sync/upstream-*` advances, use fresh `feature/path-*-on-sync-DATE` branches and cherry-pick Path B/C commits onto the new sync tip.
+
 ---
 
 ## 1. Executive summary
