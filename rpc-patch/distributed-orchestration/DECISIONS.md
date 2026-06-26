@@ -76,3 +76,9 @@ struct WorkflowMetadata {
 - **No retry logic** in Phase 1 (revisit in Phase 2).
 - Add (or at least blueprint) **explicit timeout detection** for unresponsive workers.
 - Define a small initial set of meaningful `error_code` values to improve debugging and tracing.
+
+### Topic 9: Data Movement & Activation Strategy
+- **Decision**: Keep data movement **minimal** in Phase 1 - send only necessary output activations + metadata between hops.
+- Low priority on heavy optimization during Phase 1.
+- Add a **placeholder/hook** for future compression (no actual implementation in Phase 1).
+- The server acts as the central data hub (workers send results back to the server, which then forwards them).
