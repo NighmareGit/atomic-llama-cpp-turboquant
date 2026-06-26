@@ -18,7 +18,12 @@ REPO_ROOT="$(cd "${RPC_PATCH_ROOT}/.." && pwd)"
 TQ="${LLAMA_TURBOQUANT_ROOT:-${REPO_ROOT}}"
 
 PATHB_RPC_CONTAINER="${PATHB_RPC_CONTAINER:-pathb-rpc}"
-PATHB_BIN_CUDA="${PATHB_BIN_CUDA:-${TQ}/build-cuda-b-bin/bin}"
+_sync_bin="${TQ}/build-cuda-b-bin-sync/bin"
+if [[ -z "${PATHB_BIN_CUDA:-}" ]] && [[ -x "${_sync_bin}/rpc-server" ]]; then
+    PATHB_BIN_CUDA="${_sync_bin}"
+else
+    PATHB_BIN_CUDA="${PATHB_BIN_CUDA:-${TQ}/build-cuda-b-bin/bin}"
+fi
 PATHB_CUDA_IMAGE="${PATHB_CUDA_IMAGE:-llama-rpc-cuda-a2}"
 PATHB_RPC_HOST="${PATHB_RPC_HOST:-0.0.0.0}"
 PATHB_RPC_PORT="${PATHB_RPC_PORT:-50051}"

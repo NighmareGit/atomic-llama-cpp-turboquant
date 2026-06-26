@@ -89,6 +89,7 @@ struct set_tensor_batch_t {
 };
 
 static thread_local set_tensor_batch_t tls_set_batch;
+static thread_local socket_ptr tls_set_batch_sock;
 
 #define RPC_SET_TENSOR_BATCH_MAX_SIZE (64 * 1024 * 1024)
 
@@ -122,6 +123,7 @@ static void flush_set_tensor_batch(const socket_ptr & sock) {
     sock->send_data(msg.data(), msg.size());
     tls_set_batch.buf.clear();
     tls_set_batch.count = 0;
+    tls_set_batch_sock.reset();
 }
 
 // Path A2: pipelined GET_TENSOR (defer receive only)
@@ -620,6 +622,12 @@ static void ggml_backend_rpc_buffer_set_tensor(ggml_backend_buffer_t buffer, ggm
         }
     }
     if (sock->server_supports_batch) {
+        if (tls_set_batch.count > 0 && tls_set_batch_sock && tls_set_batch_sock != sock) {
+            flush_set_tensor_batch(tls_set_batch_sock);
+        }
+        if (tls_set_batch.count == 0) {
+            tls_set_batch_sock = sock;
+        }
         set_tensor_batch_append(rpc_tensor, offset, data, size);
         if (tls_set_batch.buf.size() >= RPC_SET_TENSOR_BATCH_MAX_SIZE) {
             flush_set_tensor_batch(sock);
