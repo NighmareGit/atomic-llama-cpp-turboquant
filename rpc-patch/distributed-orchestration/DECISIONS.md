@@ -90,3 +90,20 @@ struct WorkflowMetadata {
 - Low priority on heavy optimization during Phase 1.
 - Add a **placeholder/hook** for future compression (no actual implementation in Phase 1).
 - The server acts as the central data hub (workers send results back to the server, which then forwards them).
+
+---
+
+## Phase 1 Final Scope Summary (Refined)
+
+After completing the architecture decisions, the following is the agreed scope for **Phase 1**:
+
+- Server remains the central orchestrator with simple in-memory tracking.
+- Workers have a small local FIFO queue and can manage basic local queuing.
+- Server actively sends work to idle workers (in-order-async pipelining).
+- Workers remain relatively passive regarding routing decisions (server still controls where work goes next).
+- Support both Strict and Relaxed token ordering (default = Relaxed).
+- Fail-fast error handling with good diagnostics and timeout detection.
+- Strong emphasis on **backward compatibility** with older clients, workers, and protocol versions.
+- More advanced worker autonomy and controlled worker-to-worker forwarding are deferred to Phase 2.
+
+This scope balances meaningful performance/utilization improvements with implementation simplicity and debuggability for Phase 1.
