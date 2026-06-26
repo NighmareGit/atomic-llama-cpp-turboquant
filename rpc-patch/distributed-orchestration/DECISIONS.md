@@ -77,6 +77,14 @@ struct WorkflowMetadata {
 - Add (or at least blueprint) **explicit timeout detection** for unresponsive workers.
 - Define a small initial set of meaningful `error_code` values to improve debugging and tracing.
 
+### Topic 8: Token Ordering & Consistency
+- **Decision**: Server is responsible for final token ordering.
+- Support both Strict and Relaxed ordering modes via argument/switch.
+- Default = Relaxed (for better performance). Strict mode available as failsafe/debug.
+- Server buffers and reorders results before returning tokens.
+- Include basic "next expected step" tracking on the server side.
+- Timeout on missing/late package -> Fail the generation (default).
+
 ### Topic 9: Data Movement & Activation Strategy
 - **Decision**: Keep data movement **minimal** in Phase 1 - send only necessary output activations + metadata between hops.
 - Low priority on heavy optimization during Phase 1.
