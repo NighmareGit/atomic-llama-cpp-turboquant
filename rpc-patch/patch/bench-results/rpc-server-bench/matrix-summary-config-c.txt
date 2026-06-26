@@ -1,0 +1,12 @@
+=== RPC path matrix config=config-c ts=15,85 2026-06-26T08:14:48Z ===
+--- config-c-27b-qwen-pathb-ts12880 08:14:48Z config=config-c ---
+PASS 27b pathb avg_G=27.4 runs=[27.5, 27.3, 27.4]
+--- config-c-31b-gemma-pathb-ts12880 08:15:28Z config=config-c ---
+PASS 31b pathb avg_G=26.2 runs=[26.3, 26.2, 26.2]
+--- config-c-35b-a3b-pathb-ts12880 08:16:03Z config=config-c ---
+PASS 35b pathb avg_G=54.2 runs=[53.8, 54.8, 54.1]
+--- config-c-36b-a3b-pathb-ts12880 08:16:30Z config=config-c ---
+PASS 36b pathb avg_G=51.6 runs=[52.4, 53.1, 49.2]
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  451G  243G  66% /
+=== done config=config-c ===

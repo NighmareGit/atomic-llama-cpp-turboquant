@@ -1,0 +1,58 @@
+=== coder-next-apex-p1-fitoff-ngl60-ncmoe12 ===
+variant=pathb proto=Path B (v4.2.2 workspace) rpc_mode=multi endpoint=192.168.8.176:50051,127.0.0.1:50051
+model=/mnt/models/Qwen3-Coder-Next-APEX-I-Quality.gguf ctx=8192 ctk=q4_0 ctv=q4_0 ngl=60 ts=35,15,50 ncmoe=12 np=1 no_warmup=1 load_timeout=1800s
+server_extra=--no-warmup -np 1 --n-cpu-moe 12 --fit off --verbose -lv 4 --reasoning off
+prompts_file=default-fox verbose_lv=4 extract_vram=1
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  452G  241G  66% /
+2026-06-26T10:31:26Z
+using remote/multi RPC at 192.168.8.176:50051,127.0.0.1:50051 (no local bench-rpc)
+Connection to 192.168.8.176 50051 port [tcp/*] succeeded!
+RPC reachable: 192.168.8.176:50051
+Connection to 127.0.0.1 50051 port [tcp/*] succeeded!
+RPC reachable: 127.0.0.1:50051
+starting llama-server (ROCm HIP device 0)...
+0a0f75fd8690445265005ab172eb102828180d679582b9e16633b536b3a3f78b
+polling server health (max 1800s)...
+poll 30s: still loading...
+0.02.844.046 I load_tensors: RPC0[192.168.8.176:50051] model buffer size =  5481.81 MiB
+..............................................................................................
+0.01.776.734 I load_tensors: loading model tensors, this can take a while... (mmap = true, direct_io = false)
+0.02.844.033 I load_tensors: offloading output layer to GPU
+0.02.844.036 I load_tensors: offloading 47 repeating layers to GPU
+0.02.844.036 I load_tensors: offloaded 49/49 layers to GPU
+0.02.844.043 I load_tensors:   CPU_Mapped model buffer size = 13843.18 MiB
+0.02.844.044 I load_tensors:        ROCm0 model buffer size = 23175.40 MiB
+0.02.844.045 I load_tensors: RPC0[127.0.0.1:50051] model buffer size =  5937.53 MiB
+0.02.844.046 I load_tensors: RPC0[192.168.8.176:50051] model buffer size =  5481.81 MiB
+ERROR: llama-server container exited during load
+0.44.911.321 I llama_context: n_ctx_seq     = 8192
+0.44.911.322 I llama_context: n_batch       = 2048
+0.44.911.322 I llama_context: n_ubatch      = 512
+0.44.911.322 I llama_context: causal_attn   = 1
+0.44.911.323 I llama_context: flash_attn    = auto
+0.44.911.323 I llama_context: kv_unified    = false
+0.44.911.325 I llama_context: freq_base     = 5000000.0
+0.44.911.326 I llama_context: freq_scale    = 1
+0.44.911.326 I llama_context: n_rs_seq      = 0
+0.44.911.326 I llama_context: n_outputs_max = 1
+0.44.911.327 W llama_context: n_ctx_seq (8192) < n_ctx_train (262144) -- the full capacity of the model will not be utilized
+0.46.044.396 I llama_context:  ROCm_Host  output buffer size =     0.58 MiB
+0.46.045.092 I llama_kv_cache:      ROCm0 KV buffer size =    27.00 MiB
+0.46.159.383 I llama_kv_cache: RPC0[127.0.0.1:50051] KV buffer size =     9.00 MiB
+0.46.175.059 I llama_kv_cache: RPC0[192.168.8.176:50051] KV buffer size =    18.00 MiB
+0.46.175.605 I llama_kv_cache: size =   54.00 MiB (  8192 cells,  12 layers,  1/1 seqs), K (q4_0):   27.00 MiB, V (q4_0):   27.00 MiB
+0.46.175.607 I llama_kv_cache: attn_rot_k = 0, n_embd_head_k_all = 256
+0.46.175.607 I llama_kv_cache: attn_rot_v = 0, n_embd_head_k_all = 256
+0.46.176.427 I llama_memory_recurrent:      ROCm0 RS buffer size =    35.59 MiB
+0.46.176.608 I llama_memory_recurrent: RPC0[127.0.0.1:50051] RS buffer size =    10.47 MiB
+0.46.177.836 I llama_memory_recurrent: RPC0[192.168.8.176:50051] RS buffer size =    29.31 MiB
+0.46.177.840 I llama_memory_recurrent: size =   75.38 MiB (     1 cells,  48 layers,  1 seqs  0 rs_seq), R (f32):    3.38 MiB, S (f32):   72.00 MiB
+0.46.177.851 I sched_reserve: reserving ...
+0.46.182.008 I sched_reserve: Flash Attention was auto, set to enabled
+0.46.182.010 I sched_reserve: resolving fused Gated Delta Net support:
+0.46.183.087 I sched_reserve: fused Gated Delta Net (autoregressive) enabled
+0.46.184.258 I sched_reserve: fused Gated Delta Net (chunked) enabled
+0.46.631.823 E ggml_backend_cuda_buffer_type_alloc_buffer: allocating 845.00 MiB on device 0: cudaMalloc failed: out of memory
+0.46.631.828 E ggml_gallocr_reserve_n_impl: failed to allocate ROCm0 buffer of size 886044800
+0.46.631.830 E graph_reserve: failed to allocate compute buffers

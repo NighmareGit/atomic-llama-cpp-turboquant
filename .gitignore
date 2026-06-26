@@ -164,3 +164,7 @@ rpc-patch/patch/bench-results/**/*-server.log
 rpc-patch/patch/bench-results/**/*-rpc.log
 rpc-patch/patch/bench-results/**/*-curl.err
 rpc-patch/patch/bench-results/archive/
+rpc-patch/patch/bench-results/72b-matrix/phase1-all.log
+rpc-patch/patch/bench-results/72b-matrix/phase1-rerun-*.log
+rpc-patch/patch/bench-results/72b-matrix/*.pre-fix-*
+rpc-patch/patch/bench-results/72b-matrix/debug/

@@ -43,11 +43,16 @@ fi
 
 docker rm -f "$PATHB_RPC_CONTAINER" 2>/dev/null || true
 
+RPC_ENV=(-e LD_LIBRARY_PATH=/app/bin)
+[[ -n "${PATHB_CUDA_DISABLE_GRAPHS:-${GGML_CUDA_DISABLE_GRAPHS:-}}" ]] \
+    && RPC_ENV+=(-e GGML_CUDA_DISABLE_GRAPHS=1)
+[[ -n "${GGML_RPC_DEBUG:-}" ]] && RPC_ENV+=(-e "GGML_RPC_DEBUG=${GGML_RPC_DEBUG}")
+
 docker run -d --name "$PATHB_RPC_CONTAINER" \
     --gpus "device=${PATHB_CUDA_DEVICE}" \
     --network host \
     -v "${PATHB_BIN_CUDA}:/app/bin:ro" \
-    -e LD_LIBRARY_PATH=/app/bin \
+    "${RPC_ENV[@]}" \
     "$PATHB_CUDA_IMAGE" \
     bash -c "/app/bin/rpc-server -H ${PATHB_RPC_HOST} -p ${PATHB_RPC_PORT} -d CUDA0"
 

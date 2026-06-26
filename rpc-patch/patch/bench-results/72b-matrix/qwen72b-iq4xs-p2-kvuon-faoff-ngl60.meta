@@ -1,0 +1,228 @@
+=== qwen72b-iq4xs-p2-kvuon-faoff-ngl60 ===
+variant=pathb proto=Path B (v4.2.2 workspace) rpc_mode=multi endpoint=192.168.8.176:50051,127.0.0.1:50051
+model=/mnt/models/Qwen3-72B-Instruct.IQ4_XS.gguf ctx=8192 ctk=q4_0 ctv=q4_0 ngl=60 ts=35,15,50 ncmoe=none np=1 no_warmup=1 load_timeout=1800s
+server_extra=--no-warmup -np 1 --fit off -fa off --kv-unified --verbose -lv 4 --reasoning off
+prompts_file=default-fox verbose_lv=4 extract_vram=1
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  453G  241G  66% /
+2026-06-26T13:04:50Z
+using remote/multi RPC at 192.168.8.176:50051,127.0.0.1:50051 (no local bench-rpc)
+Connection to 192.168.8.176 50051 port [tcp/*] succeeded!
+RPC reachable: 192.168.8.176:50051
+Connection to 127.0.0.1 50051 port [tcp/*] succeeded!
+RPC reachable: 127.0.0.1:50051
+starting llama-server (ROCm HIP device 0)...
+3fa110352957b3116fbf0959a26052b652f53cfa9595dc909dfbabe63693c11f
+polling server health (max 1800s)...
+poll 30s: still loading...
+0.02.765.636 I load_tensors: RPC0[192.168.8.176:50051] model buffer size =  9516.96 MiB
+.................................................................................
+0.01.786.128 I load_tensors: loading model tensors, this can take a while... (mmap = true, direct_io = false)
+0.02.765.589 I load_tensors: offloading output layer to GPU
+0.02.765.600 I load_tensors: offloading 59 repeating layers to GPU
+0.02.765.601 I load_tensors: offloaded 60/81 layers to GPU
+0.02.765.626 I load_tensors:   CPU_Mapped model buffer size = 10580.68 MiB
+0.02.765.630 I load_tensors:        ROCm0 model buffer size = 14116.21 MiB
+0.02.765.634 I load_tensors: RPC0[127.0.0.1:50051] model buffer size =  4078.70 MiB
+0.02.765.636 I load_tensors: RPC0[192.168.8.176:50051] model buffer size =  9516.96 MiB
+poll 60s: still loading...
+0.02.765.636 I load_tensors: RPC0[192.168.8.176:50051] model buffer size =  9516.96 MiB
+..............................................................................................
+0.01.786.128 I load_tensors: loading model tensors, this can take a while... (mmap = true, direct_io = false)
+0.02.765.589 I load_tensors: offloading output layer to GPU
+0.02.765.600 I load_tensors: offloading 59 repeating layers to GPU
+0.02.765.601 I load_tensors: offloaded 60/81 layers to GPU
+0.02.765.626 I load_tensors:   CPU_Mapped model buffer size = 10580.68 MiB
+0.02.765.630 I load_tensors:        ROCm0 model buffer size = 14116.21 MiB
+0.02.765.634 I load_tensors: RPC0[127.0.0.1:50051] model buffer size =  4078.70 MiB
+0.02.765.636 I load_tensors: RPC0[192.168.8.176:50051] model buffer size =  9516.96 MiB
+ERROR: llama-server container exited during load
+0.01.786.125 I print_info: FIM SUF token         = 151661 '<|fim_suffix|>'
+0.01.786.125 I print_info: FIM MID token         = 151660 '<|fim_middle|>'
+0.01.786.125 I print_info: FIM PAD token         = 151662 '<|fim_pad|>'
+0.01.786.125 I print_info: FIM REP token         = 151663 '<|repo_name|>'
+0.01.786.125 I print_info: FIM SEP token         = 151664 '<|file_sep|>'
+0.01.786.126 I print_info: EOG token             = 128247 '</s>'
+0.01.786.126 I print_info: EOG token             = 151643 '<|endoftext|>'
+0.01.786.126 I print_info: EOG token             = 151645 '<|im_end|>'
+0.01.786.126 I print_info: EOG token             = 151662 '<|fim_pad|>'
+0.01.786.126 I print_info: EOG token             = 151663 '<|repo_name|>'
+0.01.786.126 I print_info: EOG token             = 151664 '<|file_sep|>'
+0.01.786.127 I print_info: max token length      = 256
+0.01.786.128 I load_tensors: loading model tensors, this can take a while... (mmap = true, direct_io = false)
+0.02.765.589 I load_tensors: offloading output layer to GPU
+0.02.765.600 I load_tensors: offloading 59 repeating layers to GPU
+0.02.765.601 I load_tensors: offloaded 60/81 layers to GPU
+0.02.765.626 I load_tensors:   CPU_Mapped model buffer size = 10580.68 MiB
+0.02.765.630 I load_tensors:        ROCm0 model buffer size = 14116.21 MiB
+0.02.765.634 I load_tensors: RPC0[127.0.0.1:50051] model buffer size =  4078.70 MiB
+0.02.765.636 I load_tensors: RPC0[192.168.8.176:50051] model buffer size =  9516.96 MiB
+..................................................................................................
+1.09.857.708 I common_init_result: added </s> logit bias = -inf
+1.09.857.861 I common_init_result: added <|endoftext|> logit bias = -inf
+1.09.857.862 I common_init_result: added <|im_end|> logit bias = -inf
+1.09.857.862 I common_init_result: added <|fim_pad|> logit bias = -inf
+1.09.857.863 I common_init_result: added <|repo_name|> logit bias = -inf
+1.09.857.863 I common_init_result: added <|file_sep|> logit bias = -inf
+1.09.857.923 E llama_init_from_model: V cache quantization requires flash_attn
+1.09.857.923 E common_init_result: failed to create context with model '/mnt/models/Qwen3-72B-Instruct.IQ4_XS.gguf'
+1.09.857.925 E common_init_from_params: failed to create context with model '/mnt/models/Qwen3-72B-Instruct.IQ4_XS.gguf'
+--- artifact capture (load_exit) @ 2026-06-26T13:06:06Z ---
+=== 2026-06-26T13:06:06Z reason=load_exit ===
+[docker ps -a]
+bench-llama                      Exited (139) Less than a second ago   llama-rocm-patched
+pathb-rpc                        Up About a minute                     llama-rpc-cuda-a2
+llama_nv_tq_rpc                  Exited (137) 44 hours ago             vllm-deploy-llama-nv-tq-rpc:latest
+llama_amd_tq_rpc                 Exited (137) 44 hours ago             vllm-deploy-llama-amd-tq-rpc:latest
+=== 2026-06-26T13:06:06Z reason=load_exit ===
+[romulus-rocm]
+
+
+============================ ROCm System Management Interface ============================
+================================== Memory Usage (Bytes) ==================================
+GPU[0]		: VRAM Total Memory (B): 25753026560
+GPU[0]		: VRAM Total Used Memory (B): 15791894528
+==========================================================================================
+================================== End of ROCm SMI Log ===================================
+[romulus-nvidia]
+Fri Jun 26 15:06:06 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.71.05              Driver Version: 595.71.05      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3060 Ti     Off |   00000000:0A:00.0 Off |                  N/A |
+|  0%   47C    P2             14W /  220W |     155MiB /   8192MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            3057      G   /usr/lib/xorg/Xorg                        4MiB |
+|    0   N/A  N/A          551230      C   /app/bin/rpc-server                     132MiB |
++-----------------------------------------------------------------------------------------+
+[remus-nvidia]
+Fri Jun 26 15:06:06 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.71.05              Driver Version: 595.71.05      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 5060 Ti     Off |   00000000:01:00.0 Off |                  N/A |
+|  0%   52C    P1             20W /  180W |     151MiB /  16311MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            2128      G   /usr/lib/xorg/Xorg                        4MiB |
+|    0   N/A  N/A          161992      C   /usr/local/bin/rpc-server               128MiB |
++-----------------------------------------------------------------------------------------+
+--- rpc-local (tail) ---
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+Starting RPC server v4.2.2
+  endpoint       : 0.0.0.0:50051
+  local cache    : n/a
+Devices:
+  CUDA0: NVIDIA GeForce RTX 3060 Ti (7841 MiB, 7687 MiB free)
+  transport      : TCP
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+--- rpc-remus (tail) ---
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f587dd580, offset: 0, size: 128679936
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f60295580, offset: 0, size: 32768
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f6029d580, offset: 0, size: 35651584
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f6249d580, offset: 0, size: 4456448
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f628dd580, offset: 0, size: 5767168
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 3 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f62e5d580, offset: 0, size: 35651584
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f6505d580, offset: 0, size: 512
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f6505d780, offset: 0, size: 512
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f6505d980, offset: 0, size: 32768
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 4 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f65065980, offset: 0, size: 128679936
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f6cb1d980, offset: 0, size: 136249344
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f74d0da00, offset: 0, size: 128679936
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f7c7c5a00, offset: 0, size: 32768
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f7c7cda00, offset: 0, size: 35651584
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f7e9cda00, offset: 0, size: 4456448
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f7ee0da00, offset: 0, size: 5767168
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 3 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f7f38da00, offset: 0, size: 35651584
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f8158da00, offset: 0, size: 512
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f8158dc00, offset: 0, size: 512
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f8158de00, offset: 0, size: 32768
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 4 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f81595e00, offset: 0, size: 128679936
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f8904de00, offset: 0, size: 136249344
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5a436a92d090, data: 0x711f9123de80, offset: 0, size: 128679936
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | recv returned 0 (peer closed?)
+pathb-rpc-remus  | Client connection closed
+pathb-rpc-remus  | [~impl] closing socket 17
+--- server log tail (infer) ---
+0.02.765.601 I load_tensors: offloaded 60/81 layers to GPU
+0.02.765.626 I load_tensors:   CPU_Mapped model buffer size = 10580.68 MiB
+0.02.765.630 I load_tensors:        ROCm0 model buffer size = 14116.21 MiB
+0.02.765.634 I load_tensors: RPC0[127.0.0.1:50051] model buffer size =  4078.70 MiB
+0.02.765.636 I load_tensors: RPC0[192.168.8.176:50051] model buffer size =  9516.96 MiB
+..................................................................................................
+1.09.857.708 I common_init_result: added </s> logit bias = -inf
+1.09.857.861 I common_init_result: added <|endoftext|> logit bias = -inf
+1.09.857.862 I common_init_result: added <|im_end|> logit bias = -inf
+1.09.857.862 I common_init_result: added <|fim_pad|> logit bias = -inf
+1.09.857.863 I common_init_result: added <|repo_name|> logit bias = -inf
+1.09.857.863 I common_init_result: added <|file_sep|> logit bias = -inf
+1.09.857.923 E llama_init_from_model: V cache quantization requires flash_attn
+1.09.857.923 E common_init_result: failed to create context with model '/mnt/models/Qwen3-72B-Instruct.IQ4_XS.gguf'
+1.09.857.925 E common_init_from_params: failed to create context with model '/mnt/models/Qwen3-72B-Instruct.IQ4_XS.gguf'

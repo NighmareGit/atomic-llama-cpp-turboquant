@@ -1,0 +1,6 @@
+llama70b ngl=60 ncmoe=none mode=fitoff
+qwen72b ngl=60 ncmoe=none mode=fitoff
+kimi72b ngl=60 ncmoe=none mode=fitoff
+qwen-next-80b ngl=0 ncmoe=8 mode=fiton
+coder-next ngl=60 ncmoe=8 mode=fitoff
+coder-next-q4 ngl=60 ncmoe=8 mode=fitoff

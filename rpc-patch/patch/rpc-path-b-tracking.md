@@ -22,6 +22,8 @@
 | 2026-06-25 | Test | Spot-check: `gemma-4-12b-it-Q4_K_M` G≈51.5 t/s PASS |
 | 2026-06-25 | Scripts | Added `scripts/pathb-{start-rpc,run-test,test}.sh` with presets for 4B, medium, 72B |
 | 2026-06-25 | B4 Final Verification | Pipeline debug captured (`-v` + `GGML_SCHED_DEBUG=1`). 512-token server stress PASS. Single-GPU regression PASS (102.3 t/s, sched copies=1). 72B attempted — hardware-limited on 24+8GB Config A. Path B ready for production. |
+| 2026-06-26 | Multi-node B | remus 5060 Ti Path B RPC docker built (`Atomic-Llama-Remus-PathB`). Config B matrix PASS (27B-36B, +9-31% vs Config A). Config C dual-RPC PASS but slower on MoE. 72B IQ4_XS loads (21s) but G=1.9 t/s (RPC not engaged with `--fit on -ngl 0`). Romulus root: 243 GB free after runs. |
+| 2026-06-26 | 72B matrix P1-4 | `pathb-72b-matrix.sh` phases 1-4 on Config C `ts=35,15,50`. RPC fix in ggml-rpc.cpp; dense 72B fitoff ngl=60 ~5 t/s; coder-next-q4 G=16-21; qwen-next-80b fiton. See `72b-matrix/README.md`. |
 
 ---
 
@@ -38,6 +40,10 @@
 | 2026-06-25 | Pipeline debug not in cli logs | INFO lines suppressed without `-v`; `strings` filter drops stderr detail | Pass `GGML_SCHED_DEBUG` into Docker; use `-v` in `--extra-args`; read `.raw` log | RESOLVED |
 | 2026-06-25 | 72B presets OOM on RPC | `ts=4,1` interpreted as 80% on RPC0 (8GB); 72B IQ4_XS ~40GB | Use `--fit on` + `-ngl 0` or manual `-ngl 24-36` + `ts=10,90`; see `pathb-72b-vram-calc.py` | RESOLVED (methodology) |
 | 2026-06-25 | 72B cli RPC crash on decode | CUDA graph warmup on 3060 Ti with manual -ngl | Use `pathb-72b-server.sh` (llama-server + --fit on) for 72B | WORKAROUND |
+| 2026-06-26 | Dense 72B server RPC crash on prefill | `fit off` + partial CPU offload: deferred `EVENT_RECORD` after `GRAPH_RECOMPUTE` left event response undrained before `GET_TENSOR` (tls_pending_event not set in graph_compute) | Set tls_pending_event after deferred event; central drain in all send_rpc_cmd paths; SET_TENSOR_BATCH socket fix. 27B/70B PASS. See `72b-matrix/README.md` | RESOLVED |
+| 2026-06-26 | 72b-matrix bench false FAIL on load | Script bugs: ripgrep `\K`, health-before-loaded race, client warmup despite `BENCH_NO_WARMUP` | Fixed in `pathb-72b-matrix.sh`, `rpc-server-bench.sh` | RESOLVED |
+| 2026-06-26 | coder-next APEX reload in p2-p4 | Load exit on repeated matrix runs; p1 single fox OK | Use coder-next-q4 for production MoE | KNOWN |
+| 2026-06-26 | Qwen-Next-80B fit off load | 53 GB Q5_K_M exceeds Config C budget at ngl 48-60 | fit on ncmoe=8 works at 16.9 t/s (0 GPU layers) | KNOWN LIMIT |
 
 ---
 
@@ -164,3 +170,17 @@ Path B (v4.2.2, `Path-B-Event-Support`) is **production-ready** for cross-GPU Co
 **Cli regression:** 4B Config A **~110 t/s** with pipeline parallelism (`sched copies = 4`).
 
 **72B note:** IQ4_XS (~40GB) exceeds 32GB GPU VRAM (8GB RPC + 24GB ROCm). Shovel ~8GB+ weights to CPU via `-ngl 0 --fit on` or manual `-ngl 24-36` with percentage `-ts 10,90`. Dense 72B does not use `--n-cpu-moe` (MoE only). Prefer `scripts/pathb-72b-server.sh` over cli (cli manual -ngl crashes RPC CUDA graphs).
+
+### Config C 72B+ matrix (2026-06-26, ts=35,15,50, phases 1-4 complete)
+
+Three-GPU pool ~44.5 GB (5060 + 3060 + 7900). Post RPC event-drain fix + `GGML_CUDA_DISABLE_GRAPHS=1`. See `patch/bench-results/72b-matrix/README.md`, `phase-summary.txt`.
+
+| Model | Phase 1 winner | Gen t/s | Notes |
+|-------|----------------|---------|-------|
+| Llama-70B Q4_K_M | fitoff ngl=60 | ~5.1 | phases 2-4 PASS; `-fa on` required |
+| Qwen/Kimi 72B IQ4_XS | fitoff ngl=60 | ~5.1-5.4 | skip turbo3 KV (phase 3) |
+| Qwen-Next-80B Q5_K_M | fiton ngl=0 ncmoe=8 | ~16.9 | fit off OOM at ngl 48-60 |
+| Coder-Next APEX MoE | fitoff ngl=60 ncmoe=8 | 0.4 (p1 only) | p2-p4 load exit; use q4 |
+| Coder-Next Q4_K_M | fitoff ngl=60 ncmoe=8 | 16-21 | best MoE; phase 4 eval PASS |
+
+**Load-validated split (Llama-70B ngl=56):** 5060 ~9.5 GB, 3060 ~3.9 GB, 7900 ~14.2 GB weights + KV/compute.

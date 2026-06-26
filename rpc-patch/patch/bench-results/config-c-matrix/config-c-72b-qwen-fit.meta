@@ -1,0 +1,24 @@
+=== config-c-72b-qwen-fit ===
+variant=pathb proto=Path B (v4.2.2 workspace) rpc_mode=multi endpoint=127.0.0.1:50051,192.168.8.176:50051
+model=/mnt/models/Qwen3-72B-Instruct.IQ4_XS.gguf ctx=2048 ctk=q4_0 ctv=q4_0 ngl=0 ts=10,25,65 ncmoe=none np=1 no_warmup=1 load_timeout=1800s
+server_extra=--no-warmup -np 1 --fit on --fit-target 512,512,512 --verbose -lv 2 --reasoning off
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  451G  242G  66% /
+2026-06-26T09:15:33Z
+using remote/multi RPC at 127.0.0.1:50051,192.168.8.176:50051 (no local bench-rpc)
+Connection to 127.0.0.1 50051 port [tcp/*] succeeded!
+RPC reachable: 127.0.0.1:50051
+Connection to 192.168.8.176 50051 port [tcp/*] succeeded!
+RPC reachable: 192.168.8.176:50051
+starting llama-server (ROCm HIP device 0)...
+40fa6757ce16812a4d3b55d6e2b19bf73ce37bddccc6635c7acee75c9dcad42c
+polling server health (max 1800s)...
+server ready at 20s
+benchmark 3 runs...
+run=1 P=3.4 G=1.8 preview='    -    (    -    (\r\n\r\n    ) or ( ) ( )- ( -) +-1\r\n\r\n) -) andess20\\\r\n\r\n - \r\n\r\n)'
+run=2 P=1.8 G=1.8 preview='   世纪         个สามาร\\n   0                                            '
+run=3 P=1.8 G=1.8 preview='## forสามาร\n\n\\n\r\n\r\nN\r\n\r\nN\r\n\r\nN\\n\\n\\n\\n\\nN\\n\r\n  (nn\\n\\n  n n you and n0\\n    is  '
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  451G  242G  66% /
+RESULT=PASS
+results in /home/hunter/projects/atomic-llama-cpp-patch/atomic-llama-cpp-turboquant/rpc-patch/patch/bench-results/config-c-matrix/config-c-72b-qwen-fit.result

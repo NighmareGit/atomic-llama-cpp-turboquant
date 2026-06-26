@@ -1,0 +1,22 @@
+=== remus-5060-27b-qwen-pathb-ts1585 ===
+variant=pathb proto=Path B (v4.2.2 workspace) rpc_mode=remote endpoint=remus.local:50051
+model=/mnt/models/Qwen3.5-27B-Q5_K_M.gguf ctx=8192 ctk=q8_0 ctv=turbo3 ngl=99 ts=15,85 ncmoe=none np=1 no_warmup=1 load_timeout=600s
+server_extra=--no-warmup -np 1
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  451G  243G  66% /
+2026-06-26T08:12:35Z
+using remote/multi RPC at remus.local:50051 (no local bench-rpc)
+Connection to remus.local (192.168.8.176) 50051 port [tcp/*] succeeded!
+RPC reachable: remus.local:50051
+starting llama-server (ROCm HIP device 0)...
+59a0fd3d681545f1d5edba8eec06a09c2862516004888bd6f9266870376ac4f8
+polling server health (max 600s)...
+server ready at 20s
+benchmark 3 runs...
+run=1 P=61.9 G=31.0 preview=''
+run=2 P=64.4 G=30.9 preview=''
+run=3 P=60.1 G=30.9 preview=''
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  451G  243G  66% /
+RESULT=PASS
+results in /home/hunter/projects/atomic-llama-cpp-patch/atomic-llama-cpp-turboquant/rpc-patch/patch/bench-results/rpc-server-bench/remus-5060-27b-qwen-pathb-ts1585.result

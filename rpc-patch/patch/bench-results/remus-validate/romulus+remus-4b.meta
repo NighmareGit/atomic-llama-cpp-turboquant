@@ -1,0 +1,22 @@
+=== romulus+remus-4b ===
+variant=pathb proto=Path B (v4.2.2 workspace) rpc_mode=remote endpoint=192.168.8.176:50051
+model=/mnt/models/Qwen3.5-4B-Q4_K_M.gguf ctx=4096 ctk=q4_0 ctv=q4_0 ngl=99 ts=20,80 ncmoe=none np=1 no_warmup=1 load_timeout=600s
+server_extra=--no-warmup -np 1 --fit off --fit-target 900,900 --verbose
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  451G  242G  66% /
+2026-06-26T08:58:21Z
+using remote/multi RPC at 192.168.8.176:50051 (no local bench-rpc)
+Connection to 192.168.8.176 50051 port [tcp/*] succeeded!
+RPC reachable: 192.168.8.176:50051
+starting llama-server (ROCm HIP device 0)...
+675a99366e78400d5cdf6eaf5320b83bd1e55df55600124cab84ff9fd84a80a7
+polling server health (max 600s)...
+server ready at 5s
+benchmark 3 runs...
+run=1 P=73.5 G=101.2 preview=''
+run=2 P=48.1 G=101.4 preview=''
+run=3 P=48.3 G=104.3 preview=''
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  451G  242G  66% /
+RESULT=PASS
+results in /home/hunter/projects/atomic-llama-cpp-patch/atomic-llama-cpp-turboquant/rpc-patch/patch/bench-results/remus-validate/romulus+remus-4b.result

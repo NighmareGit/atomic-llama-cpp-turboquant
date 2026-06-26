@@ -62,6 +62,31 @@ See `patch/PATH_B_EVENT_SUPPORT_IMPLEMENTATION.md` for line-level implementation
 
 **Rule:** Never run llama-server and rpc-server on the same GPU.
 
+### Config B: Romulus + remus (2026-06-26)
+
+| Role | GPU | Host | Port |
+|------|-----|------|------|
+| Client | RX 7900 XTX 24 GB | Romulus | - |
+| Worker | RTX 5060 Ti 16 GB | remus.local (192.168.8.176) | 50051 |
+
+Docker on remus: `~/docker/Atomic-Llama-Remus-PathB/` (image `atomic-llama-remus-pathb-rpc:latest`).  
+Bench: `BENCH_CONFIG=remus ./rpc-patch/scripts/rpc-server-bench-matrix.sh` with `-ts 15,85`.
+
+Config B beats Config A on all matrix models (+9% to +31%). See `docs/rpc-multi-node-remus.md`.
+
+### Config C: dual RPC (remus 5060 Ti + Romulus 3060 Ti)
+
+`BENCH_CONFIG=config-c` with `-ts 12,8,80`. Slower than Config B on MoE models for 27B-36B matrix.
+
+**72B+ matrix (2026-06-26):** Config C `ts=35,15,50`, phases 1-4 **complete**. Dense 72B `fit off` ngl=60 ~5 t/s after RPC fix in `ggml-rpc.cpp`. MoE coder-next-q4 G=16-21 t/s. Set `GGML_CUDA_DISABLE_GRAPHS=1` on RPC workers.
+
+```bash
+export PATHB_REMUS_SSH_PASS=... REMUS_RPC_IP=192.168.8.176 PATHB_CUDA_DISABLE_GRAPHS=1
+./rpc-patch/scripts/pathb-72b-matrix.sh --phase all   # or 1|2|3|4
+```
+
+Results: `patch/bench-results/72b-matrix/README.md`, `phase-summary.txt`
+
 ---
 
 ## 4. Build artifacts
@@ -144,6 +169,7 @@ All under `rpc-patch/scripts/`. Default log output: `rpc-patch/patch/bench-resul
 | `pathb-test.sh` | Presets: `4b`, `matrix-4b`, `gemma12b`, `qwen27b`, `qwen72b`, `kimi72b`, ... |
 | `pathb-72b-server.sh` | 72B via llama-server + `--fit on` (IQ4_XS, CPU offload) |
 | `pathb-72b-vram-calc.py` | VRAM budget calculator for 72B on 24+8 GB |
+| `pathb-72b-matrix.sh` | Phased 72B+ matrix (Config C, phases 1-4) |
 | `rpc-server-bench.sh` | Single llama-server <-> rpc-server bench (A1 / A1a2 / pathb) |
 | `rpc-server-bench-matrix.sh` | Full A1 vs A1a2 vs Path B matrix (27b, 31b, 35b, 36b) |
 | `rpc-ts-fit-probe.sh` | Tensor-split / fit probe with GPU VRAM monitoring |
@@ -258,7 +284,7 @@ Override with `BENCH_LOG_DIR`, `PROBE_LOG_DIR`, `PATHB_LOG_DIR` env vars.
 
 1. ~~**Pipeline debug:**~~ Done — `b4-sched-debug-v.raw` shows `pipeline parallelism enabled` and `sched copies = 4` (`GGML_SCHED_DEBUG=1` + `-v`).
 2. **Config B:** NV client / AMD worker matrix not run (optional).
-3. **72B:** B4 attempted; IQ4_XS ~40GB exceeds 24+8GB Config A. Presets fixed to `ts=15,85`. See `docs/rpc-path-b-tracking.md`.
+3. ~~**72B dense inference RPC crash:**~~ Fixed 2026-06-26 (`tls_pending_event` + send_rpc_cmd drain). Matrix phases 1-4 PASS for dense 72B. coder-next APEX flaky on reload; use coder-next-q4.
 4. **MoE at ctx 8192 + turbo3:** Not tested; 35B/36B matrix used ctx 4096 q4_0 + ncmoe 8.
 5. **Upstream merge:** Branch is a private fork patch; follow `AGENTS.md` if contributing upstream (human-authored, disclose AI assist).
 

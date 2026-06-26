@@ -1,0 +1,217 @@
+=== coder-next-apex-p3-ctx32768-q8_0-turbo3-ngl60 ===
+variant=pathb proto=Path B (v4.2.2 workspace) rpc_mode=multi endpoint=192.168.8.176:50051,127.0.0.1:50051
+model=/mnt/models/Qwen3-Coder-Next-APEX-I-Quality.gguf ctx=32768 ctk=q8_0 ctv=turbo3 ngl=60 ts=35,15,50 ncmoe=8 np=1 no_warmup=1 load_timeout=1800s
+server_extra=--no-warmup -np 1 --n-cpu-moe 8 --fit off -fa on --verbose -lv 4 --reasoning off
+prompts_file=default-fox verbose_lv=4 extract_vram=1
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  453G  241G  66% /
+2026-06-26T13:48:19Z
+using remote/multi RPC at 192.168.8.176:50051,127.0.0.1:50051 (no local bench-rpc)
+Connection to 192.168.8.176 50051 port [tcp/*] succeeded!
+RPC reachable: 192.168.8.176:50051
+Connection to 127.0.0.1 50051 port [tcp/*] succeeded!
+RPC reachable: 127.0.0.1:50051
+starting llama-server (ROCm HIP device 0)...
+e749a89886b1895caba6c06259e3e4350ddee4efe527192ba122691b1f8a9934
+polling server health (max 1800s)...
+poll 30s: still loading...
+0.18.937.561 I load_tensors: RPC0[192.168.8.176:50051] model buffer size =  9225.81 MiB
+...............................................................................
+0.01.808.858 I load_tensors: loading model tensors, this can take a while... (mmap = true, direct_io = false)
+0.18.937.541 I load_tensors: offloading output layer to GPU
+0.18.937.546 I load_tensors: offloading 47 repeating layers to GPU
+0.18.937.547 I load_tensors: offloaded 49/49 layers to GPU
+0.18.937.558 I load_tensors:   CPU_Mapped model buffer size =  9969.57 MiB
+0.18.937.559 I load_tensors:        ROCm0 model buffer size = 23175.40 MiB
+0.18.937.560 I load_tensors: RPC0[127.0.0.1:50051] model buffer size =  5937.53 MiB
+0.18.937.561 I load_tensors: RPC0[192.168.8.176:50051] model buffer size =  9225.81 MiB
+ERROR: llama-server container exited during load
+1.23.225.486 I llama_context: n_ubatch      = 512
+1.23.225.486 I llama_context: causal_attn   = 1
+1.23.225.487 I llama_context: flash_attn    = enabled
+1.23.225.488 I llama_context: kv_unified    = false
+1.23.225.490 I llama_context: freq_base     = 5000000.0
+1.23.225.490 I llama_context: freq_scale    = 1
+1.23.225.490 I llama_context: n_rs_seq      = 0
+1.23.225.491 I llama_context: n_outputs_max = 1
+1.23.225.491 W llama_context: n_ctx_seq (32768) < n_ctx_train (262144) -- the full capacity of the model will not be utilized
+1.23.775.832 I llama_context:  ROCm_Host  output buffer size =     0.58 MiB
+1.23.776.789 I llama_kv_cache:      ROCm0 KV buffer size =   139.50 MiB
+1.23.782.135 I llama_kv_cache: RPC0[127.0.0.1:50051] KV buffer size =    46.50 MiB
+1.23.798.731 I llama_kv_cache: RPC0[192.168.8.176:50051] KV buffer size =    93.00 MiB
+1.23.798.998 I llama_kv_cache: size =  279.00 MiB ( 32768 cells,  12 layers,  1/1 seqs), K (q8_0):  204.00 MiB, V (turbo3):   75.00 MiB
+1.23.799.000 I llama_kv_cache: attn_rot_k = 0, n_embd_head_k_all = 256
+1.23.799.001 I llama_kv_cache: attn_rot_v = 0, n_embd_head_k_all = 256
+1.23.800.022 I llama_memory_recurrent:      ROCm0 RS buffer size =    35.59 MiB
+1.23.800.944 I llama_memory_recurrent: RPC0[127.0.0.1:50051] RS buffer size =    10.47 MiB
+1.23.801.885 I llama_memory_recurrent: RPC0[192.168.8.176:50051] RS buffer size =    29.31 MiB
+1.23.801.892 I llama_memory_recurrent: size =   75.38 MiB (     1 cells,  48 layers,  1 seqs  0 rs_seq), R (f32):    3.38 MiB, S (f32):   72.00 MiB
+1.23.801.912 I sched_reserve: reserving ...
+1.23.805.291 I sched_reserve: resolving fused Gated Delta Net support:
+1.23.806.168 I sched_reserve: fused Gated Delta Net (autoregressive) enabled
+1.23.806.879 I sched_reserve: fused Gated Delta Net (chunked) enabled
+1.26.450.086 E ggml_backend_cuda_buffer_type_alloc_buffer: allocating 845.00 MiB on device 0: cudaMalloc failed: out of memory
+1.26.450.092 E ggml_gallocr_reserve_n_impl: failed to allocate ROCm0 buffer of size 886044800
+1.26.450.093 E graph_reserve: failed to allocate compute buffers
+1.26.457.603 E llama_init_from_model: failed to initialize the context: failed to allocate compute pp buffers
+1.26.457.610 E common_init_result: failed to create context with model '/mnt/models/Qwen3-Coder-Next-APEX-I-Quality.gguf'
+1.26.457.620 E common_init_from_params: failed to create context with model '/mnt/models/Qwen3-Coder-Next-APEX-I-Quality.gguf'
+--- artifact capture (load_exit) @ 2026-06-26T13:49:55Z ---
+=== 2026-06-26T13:49:55Z reason=load_exit ===
+[docker ps -a]
+bench-llama                      Exited (139) 3 seconds ago   llama-rocm-patched
+pathb-rpc                        Up About a minute            llama-rpc-cuda-a2
+llama_nv_tq_rpc                  Exited (137) 45 hours ago    vllm-deploy-llama-nv-tq-rpc:latest
+llama_amd_tq_rpc                 Exited (137) 45 hours ago    vllm-deploy-llama-amd-tq-rpc:latest
+=== 2026-06-26T13:49:55Z reason=load_exit ===
+[romulus-rocm]
+
+
+============================ ROCm System Management Interface ============================
+================================== Memory Usage (Bytes) ==================================
+GPU[0]		: VRAM Total Memory (B): 25753026560
+GPU[0]		: VRAM Total Used Memory (B): 306958336
+==========================================================================================
+================================== End of ROCm SMI Log ===================================
+[romulus-nvidia]
+Fri Jun 26 15:49:55 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.71.05              Driver Version: 595.71.05      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3060 Ti     Off |   00000000:0A:00.0 Off |                  N/A |
+|  0%   48C    P2             39W /  220W |     155MiB /   8192MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            3057      G   /usr/lib/xorg/Xorg                        4MiB |
+|    0   N/A  N/A          741782      C   /app/bin/rpc-server                     132MiB |
++-----------------------------------------------------------------------------------------+
+[remus-nvidia]
+Fri Jun 26 15:49:55 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.71.05              Driver Version: 595.71.05      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 5060 Ti     Off |   00000000:01:00.0 Off |                  N/A |
+|  0%   49C    P1             18W /  180W |     151MiB /  16311MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            2128      G   /usr/lib/xorg/Xorg                        4MiB |
+|    0   N/A  N/A          207768      C   /usr/local/bin/rpc-server               128MiB |
++-----------------------------------------------------------------------------------------+
+--- rpc-local (tail) ---
+
+CUDA Version 12.4.1
+
+Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+By pulling and using the container, you accept the terms and conditions of this license:
+https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+
+A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 7841 MiB):
+  Device 0: NVIDIA GeForce RTX 3060 Ti, compute capability 8.6, VMM: yes, VRAM: 7841 MiB
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: Host ('0.0.0.0') is != '127.0.0.1'
+         Never expose the RPC server to an open network!
+         This is an experimental feature and is not secure!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+Starting RPC server v4.2.2
+  endpoint       : 0.0.0.0:50051
+  local cache    : n/a
+Devices:
+  CUDA0: NVIDIA GeForce RTX 3060 Ti (7841 MiB, 7687 MiB free)
+  transport      : TCP
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+--- rpc-remus (tail) ---
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [get_alloc_size] device: 0, buffer: (nil), data: (nil)
+pathb-rpc-remus  | [alloc_buffer] device: 0, size: 146811008 -> remote_ptr: 5ca385ea7e30, remote_size: 146811008
+pathb-rpc-remus  | [free_buffer] remote_ptr: 5ca385ea7e30
+pathb-rpc-remus  | [free_buffer] remote_ptr: 5ca3860c3580
+pathb-rpc-remus  | [free_buffer] remote_ptr: 5ca3860c2540
+pathb-rpc-remus  | recv returned 0 (peer closed?)
+pathb-rpc-remus  | Client connection closed
+pathb-rpc-remus  | [~impl] closing socket 17
+--- server log tail (infer) ---
+1.23.799.001 I llama_kv_cache: attn_rot_v = 0, n_embd_head_k_all = 256
+1.23.800.022 I llama_memory_recurrent:      ROCm0 RS buffer size =    35.59 MiB
+1.23.800.944 I llama_memory_recurrent: RPC0[127.0.0.1:50051] RS buffer size =    10.47 MiB
+1.23.801.885 I llama_memory_recurrent: RPC0[192.168.8.176:50051] RS buffer size =    29.31 MiB
+1.23.801.892 I llama_memory_recurrent: size =   75.38 MiB (     1 cells,  48 layers,  1 seqs  0 rs_seq), R (f32):    3.38 MiB, S (f32):   72.00 MiB
+1.23.801.912 I sched_reserve: reserving ...
+1.23.805.291 I sched_reserve: resolving fused Gated Delta Net support:
+1.23.806.168 I sched_reserve: fused Gated Delta Net (autoregressive) enabled
+1.23.806.879 I sched_reserve: fused Gated Delta Net (chunked) enabled
+1.26.450.086 E ggml_backend_cuda_buffer_type_alloc_buffer: allocating 845.00 MiB on device 0: cudaMalloc failed: out of memory
+1.26.450.092 E ggml_gallocr_reserve_n_impl: failed to allocate ROCm0 buffer of size 886044800
+1.26.450.093 E graph_reserve: failed to allocate compute buffers
+1.26.457.603 E llama_init_from_model: failed to initialize the context: failed to allocate compute pp buffers
+1.26.457.610 E common_init_result: failed to create context with model '/mnt/models/Qwen3-Coder-Next-APEX-I-Quality.gguf'
+1.26.457.620 E common_init_from_params: failed to create context with model '/mnt/models/Qwen3-Coder-Next-APEX-I-Quality.gguf'

@@ -1,0 +1,3 @@
+run=1 prompt=fox P=11.8 G=5.4 preview='◁think▷Okay, let me try to figure out how to respond to this user input. The user just wrote "The quick brown fox jumps over the lazy'
+run=2 prompt=fox P=5.4 G=5.5 preview='◁think▷Okay, let me see. The user provided the sentence "The quick brown fox jumps over the lazy dog." and didn\'t ask any specific questions'
+run=3 prompt=fox P=5.4 G=5.4 preview='◁think▷Okay, let\'s tackle this problem. The user provided the sentence "The quick brown fox jumps over the lazy dog." and asked for help.'

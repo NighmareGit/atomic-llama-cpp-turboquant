@@ -14,7 +14,15 @@
 #   BENCH_MODEL, BENCH_CTX, BENCH_CTK, BENCH_CTV, BENCH_NGL, BENCH_TS, BENCH_LOAD_TIMEOUT
 #   BENCH_PORT=8081, BENCH_RPC_PORT=50051, BENCH_GEN_TOKENS=64
 #   BENCH_EXTRA (extra llama-server args), BENCH_NCMOE, BENCH_NP (parallel slots, default 1 for large)
+#   BENCH_PROMPTS_FILE=json  (default: single fox prompt)
+#   BENCH_VERBOSE_LV=4       (-lv N for per-device load allocation logs)
+#   BENCH_EXTRACT_VRAM=1     (grep MiB/allocation lines from server log into .meta)
 #   BENCH_NO_WARMUP=1 adds --no-warmup (recommended for >27B Path B)
+#   BENCH_RPC_MODE=local|remote|multi  (default local)
+#   BENCH_RPC_HOST=remus.local        (remote single worker)
+#   BENCH_RPC_ENDPOINT=host1:50051,host2:50051  (multi; overrides BENCH_RPC_HOST)
+#   BENCH_RPC_WAIT=5                   (seconds after remote RPC expected up)
+#   PATHB_CUDA_DISABLE_GRAPHS=1        (GGML_CUDA_DISABLE_GRAPHS on rpc-server workers)
 
 set -euo pipefail
 
@@ -41,6 +49,23 @@ EXTRA="${BENCH_EXTRA:-}"
 NCMOE="${BENCH_NCMOE:-}"
 NP="${BENCH_NP:-1}"
 NO_WARMUP="${BENCH_NO_WARMUP:-1}"
+PROMPTS_FILE="${BENCH_PROMPTS_FILE:-}"
+VERBOSE_LV="${BENCH_VERBOSE_LV:-}"
+EXTRACT_VRAM="${BENCH_EXTRACT_VRAM:-0}"
+CURL_TIMEOUT="${BENCH_CURL_TIMEOUT:-300}"
+RPC_MODE="${BENCH_RPC_MODE:-local}"
+RPC_HOST="${BENCH_RPC_HOST:-${REMUS_RPC_IP:-192.168.8.176}}"
+RPC_WAIT="${BENCH_RPC_WAIT:-5}"
+if [[ -n "${BENCH_RPC_ENDPOINT:-}" ]]; then
+    RPC_ENDPOINT="$BENCH_RPC_ENDPOINT"
+    if [[ "$BENCH_RPC_ENDPOINT" == *","* ]]; then
+        RPC_MODE="multi"
+    fi
+elif [[ "$RPC_MODE" == "remote" ]]; then
+    RPC_ENDPOINT="${RPC_HOST}:${RPC_PORT}"
+else
+    RPC_ENDPOINT="127.0.0.1:${RPC_PORT}"
+fi
 
 SERVER_EXTRA=()
 [[ "$NO_WARMUP" == "1" ]] && SERVER_EXTRA+=(--no-warmup)
@@ -57,6 +82,71 @@ RESULT="${LOG_DIR}/${LABEL}.result"
 : >"$META"
 
 log() { echo "$*" | tee -a "$META"; }
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REMUS_IP="${REMUS_RPC_IP:-192.168.8.176}"
+
+capture_rpc_artifacts() {
+    local reason="${1:-unknown}"
+    local stamp
+    stamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local snap="${LOG_DIR}/${LABEL}-gpu-snapshot.log"
+    local rpc_local="${LOG_DIR}/${LABEL}-rpc-local.log"
+    local rpc_remus="${LOG_DIR}/${LABEL}-rpc-remus.log"
+    local docker_ps="${LOG_DIR}/${LABEL}-docker-ps.log"
+
+    log "--- artifact capture (${reason}) @ ${stamp} ---"
+
+    {
+        echo "=== ${stamp} reason=${reason} ==="
+        echo "[docker ps -a]"
+        docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' 2>/dev/null \
+            | rg -i 'bench|pathb|rpc|llama' || docker ps -a 2>/dev/null || true
+    } >"$docker_ps" 2>/dev/null || true
+    cat "$docker_ps" | tee -a "$META" || true
+
+    {
+        echo "=== ${stamp} reason=${reason} ==="
+        echo "[romulus-rocm]"
+        timeout 5 rocm-smi --showmeminfo vram 2>/dev/null | head -8 || rocm-smi 2>/dev/null | head -4 || true
+        echo "[romulus-nvidia]"
+        timeout 5 nvidia-smi 2>/dev/null || true
+        echo "[remus-nvidia]"
+        SSH_CMD=(ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 "hunter@${REMUS_IP}")
+        if [[ -n "${PATHB_REMUS_SSH_PASS:-}" ]] && command -v sshpass >/dev/null; then
+            SSH_CMD=(sshpass -p "${PATHB_REMUS_SSH_PASS}" ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 "hunter@${REMUS_IP}")
+        fi
+        timeout 12 "${SSH_CMD[@]}" nvidia-smi 2>/dev/null || echo "remus nvidia-smi failed"
+    } >"$snap" 2>/dev/null || true
+    cat "$snap" | tee -a "$META" || true
+
+    if docker ps -aq --filter "name=^pathb-rpc$" | grep -q .; then
+        docker logs --tail=400 pathb-rpc >"$rpc_local" 2>&1 || true
+    elif docker ps -aq --filter "name=^${RPC_NAME}$" | grep -q .; then
+        docker logs --tail=400 "$RPC_NAME" >"$rpc_local" 2>&1 || true
+    else
+        echo "no local rpc container (pathb-rpc or ${RPC_NAME})" >"$rpc_local"
+    fi
+    log "--- rpc-local (tail) ---"
+    tail -40 "$rpc_local" | tee -a "$META" || true
+
+    {
+        echo "endpoint=${RPC_ENDPOINT:-none} mode=${RPC_MODE}"
+        PATHB_REMUS_LOG_TAIL=400 PATHB_REMUS_SSH_PASS="${PATHB_REMUS_SSH_PASS:-}" \
+            "${SCRIPT_DIR}/pathb-remus-rpc.sh" logs 2>/dev/null || true
+        echo "--- logs-since ---"
+        PATHB_REMUS_SSH_PASS="${PATHB_REMUS_SSH_PASS:-}" \
+            "${SCRIPT_DIR}/pathb-remus-rpc.sh" logs-since 2>/dev/null || true
+    } >"$rpc_remus" 2>&1 || true
+    log "--- rpc-remus (tail) ---"
+    tail -40 "$rpc_remus" | tee -a "$META" || true
+
+    docker cp "${LLAMA_NAME}:/tmp/server.log" "${LOG_DIR}/${LABEL}-server.log" 2>/dev/null || true
+    if [[ -f "${LOG_DIR}/${LABEL}-server.log" ]]; then
+        log "--- server log tail (infer) ---"
+        tail -15 "${LOG_DIR}/${LABEL}-server.log" | tee -a "$META" || true
+    fi
+}
 
 cleanup() {
     docker rm -f "$LLAMA_NAME" "$RPC_NAME" 2>/dev/null || true
@@ -79,7 +169,15 @@ case "$VARIANT" in
         ;;
     pathb)
         CUDA_IMAGE="llama-rpc-cuda-a2"
-        CUDA_BIN_HOST="${TQ}/build-cuda-b-bin/bin"
+        _cuda_sync="${TQ}/build-cuda-b-bin-sync/bin"
+        _cuda_rebuild="${TQ}/build-cuda-b-bin-rebuild/bin"
+        if [[ -x "${_cuda_sync}/rpc-server" ]]; then
+            CUDA_BIN_HOST="${_cuda_sync}"
+        elif [[ -x "${_cuda_rebuild}/rpc-server" ]]; then
+            CUDA_BIN_HOST="${_cuda_rebuild}"
+        else
+            CUDA_BIN_HOST="${TQ}/build-cuda-b-bin/bin"
+        fi
         ROCM_IMAGE="llama-rocm-patched"
         ROCM_BIN_HOST="${TQ}/build-rocm-docker/bin"
         PROTO="Path B (v4.2.2 workspace)"
@@ -91,53 +189,76 @@ case "$VARIANT" in
 esac
 
 log "=== $LABEL ==="
-log "variant=$VARIANT proto=$PROTO"
+log "variant=$VARIANT proto=$PROTO rpc_mode=$RPC_MODE endpoint=$RPC_ENDPOINT"
 log "model=$MODEL ctx=$CTX ctk=$CTK ctv=$CTV ngl=$NGL ts=$TS ncmoe=${NCMOE:-none} np=$NP no_warmup=$NO_WARMUP load_timeout=${LOAD_TIMEOUT}s"
 log "server_extra=${SERVER_EXTRA[*]:-none}"
+log "prompts_file=${PROMPTS_FILE:-default-fox} verbose_lv=${VERBOSE_LV:-default} extract_vram=$EXTRACT_VRAM"
+df -h / | tee -a "$META"
 date -u +"%Y-%m-%dT%H:%M:%SZ" | tee -a "$META"
 
 cleanup
 
-# NVIDIA 3060 Ti worker only
-log "starting rpc-server (CUDA device 0)..."
-if [[ "$VARIANT" == "pathb" ]]; then
-    docker run -d --name "$RPC_NAME" \
-        --gpus "device=0" --network host \
-        -v "${CUDA_BIN_HOST}:/app/bin:ro" \
-        -e LD_LIBRARY_PATH=/app/bin \
-        -e CUDA_VISIBLE_DEVICES=0 \
-        "$CUDA_IMAGE" \
-        bash -c "/app/bin/rpc-server -H 0.0.0.0 -p ${RPC_PORT} -d CUDA0" >>"$META" 2>&1
+if [[ "$RPC_MODE" == "local" ]]; then
+    log "starting rpc-server (CUDA device 0, local)..."
+    if [[ "$VARIANT" == "pathb" ]]; then
+        docker run -d --name "$RPC_NAME" \
+            --gpus "device=0" --network host \
+            -v "${CUDA_BIN_HOST}:/app/bin:ro" \
+            -e LD_LIBRARY_PATH=/app/bin \
+            -e CUDA_VISIBLE_DEVICES=0 \
+            "$CUDA_IMAGE" \
+            bash -c "/app/bin/rpc-server -H 0.0.0.0 -p ${RPC_PORT} -d CUDA0" >>"$META" 2>&1
+    else
+        docker run -d --name "$RPC_NAME" \
+            --gpus "device=0" --network host \
+            -e CUDA_VISIBLE_DEVICES=0 \
+            --entrypoint "${CUDA_BIN}/rpc-server" \
+            "$CUDA_IMAGE" \
+            -H 0.0.0.0 -p "${RPC_PORT}" -d CUDA0 >>"$META" 2>&1
+    fi
+    sleep 2
 else
-    docker run -d --name "$RPC_NAME" \
-        --gpus "device=0" --network host \
-        -e CUDA_VISIBLE_DEVICES=0 \
-        --entrypoint "${CUDA_BIN}/rpc-server" \
-        "$CUDA_IMAGE" \
-        -H 0.0.0.0 -p "${RPC_PORT}" -d CUDA0 >>"$META" 2>&1
+    log "using remote/multi RPC at $RPC_ENDPOINT (no local bench-rpc)"
+    IFS=',' read -ra _rpc_hosts <<<"$RPC_ENDPOINT"
+    for ep in "${_rpc_hosts[@]}"; do
+        host="${ep%%:*}"
+        port="${ep##*:}"
+        if nc -zv -w 3 "$host" "$port" >>"$META" 2>&1; then
+            log "RPC reachable: $host:$port"
+        else
+            log "WARN: RPC not reachable yet: $host:$port"
+        fi
+    done
+    sleep "$RPC_WAIT"
 fi
-sleep 2
 
 # AMD 7900 XTX client only
 log "starting llama-server (ROCm HIP device 0)..."
+EXTRA_HOSTS=()
+[[ "$RPC_MODE" != "local" ]] && EXTRA_HOSTS+=(--add-host "remus.local:${REMUS_RPC_IP:-192.168.8.176}")
+
 if [[ "$VARIANT" == "pathb" ]]; then
     docker run -d --name "$LLAMA_NAME" --entrypoint bash \
         --device=/dev/kfd --device=/dev/dri --group-add video --network host \
+        "${EXTRA_HOSTS[@]}" \
         -v "${ROCM_BIN_HOST}:/app/bin:ro" -v /mnt/models:/mnt/models:ro \
         -e LD_LIBRARY_PATH=/app/bin -e HIP_VISIBLE_DEVICES=0 \
+        ${GGML_RPC_DEBUG:+-e GGML_RPC_DEBUG=${GGML_RPC_DEBUG}} \
+        ${GGML_SCHED_DEBUG:+-e GGML_SCHED_DEBUG=${GGML_SCHED_DEBUG}} \
         "$ROCM_IMAGE" \
         -c "exec > /tmp/server.log 2>&1; /app/bin/llama-server \
-            --rpc 127.0.0.1:${RPC_PORT} -m ${MODEL} -ngl ${NGL} -c ${CTX} \
+            --rpc ${RPC_ENDPOINT} -m ${MODEL} -ngl ${NGL} -c ${CTX} \
             -ctk ${CTK} -ctv ${CTV} -sm ${SPLIT_MODE} -ts ${TS} \
             --host 127.0.0.1 --port ${PORT} ${SERVER_EXTRA[*]}" >>"$META" 2>&1
 else
     docker run -d --name "$LLAMA_NAME" --entrypoint bash \
         --device=/dev/kfd --device=/dev/dri --group-add video --network host \
+        "${EXTRA_HOSTS[@]}" \
         -v /mnt/models:/mnt/models:ro \
         -e HIP_VISIBLE_DEVICES=0 \
         "$ROCM_IMAGE" \
         -c "exec > /tmp/server.log 2>&1; ${ROCM_BIN}/llama-server \
-            --rpc 127.0.0.1:${RPC_PORT} -m ${MODEL} -ngl ${NGL} -c ${CTX} \
+            --rpc ${RPC_ENDPOINT} -m ${MODEL} -ngl ${NGL} -c ${CTX} \
             -ctk ${CTK} -ctv ${CTV} -sm ${SPLIT_MODE} -ts ${TS} \
             --host 127.0.0.1 --port ${PORT} ${SERVER_EXTRA[*]}" >>"$META" 2>&1
 fi
@@ -148,15 +269,18 @@ ready=0
 while true; do
     elapsed=$(( $(date +%s) - start ))
     if curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
-        ready=1
-        log "server ready at ${elapsed}s"
-        break
+        if docker exec "$LLAMA_NAME" sh -c 'grep -q "model loaded" /tmp/server.log 2>/dev/null' 2>/dev/null; then
+            ready=1
+            log "server ready at ${elapsed}s (model loaded)"
+            break
+        fi
     fi
     if ! docker ps -q --filter "name=^${LLAMA_NAME}$" | grep -q .; then
         log "ERROR: llama-server container exited during load"
         docker cp "${LLAMA_NAME}:/tmp/server.log" "${LOG_DIR}/${LABEL}-server.log" 2>/dev/null || \
             docker logs "$LLAMA_NAME" >"${LOG_DIR}/${LABEL}-server.log" 2>&1 || true
         tail -30 "${LOG_DIR}/${LABEL}-server.log" | tee -a "$META"
+        capture_rpc_artifacts "load_exit"
         cleanup
         exit 2
     fi
@@ -164,12 +288,18 @@ while true; do
         log "TIMEOUT: server not healthy after ${LOAD_TIMEOUT}s"
         docker exec "$LLAMA_NAME" sh -c 'tail -c 32768 /tmp/server.log' 2>/dev/null \
             | strings | grep -vE '^[\\|/-]+$' | tail -15 | tee -a "$META"
+        capture_rpc_artifacts "load_timeout"
         cleanup
         exit 2
     fi
     if (( elapsed % 30 == 0 && elapsed > 0 )); then
         log "poll ${elapsed}s: still loading..."
         docker exec "$LLAMA_NAME" sh -c 'strings /tmp/server.log | grep -vE "^[\\\\|/-]+$" | tail -2' 2>/dev/null | tee -a "$META" || true
+        if [[ "$EXTRACT_VRAM" == "1" ]]; then
+            docker exec "$LLAMA_NAME" sh -c 'strings /tmp/server.log' 2>/dev/null \
+                | rg -i 'MiB|load_tensors|offload|assign|buffer|tensor split|RPC[0-9]|ROCm' \
+                | tail -8 | tee -a "$META" || true
+        fi
     fi
     sleep 5
 done
@@ -179,45 +309,112 @@ if [[ "$ready" -ne 1 ]]; then
     exit 2
 fi
 
-# warmup
-curl -sf "http://127.0.0.1:${PORT}/v1/chat/completions" \
-    -H "Content-Type: application/json" \
-    -d "{\"messages\":[{\"role\":\"user\",\"content\":\"Hi\"}],\"max_tokens\":8}" >/dev/null || true
+docker cp "${LLAMA_NAME}:/tmp/server.log" "${LOG_DIR}/${LABEL}-server.log" 2>/dev/null || true
+if [[ "$EXTRACT_VRAM" == "1" && -f "${LOG_DIR}/${LABEL}-server.log" ]]; then
+    log "--- vram allocation excerpt (load) ---"
+    rg -i 'MiB|load_tensors|offload|assign|buffer|tensor|RPC[0-9]|ROCm|CPU|layer' \
+        "${LOG_DIR}/${LABEL}-server.log" 2>/dev/null \
+        | rg -v 'progress|████' | tail -40 | tee -a "$META" || true
+fi
+
+# optional client warmup (skip when BENCH_NO_WARMUP=1; large RPC splits can OOM here)
+if [[ "$NO_WARMUP" != "1" ]]; then
+    curl -sf "http://127.0.0.1:${PORT}/v1/chat/completions" \
+        -H "Content-Type: application/json" \
+        -d "{\"messages\":[{\"role\":\"user\",\"content\":\"Hi\"}],\"max_tokens\":8}" >/dev/null || true
+fi
 
 log "benchmark ${RUNS} runs..."
 : >"$RESULT"
-for i in $(seq 1 "$RUNS"); do
-    out=$(curl -sf "http://127.0.0.1:${PORT}/v1/chat/completions" \
+
+bench_one() {
+    local run_idx="$1"
+    local prompt_id="$2"
+    local prompt_text="$3"
+    local payload
+    payload=$(python3 -c "
+import json, sys
+print(json.dumps({
+    'messages': [{'role': 'user', 'content': sys.argv[1]}],
+    'max_tokens': int(sys.argv[2]),
+}))
+" "$prompt_text" "$GEN_TOKENS")
+    out=$(curl -sf --max-time "$CURL_TIMEOUT" "http://127.0.0.1:${PORT}/v1/chat/completions" \
         -H "Content-Type: application/json" \
-        -d "{\"messages\":[{\"role\":\"user\",\"content\":\"The quick brown fox jumps over the lazy dog.\"}],\"max_tokens\":${GEN_TOKENS}}" \
+        -d "$payload" \
         2>"${LOG_DIR}/${LABEL}-curl.err") || {
-        log "FAIL run $i: curl error"
-        cat "${LOG_DIR}/${LABEL}-curl.err" | tee -a "$META"
-        cleanup
-        exit 1
+        local http_code="?"
+        if docker ps -q --filter "name=^${LLAMA_NAME}$" | grep -q .; then
+            http_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+                "http://127.0.0.1:${PORT}/v1/chat/completions" -H "Content-Type: application/json" -d "$payload" 2>/dev/null || echo '?')
+        else
+            log "WARN: llama-server container exited during generation"
+            docker logs "$LLAMA_NAME" 2>/dev/null | tail -20 | tee -a "$META" || true
+        fi
+        log "FAIL run $run_idx prompt=$prompt_id: curl error (http=${http_code})"
+        cat "${LOG_DIR}/${LABEL}-curl.err" 2>/dev/null | tee -a "$META" || true
+        capture_rpc_artifacts "gen_fail_run${run_idx}_${prompt_id}"
+        return 1
     }
     line=$(python3 -c "
 import json,sys
 d=json.load(sys.stdin)
 t=d.get('timings') or {}
-c=d.get('choices',[{}])[0].get('message',{}).get('content','')[:80]
-print(f\"run=$i P={t.get('prompt_per_second',0):.1f} G={t.get('predicted_per_second',0):.1f} preview={c!r}\")
-" <<<"$out")
+c=d.get('choices',[{}])[0].get('message',{}).get('content','')[:200]
+pid=sys.argv[1]
+ri=sys.argv[2]
+print(f\"run={ri} prompt={pid} P={t.get('prompt_per_second',0):.1f} G={t.get('predicted_per_second',0):.1f} preview={c!r}\")
+" "$prompt_id" "$run_idx" <<<"$out")
     log "$line"
     echo "$line" >>"$RESULT"
-    # death-loop check
     if python3 -c "
 import json,sys
 d=json.load(sys.stdin)
 c=d.get('choices',[{}])[0].get('message',{}).get('content','')
-print(1 if len(c)>500 and c.count(c[:20])>5 else 0)
+bad = len(c)>500 and len(c)>20 and c.count(c[:20])>5
+garbled = sum(1 for ch in c if ord(ch)>0x3000) > len(c)*0.15
+print(1 if bad or garbled else 0)
 " <<<"$out" | grep -q 1; then
-        log "WARN: possible garbage loop in output"
+        log "WARN: possible garbage loop or garbled output (prompt=$prompt_id)"
     fi
-done
+    return 0
+}
+
+if [[ -n "$PROMPTS_FILE" && -f "$PROMPTS_FILE" ]]; then
+    mapfile -t _prompt_rows < <(python3 -c "
+import json, sys
+for p in json.load(open(sys.argv[1])):
+    print(p['id'] + '\t' + p['content'].replace('\n', '\\n'))
+" "$PROMPTS_FILE")
+    run_idx=0
+    for row in "${_prompt_rows[@]}"; do
+        pid="${row%%$'\t'*}"
+        ptext="${row#*$'\t'}"
+        ptext="${ptext//\\n/$'\n'}"
+        for _ in $(seq 1 "$RUNS"); do
+            run_idx=$((run_idx + 1))
+            bench_one "$run_idx" "$pid" "$ptext" || { cleanup; exit 1; }  # artifacts captured in bench_one
+        done
+    done
+else
+    for i in $(seq 1 "$RUNS"); do
+        bench_one "$i" "fox" "The quick brown fox jumps over the lazy dog." || { cleanup; exit 1; }  # artifacts in bench_one
+    done
+fi
 
 docker cp "${LLAMA_NAME}:/tmp/server.log" "${LOG_DIR}/${LABEL}-server.log" 2>/dev/null || true
-docker logs "$RPC_NAME" >"${LOG_DIR}/${LABEL}-rpc.log" 2>&1 || true
+if [[ "$RPC_MODE" == "local" ]]; then
+    docker logs "$RPC_NAME" >"${LOG_DIR}/${LABEL}-rpc.log" 2>&1 || true
+else
+    capture_rpc_artifacts "pass_final"
+    {
+        echo "remote rpc endpoint=$RPC_ENDPOINT"
+        cat "${LOG_DIR}/${LABEL}-rpc-local.log" 2>/dev/null || true
+        echo "--- remus ---"
+        cat "${LOG_DIR}/${LABEL}-rpc-remus.log" 2>/dev/null || true
+    } >"${LOG_DIR}/${LABEL}-rpc.log" 2>&1 || true
+fi
+df -h / | tee -a "$META"
 
 cleanup
 log "RESULT=PASS"

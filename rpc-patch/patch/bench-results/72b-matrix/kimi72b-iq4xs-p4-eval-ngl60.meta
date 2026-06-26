@@ -1,0 +1,245 @@
+=== kimi72b-iq4xs-p4-eval-ngl60 ===
+variant=pathb proto=Path B (v4.2.2 workspace) rpc_mode=multi endpoint=192.168.8.176:50051,127.0.0.1:50051
+model=/mnt/models/Kimi-Dev-72B-IQ4_XS.gguf ctx=8192 ctk=q4_0 ctv=q4_0 ngl=60 ts=35,15,50 ncmoe=none np=1 no_warmup=1 load_timeout=1800s
+server_extra=--no-warmup -np 1 --fit off -fa on --verbose -lv 4 --reasoning off
+prompts_file=/home/hunter/projects/atomic-llama-cpp-patch/atomic-llama-cpp-turboquant/rpc-patch/bench-prompts/large-model-eval.json verbose_lv=4 extract_vram=1
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  453G  241G  66% /
+2026-06-26T14:21:31Z
+using remote/multi RPC at 192.168.8.176:50051,127.0.0.1:50051 (no local bench-rpc)
+Connection to 192.168.8.176 50051 port [tcp/*] succeeded!
+RPC reachable: 192.168.8.176:50051
+Connection to 127.0.0.1 50051 port [tcp/*] succeeded!
+RPC reachable: 127.0.0.1:50051
+starting llama-server (ROCm HIP device 0)...
+00d1be61282a87f02f29909b97a90339158d542f061ffe5261f8260bfa34208f
+polling server health (max 1800s)...
+poll 30s: still loading...
+0.17.522.014 I load_tensors: RPC0[192.168.8.176:50051] model buffer size =  9517.76 MiB
+..........................................................................
+0.01.792.522 I load_tensors: loading model tensors, this can take a while... (mmap = true, direct_io = false)
+0.17.521.958 I load_tensors: offloading output layer to GPU
+0.17.521.977 I load_tensors: offloading 59 repeating layers to GPU
+0.17.521.979 I load_tensors: offloaded 60/81 layers to GPU
+0.17.522.003 I load_tensors:   CPU_Mapped model buffer size = 10186.01 MiB
+0.17.522.007 I load_tensors:        ROCm0 model buffer size = 14118.14 MiB
+0.17.522.011 I load_tensors: RPC0[127.0.0.1:50051] model buffer size =  4079.04 MiB
+0.17.522.014 I load_tensors: RPC0[192.168.8.176:50051] model buffer size =  9517.76 MiB
+server ready at 91s (model loaded)
+--- vram allocation excerpt (load) ---
+0.01.392.092 I   - ROCm0   : Radeon RX 7900 XTX (24560 MiB, 24524 MiB free)
+0.01.392.102 I   - CPU     : Intel(R) Core(TM) i7-14700K (80253 MiB, 80253 MiB free)
+0.01.561.491 I   - RPC0    : 192.168.8.176:50051 (15849 MiB, 15699 MiB free)
+0.01.645.800 I   - RPC1    : 127.0.0.1:50051 (7841 MiB, 7687 MiB free)
+0.01.645.870 I system_info: n_threads = 8 (n_threads_batch = 8) / 28 | ROCm : NO_VMM = 1 | PEER_MAX_BATCH_SIZE = 128 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 | 
+0.01.681.671 I llama_model_loader: loaded meta data with 36 key-value pairs and 963 tensors from /mnt/models/Kimi-Dev-72B-IQ4_XS.gguf (version GGUF V3 (latest))
+0.01.681.725 I llama_model_loader: - kv  20:     qwen2.attention.layer_norm_rms_epsilon f32              = 0.000001
+0.01.702.479 I llama_model_loader: - type  f32:  401 tensors
+0.01.702.479 I llama_model_loader: - type q4_K:    1 tensors
+0.01.702.479 I llama_model_loader: - type q5_K:   80 tensors
+0.01.702.479 I llama_model_loader: - type q6_K:    1 tensors
+0.01.702.480 I llama_model_loader: - type iq4_nl:   80 tensors
+0.01.702.480 I llama_model_loader: - type iq4_xs:  400 tensors
+0.01.705.917 I llama_prepare_model_devices: using device RPC0 (192.168.8.176:50051) (unknown id) - 15699 MiB free
+0.01.707.480 I llama_prepare_model_devices: using device RPC1 (127.0.0.1:50051) (unknown id) - 7687 MiB free
+0.01.707.485 I llama_prepare_model_devices: using device ROCm0 (Radeon RX 7900 XTX) (0000:03:00.0) - 24524 MiB free
+0.01.792.462 I print_info: n_layer               = 80
+0.01.792.462 I print_info: n_layer_all           = 80
+0.01.792.522 I load_tensors: loading model tensors, this can take a while... (mmap = true, direct_io = false)
+0.17.521.958 I load_tensors: offloading output layer to GPU
+0.17.521.977 I load_tensors: offloading 59 repeating layers to GPU
+0.17.521.979 I load_tensors: offloaded 60/81 layers to GPU
+0.17.522.003 I load_tensors:   CPU_Mapped model buffer size = 10186.01 MiB
+0.17.522.007 I load_tensors:        ROCm0 model buffer size = 14118.14 MiB
+0.17.522.011 I load_tensors: RPC0[127.0.0.1:50051] model buffer size =  4079.04 MiB
+0.17.522.014 I load_tensors: RPC0[192.168.8.176:50051] model buffer size =  9517.76 MiB
+1.27.574.629 I llama_context:  ROCm_Host  output buffer size =     0.58 MiB
+1.27.574.784 I llama_kv_cache:        CPU KV buffer size =   189.00 MiB
+1.27.618.171 I llama_kv_cache:      ROCm0 KV buffer size =   261.00 MiB
+1.27.618.825 I llama_kv_cache: RPC0[127.0.0.1:50051] KV buffer size =    81.00 MiB
+1.27.634.933 I llama_kv_cache: RPC0[192.168.8.176:50051] KV buffer size =   189.00 MiB
+1.27.635.326 I llama_kv_cache: size =  720.00 MiB (  8192 cells,  80 layers,  1/1 seqs), K (q4_0):  360.00 MiB, V (q4_0):  360.00 MiB
+1.27.806.758 I sched_reserve: RPC0[192.168.8.176:50051] compute buffer size =   213.26 MiB
+1.27.806.761 I sched_reserve: RPC0[127.0.0.1:50051] compute buffer size =   213.26 MiB
+1.27.806.762 I sched_reserve:      ROCm0 compute buffer size =   310.25 MiB
+1.27.806.763 I sched_reserve:        CPU compute buffer size =    40.01 MiB
+1.28.534.761 I srv    load_model: prompt cache is enabled, size limit: 8192 MiB
+benchmark 1 runs...
+run=1 prompt=math-gsm P=23.1 G=5.2 preview="◁think▷Okay, let's figure out how much change Maya receives. \n\nFirst, I need to calculate the total cost of the notebooks. Each notebook costs $3, and Maya buys 4 of them. So, 4 notebooks times $3 eac"
+run=2 prompt=logic-syllogism P=64.0 G=5.1 preview="◁think▷Okay, let's try to figure this out. The problem says that all members of club A who play chess also play go. So if someone is in club A and plays chess, they must play go. Then, some members of"
+run=3 prompt=code-python P=65.4 G=5.2 preview="◁think▷Okay, let's tackle this problem. I need to write a Python function called merge_intervals that takes a list of intervals (each a [start, end] pair) and returns a merged list where overlapping i"
+run=4 prompt=code-debug P=11.0 G=5.2 preview="◁think▷Okay, let's try to figure out how to find the bug in the Python code provided. The user mentioned there's a bug, but they didn't specify what it is. So I need to look at the code and see if the"
+run=5 prompt= P=10.0 G=5.1 preview="◁think▷Okay, let me try to figure out how to respond to this user's message. Wait, the user didn't actually write anything. The message is empty. Hmm, that's a bit confusing. But maybe they're expecti"
+run=6 prompt=def running_mean(xs): P=11.5 G=5.2 preview='◁think▷Okay, let me try to figure out how to implement the running_mean function. The user probably wants a function that calculates the running mean of a list of numbers. Let me recall what a running'
+run=7 prompt=    total = 0 P=12.2 G=5.2 preview="◁think▷Okay, let's see. The user provided a line of code: total = 0. They probably want to know what this does. \n\nHmm, in programming, this line initializes a variable called 'total' and sets its valu"
+run=8 prompt=    out = [] P=10.7 G=5.2 preview="◁think▷Okay, let's tackle this problem. The user provided a code snippet that initializes an empty list called 'out'. The task is to figure out how to populate this list. The user wants to generate al"
+run=9 prompt=    for i, x in enumerate(xs): P=12.8 G=5.2 preview='◁think▷Okay, let\'s try to figure out how to explain the code snippet "for i, x in enumerate(xs):" to a user. The user might not be familiar with Python\'s enumerate function, so I need to break it down'
+run=10 prompt=        total += x P=11.8 G=5.2 preview="◁think▷Okay, let's try to figure out what the user is asking. The code snippet provided is a line that increments the 'total' variable by 'x'. But there's no context here. Maybe the user is trying to "
+run=11 prompt=        out.append(total / i) P=12.1 G=5.3 preview="◁think▷Okay, let's try to figure out what this line of code is doing. The user provided a snippet: out.append(total / i). \n\nFirst, I need to understand the context. The line is appending the result of"
+run=12 prompt=    return out P=10.2 G=5.3 preview='◁think▷Okay, I need to figure out how to help the user with their code. The user provided a snippet that says "return out". Let me look at that. The problem is probably related to a function that\'s su'
+run=13 prompt= P=11.0 G=5.2 preview="◁think▷Okay, let's tackle this problem. The user is asking how to find the value of (a^3 + b^3) given that a + b = 2 and ab = 0. I need to figure out the steps to solve this.\n\nFirst, I remember that t"
+run=14 prompt=reasoning-plan P=58.0 G=5.2 preview="◁think▷Okay, let's tackle this problem. The user wants to migrate a monolithic REST API into three microservices: auth, catalog, and orders, with minimal downtime. The goal is to outline five concrete"
+run=15 prompt=coder-sql P=55.7 G=5.2 preview="◁think▷Okay, let's tackle this problem. The user wants a SQL query that returns each customer's name, their order count, and their total spend in 2024, ordered by total spend descending. \n\nFirst, I ne"
+--- artifact capture (pass_final) @ 2026-06-26T14:35:42Z ---
+=== 2026-06-26T14:35:42Z reason=pass_final ===
+[docker ps -a]
+bench-llama                      Up 14 minutes               llama-rocm-patched
+pathb-rpc                        Up 14 minutes               llama-rpc-cuda-a2
+llama_nv_tq_rpc                  Exited (137) 46 hours ago   vllm-deploy-llama-nv-tq-rpc:latest
+llama_amd_tq_rpc                 Exited (137) 46 hours ago   vllm-deploy-llama-amd-tq-rpc:latest
+=== 2026-06-26T14:35:42Z reason=pass_final ===
+[romulus-rocm]
+
+
+============================ ROCm System Management Interface ============================
+================================== Memory Usage (Bytes) ==================================
+GPU[0]		: VRAM Total Memory (B): 25753026560
+GPU[0]		: VRAM Total Used Memory (B): 16846331904
+==========================================================================================
+================================== End of ROCm SMI Log ===================================
+[romulus-nvidia]
+Fri Jun 26 16:35:42 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.71.05              Driver Version: 595.71.05      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3060 Ti     Off |   00000000:0A:00.0 Off |                  N/A |
+| 54%   50C    P2             47W /  220W |    4553MiB /   8192MiB |     11%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            3057      G   /usr/lib/xorg/Xorg                        4MiB |
+|    0   N/A  N/A          873742      C   /app/bin/rpc-server                    4530MiB |
++-----------------------------------------------------------------------------------------+
+[remus-nvidia]
+Fri Jun 26 16:35:42 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.71.05              Driver Version: 595.71.05      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 5060 Ti     Off |   00000000:01:00.0 Off |                  N/A |
+| 31%   42C    P1             32W /  180W |   10095MiB /  16311MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            2128      G   /usr/lib/xorg/Xorg                        4MiB |
+|    0   N/A  N/A          234480      C   /usr/local/bin/rpc-server             10072MiB |
++-----------------------------------------------------------------------------------------+
+--- rpc-local (tail) ---
+         This is an experimental feature and is not secure!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+Starting RPC server v4.2.2
+  endpoint       : 0.0.0.0:50051
+  local cache    : n/a
+Devices:
+  CUDA0: NVIDIA GeForce RTX 3060 Ti (7841 MiB, 7687 MiB free)
+  transport      : TCP
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+--- rpc-remus (tail) ---
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5fff37d96a90, data: 0x743b0a010080, offset: 0, size: 8
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5fff37d96a90, data: 0x743b0a010100, offset: 0, size: 8
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5fff37d96a90, data: 0x743b0a010180, offset: 0, size: 1024
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [graph_recompute] device: 0
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_EVENT_RECORD: event_id=0, device=0
+pathb-rpc-remus  | [get_tensor] buffer: 0x5fff37d96a90, data: 0x743b0a000000, offset: 0, size: 32768
+pathb-rpc-remus  | [set_tensor] buffer: 0x5fff37d96a90, data: 0x743b0a000000, offset: 0, size: 32768
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5fff37d96a90, data: 0x743b0a008000, offset: 0, size: 32768
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5fff37d96a90, data: 0x743b0a010000, offset: 0, size: 4
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5fff37d96a90, data: 0x743b0a010080, offset: 0, size: 8
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5fff37d96a90, data: 0x743b0a010100, offset: 0, size: 8
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5fff37d96a90, data: 0x743b0a010180, offset: 0, size: 1024
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [graph_recompute] device: 0
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_EVENT_RECORD: event_id=0, device=0
+pathb-rpc-remus  | [get_tensor] buffer: 0x5fff37d96a90, data: 0x743b0a000000, offset: 0, size: 32768
+pathb-rpc-remus  | [set_tensor] buffer: 0x5fff37d96a90, data: 0x743b0a000000, offset: 0, size: 32768
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5fff37d96a90, data: 0x743b0a008000, offset: 0, size: 32768
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5fff37d96a90, data: 0x743b0a010000, offset: 0, size: 4
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5fff37d96a90, data: 0x743b0a010080, offset: 0, size: 8
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5fff37d96a90, data: 0x743b0a010100, offset: 0, size: 8
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [set_tensor] buffer: 0x5fff37d96a90, data: 0x743b0a010180, offset: 0, size: 1024
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_SET_TENSOR_BATCH: processed 1 tensors
+pathb-rpc-remus  | [graph_recompute] device: 0
+pathb-rpc-remus  | [rpc_serve_client] RPC_CMD_EVENT_RECORD: event_id=0, device=0
+pathb-rpc-remus  | [get_tensor] buffer: 0x5fff37d96a90, data: 0x743b0a000000, offset: 0, size: 32768
+--- server log tail (infer) ---
+13.38.529.841 I slot print_timing: id  0 | task 3599 | n_decoded =    116, tg =   5.28 t/s
+13.41.565.467 I slot print_timing: id  0 | task 3599 | n_decoded =    132, tg =   5.28 t/s
+13.44.579.737 I slot print_timing: id  0 | task 3599 | n_decoded =    148, tg =   5.28 t/s
+13.47.614.435 I slot print_timing: id  0 | task 3599 | n_decoded =    164, tg =   5.28 t/s
+13.50.662.717 I slot print_timing: id  0 | task 3599 | n_decoded =    180, tg =   5.28 t/s
+13.53.825.678 I slot print_timing: id  0 | task 3599 | n_decoded =    195, tg =   5.23 t/s
+13.56.872.407 I slot print_timing: id  0 | task 3599 | n_decoded =    211, tg =   5.23 t/s
+13.59.929.228 I slot print_timing: id  0 | task 3599 | n_decoded =    227, tg =   5.23 t/s
+14.02.989.329 I slot print_timing: id  0 | task 3599 | n_decoded =    243, tg =   5.23 t/s
+14.05.489.807 I slot print_timing: id  0 | task 3599 | prompt eval time =     934.32 ms /    52 tokens (   17.97 ms per token,    55.66 tokens per second)
+14.05.489.811 I slot print_timing: id  0 | task 3599 |        eval time =   48937.62 ms /   256 tokens (  191.16 ms per token,     5.23 tokens per second)
+14.05.489.811 I slot print_timing: id  0 | task 3599 |       total time =   49871.94 ms /   308 tokens
+14.05.489.812 I slot print_timing: id  0 | task 3599 |    graphs reused =       3795
+14.05.489.833 I slot      release: id  0 | task 3599 | stop processing: n_tokens = 331, truncated = 0
+14.05.489.841 I srv  update_slots: all slots are idle
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  453G  241G  66% /
+RESULT=PASS
+results in /home/hunter/projects/atomic-llama-cpp-patch/atomic-llama-cpp-turboquant/rpc-patch/patch/bench-results/72b-matrix/kimi72b-iq4xs-p4-eval-ngl60.result

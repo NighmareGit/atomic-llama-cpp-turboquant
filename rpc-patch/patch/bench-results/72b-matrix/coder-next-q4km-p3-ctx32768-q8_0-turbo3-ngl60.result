@@ -1,0 +1,2 @@
+run=1 prompt=fox P=16.8 G=14.4 preview="That's a classic pangram—a sentence using every letter of the English alphabet at least once! 🦊🦊\n\nIt’s often used for testing keyboards,"
+run=2 prompt=fox P=10.2 G=21.2 preview='That’s a classic pangram—a sentence that uses every letter of the English alphabet at least once! 🦊🐶  \nIt’s often used for typing practice'

@@ -1,0 +1,68 @@
+=== kimi72b-iq4xs-p1-fitoff-ngl56 ===
+variant=pathb proto=Path B (v4.2.2 workspace) rpc_mode=multi endpoint=192.168.8.176:50051,127.0.0.1:50051
+model=/mnt/models/Kimi-Dev-72B-IQ4_XS.gguf ctx=8192 ctk=q4_0 ctv=q4_0 ngl=56 ts=35,15,50 ncmoe=none np=1 no_warmup=1 load_timeout=1800s
+server_extra=--no-warmup -np 1 --fit off --verbose -lv 4 --reasoning off
+prompts_file=default-fox verbose_lv=4 extract_vram=1
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  452G  241G  66% /
+2026-06-26T10:20:09Z
+using remote/multi RPC at 192.168.8.176:50051,127.0.0.1:50051 (no local bench-rpc)
+Connection to 192.168.8.176 50051 port [tcp/*] succeeded!
+RPC reachable: 192.168.8.176:50051
+Connection to 127.0.0.1 50051 port [tcp/*] succeeded!
+RPC reachable: 127.0.0.1:50051
+starting llama-server (ROCm HIP device 0)...
+b83f50ffd3d0b26ab373dc6ba5ac6b0fcb9e1b41f2a5d65d2d7b9ff43f360b81
+polling server health (max 1800s)...
+poll 30s: still loading...
+0.02.810.152 I load_tensors: RPC0[192.168.8.176:50051] model buffer size =  9064.53 MiB
+..................................................................................
+0.01.756.991 I load_tensors: loading model tensors, this can take a while... (mmap = true, direct_io = false)
+0.02.810.105 I load_tensors: offloading output layer to GPU
+0.02.810.116 I load_tensors: offloading 55 repeating layers to GPU
+0.02.810.118 I load_tensors: offloaded 56/81 layers to GPU
+0.02.810.142 I load_tensors:   CPU_Mapped model buffer size = 11998.91 MiB
+0.02.810.145 I load_tensors:        ROCm0 model buffer size = 13211.68 MiB
+0.02.810.150 I load_tensors: RPC0[127.0.0.1:50051] model buffer size =  3625.81 MiB
+0.02.810.152 I load_tensors: RPC0[192.168.8.176:50051] model buffer size =  9064.53 MiB
+server ready at 71s (model loaded)
+--- vram allocation excerpt (load) ---
+0.01.533.774 I   - ROCm0   : Radeon RX 7900 XTX (24560 MiB, 24524 MiB free)
+0.01.533.785 I   - CPU     : Intel(R) Core(TM) i7-14700K (80253 MiB, 80253 MiB free)
+0.01.536.802 I   - RPC0    : 192.168.8.176:50051 (15849 MiB, 15663 MiB free)
+0.01.622.887 I   - RPC1    : 127.0.0.1:50051 (7841 MiB, 7687 MiB free)
+0.01.622.954 I system_info: n_threads = 8 (n_threads_batch = 8) / 28 | ROCm : NO_VMM = 1 | PEER_MAX_BATCH_SIZE = 128 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 | 
+0.01.643.706 I llama_model_loader: loaded meta data with 36 key-value pairs and 963 tensors from /mnt/models/Kimi-Dev-72B-IQ4_XS.gguf (version GGUF V3 (latest))
+0.01.643.754 I llama_model_loader: - kv  20:     qwen2.attention.layer_norm_rms_epsilon f32              = 0.000001
+0.01.664.336 I llama_model_loader: - type  f32:  401 tensors
+0.01.664.336 I llama_model_loader: - type q4_K:    1 tensors
+0.01.664.337 I llama_model_loader: - type q5_K:   80 tensors
+0.01.664.337 I llama_model_loader: - type q6_K:    1 tensors
+0.01.664.337 I llama_model_loader: - type iq4_nl:   80 tensors
+0.01.664.337 I llama_model_loader: - type iq4_xs:  400 tensors
+0.01.668.336 I llama_prepare_model_devices: using device RPC0 (192.168.8.176:50051) (unknown id) - 15663 MiB free
+0.01.669.738 I llama_prepare_model_devices: using device RPC1 (127.0.0.1:50051) (unknown id) - 7687 MiB free
+0.01.669.747 I llama_prepare_model_devices: using device ROCm0 (Radeon RX 7900 XTX) (0000:03:00.0) - 24524 MiB free
+0.01.756.932 I print_info: n_layer               = 80
+0.01.756.933 I print_info: n_layer_all           = 80
+0.01.756.991 I load_tensors: loading model tensors, this can take a while... (mmap = true, direct_io = false)
+0.02.810.105 I load_tensors: offloading output layer to GPU
+0.02.810.116 I load_tensors: offloading 55 repeating layers to GPU
+0.02.810.118 I load_tensors: offloaded 56/81 layers to GPU
+0.02.810.142 I load_tensors:   CPU_Mapped model buffer size = 11998.91 MiB
+0.02.810.145 I load_tensors:        ROCm0 model buffer size = 13211.68 MiB
+0.02.810.150 I load_tensors: RPC0[127.0.0.1:50051] model buffer size =  3625.81 MiB
+0.02.810.152 I load_tensors: RPC0[192.168.8.176:50051] model buffer size =  9064.53 MiB
+1.05.539.479 I llama_context:  ROCm_Host  output buffer size =     0.58 MiB
+1.05.539.663 I llama_kv_cache:        CPU KV buffer size =   225.00 MiB
+1.05.600.325 I llama_kv_cache:      ROCm0 KV buffer size =   243.00 MiB
+1.05.600.792 I llama_kv_cache: RPC0[127.0.0.1:50051] KV buffer size =    72.00 MiB
+1.05.615.989 I llama_kv_cache: RPC0[192.168.8.176:50051] KV buffer size =   180.00 MiB
+1.05.616.289 I llama_kv_cache: size =  720.00 MiB (  8192 cells,  80 layers,  1/1 seqs), K (q4_0):  360.00 MiB, V (q4_0):  360.00 MiB
+1.05.753.349 I sched_reserve: RPC0[192.168.8.176:50051] compute buffer size =   213.26 MiB
+1.05.753.352 I sched_reserve: RPC0[127.0.0.1:50051] compute buffer size =   213.26 MiB
+1.05.753.353 I sched_reserve:      ROCm0 compute buffer size =   310.25 MiB
+1.05.753.354 I sched_reserve:        CPU compute buffer size =    40.01 MiB
+1.06.126.677 I srv    load_model: prompt cache is enabled, size limit: 8192 MiB
+benchmark 1 runs...
+FAIL run 1 prompt=fox: curl error (http=000?)

@@ -1,0 +1,22 @@
+=== config-b-35b-a3b ===
+variant=pathb proto=Path B (v4.2.2 workspace) rpc_mode=remote endpoint=192.168.8.176:50051
+model=/mnt/models/Qwen3.5-35B-A3B.i1-Q4_K_M.gguf ctx=4096 ctk=q4_0 ctv=q4_0 ngl=99 ts=25,75 ncmoe=8 np=1 no_warmup=1 load_timeout=900s
+server_extra=--no-warmup -np 1 --n-cpu-moe 8 --fit off --fit-target 900,900 --verbose -lv 2
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  451G  242G  66% /
+2026-06-26T09:24:37Z
+using remote/multi RPC at 192.168.8.176:50051 (no local bench-rpc)
+Connection to 192.168.8.176 50051 port [tcp/*] succeeded!
+RPC reachable: 192.168.8.176:50051
+starting llama-server (ROCm HIP device 0)...
+1eb37ccb2b038287f5cbd0ed3d51670018503b725475a669efaf1d1d68d58e09
+polling server health (max 900s)...
+server ready at 30s
+benchmark 3 runs...
+run=1 P=44.1 G=28.8 preview=''
+run=2 P=26.3 G=29.6 preview=''
+run=3 P=27.4 G=28.8 preview=''
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  451G  242G  66% /
+RESULT=PASS
+results in /home/hunter/projects/atomic-llama-cpp-patch/atomic-llama-cpp-turboquant/rpc-patch/patch/bench-results/config-b-matrix/config-b-35b-a3b.result

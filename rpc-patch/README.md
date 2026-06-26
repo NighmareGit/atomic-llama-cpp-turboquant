@@ -5,7 +5,7 @@ Private fork work on **llama.cpp RPC cross-GPU performance**: batching and pipel
 **Git repo root:** parent of this folder (`atomic-llama-cpp-turboquant/`)  
 **This folder:** `rpc-patch/` (docs, scripts, handover, bench artifacts)  
 **Builds:** `../build-cuda-b-bin/`, `../build-rocm-docker/`  
-**Status (2026-06-25):** Path B implemented and benchmarked on Config A. See [patch/HANDOVER.md](patch/HANDOVER.md).
+**Status (2026-06-26):** Path B on Config A-C; Config C 72B+ matrix phases 1-4 complete after RPC event-drain fix. See [patch/HANDOVER.md](patch/HANDOVER.md), [patch/bench-results/72b-matrix/README.md](patch/bench-results/72b-matrix/README.md).
 
 ---
 
@@ -61,7 +61,22 @@ Default benchmark topology:
 - **Never** pin client and worker to the same GPU.
 - With `--rpc`, device index **0 = RPC0**, **1 = ROCm0**. Use percentage tensor-split, e.g. `-ts 10,90` (10% RPC, 90% ROCm).
 
-**72B note:** IQ4_XS ~40 GB weights exceed 32 GB combined VRAM. Offload to CPU with `-ngl 0 --fit on` or manual `-ngl 24-36`. See `scripts/pathb-72b-vram-calc.py` and `scripts/pathb-72b-server.sh`.
+**72B note:** On **Config C** (~45 GB, `ts=35,15,50`), dense 72B runs at ~5 t/s with `fit off` ngl=60 (RPC event-drain fix, 2026-06-26). MoE **coder-next-q4** up to 21 t/s. qwen-next-80b needs `fit on`. Matrix phases 1-4 complete. See `patch/bench-results/72b-matrix/README.md`, `scripts/pathb-72b-vram-calc.py`, `scripts/pathb-72b-matrix.sh`.
+
+### Config B: Romulus + remus (remote 5060 Ti)
+
+| Role | GPU | Host |
+|------|-----|------|
+| Client | 7900 XTX | Romulus |
+| Worker | 5060 Ti 16 GB | remus.local |
+
+```bash
+export PATHB_REMUS_SSH_PASS=...   # or use SSH keys
+./rpc-patch/scripts/pathb-remus-rpc.sh start
+BENCH_CONFIG=remus ./rpc-patch/scripts/rpc-server-bench-matrix.sh
+```
+
+See [docs/rpc-multi-node-remus.md](docs/rpc-multi-node-remus.md). Deploy files: [deploy/Atomic-Llama-Remus-PathB/](deploy/Atomic-Llama-Remus-PathB/).
 
 ---
 
@@ -109,6 +124,7 @@ All scripts resolve paths from `rpc-patch/` automatically; run from **git repo r
 | `pathb-test.sh` | Presets: `4b`, `matrix-4b`, `gemma12b`, `qwen27b`, `qwen72b`, `kimi72b`, ... |
 | `pathb-72b-server.sh` | 72B via `llama-server` + `--fit on` (called by `pathb-test.sh qwen72b`) |
 | `pathb-72b-vram-calc.py` | Print viable `-ngl` / `-ts` combos for 72B on 24+8 GB VRAM |
+| `pathb-72b-matrix.sh` | Phased 72B+ matrix (Config C, phases 1-4, eval prompts) |
 | `rpc-server-bench.sh` | Single `llama-server` <-> `rpc-server` bench; variants `a1`, `a1a2`, `pathb` |
 | `rpc-server-bench-matrix.sh` | Full comparison matrix across model sizes |
 | `rpc-ts-fit-probe.sh` | Probe tensor-split / `--fit` with `rocm-smi` + `nvidia-smi` during load |
@@ -187,6 +203,7 @@ All run logs live under **`patch/bench-results/`** (not `/tmp`):
 | `rpc-server-bench/` | `rpc-server-bench.sh`, matrix | `<label>.meta`, `.result`, `-server.log` |
 | `rpc-ts-probe/` | `rpc-ts-fit-probe.sh` | `<label>.meta`, `.gpu`, `-server.log` |
 | `pathb-runs/` | `pathb-run-test.sh`, `pathb-test.sh` | `<label>.log`, `.meta`, `.raw` |
+| `72b-matrix/` | `pathb-72b-matrix.sh` | 72B+ phased matrix; see `72b-matrix/README.md` |
 
 Summary: `patch/bench-results/rpc-server-bench/matrix-summary.txt`
 
