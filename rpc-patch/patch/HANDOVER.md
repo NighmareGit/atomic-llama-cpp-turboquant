@@ -74,6 +74,18 @@ Bench: `BENCH_CONFIG=remus ./rpc-patch/scripts/rpc-server-bench-matrix.sh` with 
 
 Config B beats Config A on all matrix models (+9% to +31%). See `docs/rpc-multi-node-remus.md`.
 
+### Config D: Romulus + remus RX 6600 (2026-06-26)
+
+| Role | GPU | Host | Port |
+|------|-----|------|------|
+| Client | RX 7900 XTX 24 GB | Romulus | - |
+| Worker | RX 6600 8 GB (ROCm) | remus.local | 50051 |
+
+Docker on remus: `~/docker/Atomic-Llama-Remus-RX6600/` (separate `server` + `rpc` images).  
+Full doc: `docs/rpc-remus-rx6600.md`. Bench: `BENCH_RPC_MODE=remote`, `BENCH_TS=1,1`, 9B cache **turbo3/turbo3**.
+
+Config D smoke (9B MTP): standalone G=32.4 t/s on RX 6600; cross-node RPC G=26.5 t/s avg. See `patch/bench-results/remus-rx6600/summary.txt`.
+
 ### Config C: dual RPC (remus 5060 Ti + Romulus 3060 Ti)
 
 `BENCH_CONFIG=config-c` with `-ts 12,8,80`. Slower than Config B on MoE models for 27B-36B matrix.
@@ -136,7 +148,8 @@ Verify with `load_tensors:` lines in server logs or `scripts/rpc-ts-fit-probe.sh
 
 | Model class | ts | ngl | ctx | cache | extras |
 |-------------|-----|-----|-----|-------|--------|
-| 9B | `1,1` | 99 | 8192 | q8_0 / turbo3 | — |
+| 9B | `1,1` | 99 | 8192 | q8_0 / turbo3 | Config A/B/C |
+| 9B (RX 6600 8GB) | `1,1` | 99 | 8192 | turbo3 / turbo3 | Config D worker |
 | 27B / 31B dense | `10,90` | 99 | 8192 | q8_0 / turbo3 | `--no-warmup -np 1` |
 | 35B / 36B MoE | `10,90` | 99 | 4096 | q4_0 / q4_0 | `--n-cpu-moe 8 --no-warmup -np 1` |
 
@@ -283,7 +296,7 @@ Override with `BENCH_LOG_DIR`, `PROBE_LOG_DIR`, `PATHB_LOG_DIR` env vars.
 ## 11. Known issues / open work
 
 1. ~~**Pipeline debug:**~~ Done — `b4-sched-debug-v.raw` shows `pipeline parallelism enabled` and `sched copies = 4` (`GGML_SCHED_DEBUG=1` + `-v`).
-2. **Config B:** NV client / AMD worker matrix not run (optional).
+2. **Config D matrix:** 27B+ on RX 6600 8 GB RPC worker not run yet (smoke 9B PASS).
 3. ~~**72B dense inference RPC crash:**~~ Fixed 2026-06-26 (`tls_pending_event` + send_rpc_cmd drain). Matrix phases 1-4 PASS for dense 72B. coder-next APEX flaky on reload; use coder-next-q4.
 4. **MoE at ctx 8192 + turbo3:** Not tested; 35B/36B matrix used ctx 4096 q4_0 + ncmoe 8.
 5. **Upstream merge:** Branch is a private fork patch; follow `AGENTS.md` if contributing upstream (human-authored, disclose AI assist).

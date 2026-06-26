@@ -10,6 +10,7 @@
 | **A** (baseline) | Romulus 7900 XTX | Romulus 3060 Ti localhost | `matrix-summary.txt` |
 | **B** | Romulus 7900 XTX | remus 5060 Ti 16GB remote | `-ts 15,85` |
 | **C** | Romulus 7900 XTX | remus 5060 Ti + Romulus 3060 Ti | `-ts 12,8,80` |
+| **D** | Romulus 7900 XTX | remus RX 6600 8GB ROCm | `-ts 1,1` (9B) |
 
 - remus hostname: `remus.local` (192.168.8.176 from Romulus DNS; also 192.168.8.22 on remus)
 - RPC port: **50051** (TCP, host network)
@@ -128,7 +129,38 @@ Full write-up: [`patch/bench-results/72b-matrix/README.md`](../patch/bench-resul
 
 **RPC fix:** `ggml-rpc.cpp` -- drain deferred `EVENT_RECORD` before `GET_TENSOR`. Rebuild rpc-server + libggml-rpc; `docker cp` to remus.
 
-## Phase 2 roadmap
+## Config D: Romulus + remus RX 6600 (ROCm RPC)
 
-- RX 6600 on remus as ROCm RPC worker (gfx1032, separate image)
+**Status:** smoke PASS (2026-06-26). Full doc: [rpc-remus-rx6600.md](rpc-remus-rx6600.md)
+
+Path on remus: `~/docker/Atomic-Llama-Remus-RX6600/`  
+Repo: [`deploy/Atomic-Llama-Remus-RX6600/`](../deploy/Atomic-Llama-Remus-RX6600/)
+
+| Image | Role |
+|-------|------|
+| `atomic-llama-remus-rx6600-server:latest` | Standalone llama-server on RX 6600 |
+| `atomic-llama-remus-rx6600-rpc:latest` | RPC worker for Romulus client |
+
+```bash
+# on remus (stop pathb-rpc-remus first - same port 50051)
+cd ~/docker/Atomic-Llama-Remus-RX6600
+./build-rpc.sh
+docker compose up -d rx6600-rpc
+```
+
+```bash
+# from romulus
+export PATHB_REMUS_DOCKER_DIR=~/docker/Atomic-Llama-Remus-RX6600
+export BENCH_RPC_MODE=remote BENCH_RPC_HOST=remus.local BENCH_TS=1,1
+export BENCH_CTK=turbo3 BENCH_CTV=turbo3
+./rpc-patch/scripts/rpc-server-bench.sh pathb remus-rx6600-9b-turbo3-ts11
+```
+
+9B on 8 GB worker: use `turbo3/turbo3` KV cache. Smoke result: **G=26.5 t/s** avg (`ts=1,1`, ctx=8192).
+
+Bench summary: [`patch/bench-results/remus-rx6600/summary.txt`](../patch/bench-results/remus-rx6600/summary.txt)
+
+## Open roadmap
+
+- Config D matrix (27B+) on RX 6600 8 GB worker
 - Path C single-node multi-GPU aggregation (same physical rpc-server)

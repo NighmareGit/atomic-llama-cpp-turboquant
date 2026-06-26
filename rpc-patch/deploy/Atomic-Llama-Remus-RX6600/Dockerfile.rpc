@@ -1,0 +1,50 @@
+# ROCm rpc-server only image for remus RX 6600 (gfx1032, RDNA2)
+# For romulus + remus (rpc) phase
+ARG PROXY_IP=192.168.8.108
+
+FROM rocm/dev-ubuntu-22.04:6.4-complete AS build-stage
+
+RUN bash -c 'timeout 1 bash -c "cat < /dev/null > /dev/tcp/'${PROXY_IP}'/3128" 2>/dev/null && (echo "Acquire::http::Proxy \"http://'${PROXY_IP}':3128\";" > /etc/apt/apt.conf.d/01proxy) || echo "Squid proxy offline"'
+
+RUN apt-get update && apt-get install -y \
+    git cmake ninja-build build-essential && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+ARG GIT_URL=http://192.168.8.108:3005/hunter/atomic-llama-cpp-turboquant.git
+ARG GIT_BRANCH=Path-B-Event-Support
+
+RUN git clone "${GIT_URL}" . && git checkout "${GIT_BRANCH}"
+
+RUN cmake -S . -B build -G Ninja \
+    -DGGML_HIP=ON \
+    -DGGML_RPC=ON \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DAMDGPU_TARGETS="gfx1030" \
+    -DGGML_HIP_ROCWMMA_FATTN=ON \
+    -DGGML_SCHED_MAX_COPIES=4 \
+    && cmake --build build --config Release --target rpc-server -- -j$(nproc)
+
+RUN mkdir -p /staging/bin /staging/lib \
+    && cp build/bin/rpc-server /staging/bin/ \
+    && find build -name "*.so*" -exec cp -v {} /staging/lib/ \;
+
+FROM rocm/dev-ubuntu-22.04:6.4-complete
+
+RUN apt-get update && apt-get install -y libgomp1 && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=build-stage /staging/bin/rpc-server /usr/local/bin/rpc-server
+COPY --from=build-stage /staging/lib/ /usr/local/lib/
+
+RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/llama.conf && ldconfig \
+    && chmod +x /usr/local/bin/rpc-server
+
+ENV HIP_VISIBLE_DEVICES=0
+ENV HSA_OVERRIDE_GFX_VERSION=10.3.0
+
+EXPOSE 50051
+
+ENTRYPOINT ["/usr/local/bin/rpc-server"]
+CMD ["-H", "0.0.0.0", "-p", "50051", "-d", "ROCm0"]

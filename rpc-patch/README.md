@@ -5,7 +5,7 @@ Private fork work on **llama.cpp RPC cross-GPU performance**: batching and pipel
 **Git repo root:** parent of this folder (`atomic-llama-cpp-turboquant/`)  
 **This folder:** `rpc-patch/` (docs, scripts, handover, bench artifacts)  
 **Builds:** `../build-cuda-b-bin/`, `../build-rocm-docker/`  
-**Status (2026-06-26):** Path B on Config A-C; Config C 72B+ matrix phases 1-4 complete after RPC event-drain fix. See [patch/HANDOVER.md](patch/HANDOVER.md), [patch/bench-results/72b-matrix/README.md](patch/bench-results/72b-matrix/README.md).
+**Status (2026-06-26):** Path B on Config A-D; Config C 72B+ matrix phases 1-4 complete; Config D RX 6600 ROCm docker smoke PASS. See [patch/HANDOVER.md](patch/HANDOVER.md), [docs/rpc-remus-rx6600.md](docs/rpc-remus-rx6600.md), [patch/bench-results/72b-matrix/README.md](patch/bench-results/72b-matrix/README.md).
 
 ---
 
@@ -78,6 +78,23 @@ BENCH_CONFIG=remus ./rpc-patch/scripts/rpc-server-bench-matrix.sh
 
 See [docs/rpc-multi-node-remus.md](docs/rpc-multi-node-remus.md). Deploy files: [deploy/Atomic-Llama-Remus-PathB/](deploy/Atomic-Llama-Remus-PathB/).
 
+### Config D: Romulus + remus RX 6600 (ROCm RPC)
+
+| Role | GPU | Host |
+|------|-----|------|
+| Client | 7900 XTX | Romulus |
+| Worker | RX 6600 8 GB | remus.local |
+
+Compartmentalized ROCm images (server + rpc separate). See [docs/rpc-remus-rx6600.md](docs/rpc-remus-rx6600.md). Deploy: [deploy/Atomic-Llama-Remus-RX6600/](deploy/Atomic-Llama-Remus-RX6600/).
+
+```bash
+export PATHB_REMUS_DOCKER_DIR=~/docker/Atomic-Llama-Remus-RX6600
+export BENCH_RPC_MODE=remote BENCH_CTK=turbo3 BENCH_CTV=turbo3 BENCH_TS=1,1
+./rpc-patch/scripts/rpc-server-bench.sh pathb remus-rx6600-9b-turbo3-ts11
+```
+
+9B on 8 GB RPC worker: **turbo3/turbo3** KV cache (`-ctk turbo3 -ctv turbo3`).
+
 ---
 
 ## Quick start
@@ -145,7 +162,8 @@ All scripts resolve paths from `rpc-patch/` automatically; run from **git repo r
 
 | Model | `-ts` | `-ngl` | ctx | cache | extras |
 |-------|-------|--------|-----|-------|--------|
-| 9B | `1,1` | 99 | 8192 | q8_0 / turbo3 | — |
+| 9B | `1,1` | 99 | 8192 | q8_0 / turbo3 | Config A/C client |
+| 9B (RX 6600 8GB) | `1,1` | 99 | 8192 | **turbo3 / turbo3** | Config D worker VRAM |
 | 27B / 31B | `10,90` | 99 | 8192 | q8_0 / turbo3 | `--no-warmup -np 1` |
 | 35B / 36B MoE | `10,90` | 99 | 4096 | q4_0 | `--n-cpu-moe 8` |
 | 72B IQ4_XS | `10,90` | 0 + `--fit on` | 1024 | q4_0 | `pathb-72b-server.sh` |
@@ -159,10 +177,11 @@ All scripts resolve paths from `rpc-patch/` automatically; run from **git repo r
 Read in this order if you are new:
 
 1. **[patch/HANDOVER.md](patch/HANDOVER.md)** — executive summary, code changes, hardware, scripts, benchmark results.
-2. **[docs/RPC_PATH_AB_OPTIMIZATION_REPORT.md](docs/RPC_PATH_AB_OPTIMIZATION_REPORT.md)** — detailed analysis, gaps, anti-patterns, future work.
-3. **[docs/rpc-path-b-tracking.md](docs/rpc-path-b-tracking.md)** — Path B checklist, verification logs, issues log (actively maintained).
-4. **[patch/PATH_B_EVENT_SUPPORT_IMPLEMENTATION.md](patch/PATH_B_EVENT_SUPPORT_IMPLEMENTATION.md)** — implementation snippets and insertion points.
-5. **[docs/rpc-path-a-tracking.md](docs/rpc-path-a-tracking.md)** — Path A1/A2 history and benchmarks.
+2. **[docs/rpc-remus-rx6600.md](docs/rpc-remus-rx6600.md)** — Config D RX 6600 ROCm Docker (standalone + RPC).
+3. **[docs/RPC_PATH_AB_OPTIMIZATION_REPORT.md](docs/RPC_PATH_AB_OPTIMIZATION_REPORT.md)** — detailed analysis, gaps, anti-patterns, future work.
+4. **[docs/rpc-path-b-tracking.md](docs/rpc-path-b-tracking.md)** — Path B checklist, verification logs, issues log (actively maintained).
+5. **[patch/PATH_B_EVENT_SUPPORT_IMPLEMENTATION.md](patch/PATH_B_EVENT_SUPPORT_IMPLEMENTATION.md)** — implementation snippets and insertion points.
+6. **[docs/rpc-path-a-tracking.md](docs/rpc-path-a-tracking.md)** — Path A1/A2 history and benchmarks.
 
 Supporting / historical:
 
@@ -204,6 +223,7 @@ All run logs live under **`patch/bench-results/`** (not `/tmp`):
 | `rpc-ts-probe/` | `rpc-ts-fit-probe.sh` | `<label>.meta`, `.gpu`, `-server.log` |
 | `pathb-runs/` | `pathb-run-test.sh`, `pathb-test.sh` | `<label>.log`, `.meta`, `.raw` |
 | `72b-matrix/` | `pathb-72b-matrix.sh` | 72B+ phased matrix; see `72b-matrix/README.md` |
+| `remus-rx6600/` | standalone + Config D smoke | `summary.txt` |
 
 Summary: `patch/bench-results/rpc-server-bench/matrix-summary.txt`
 

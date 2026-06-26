@@ -24,6 +24,7 @@
 | 2026-06-25 | B4 Final Verification | Pipeline debug captured (`-v` + `GGML_SCHED_DEBUG=1`). 512-token server stress PASS. Single-GPU regression PASS (102.3 t/s, sched copies=1). 72B attempted — hardware-limited on 24+8GB Config A. Path B ready for production. |
 | 2026-06-26 | Multi-node B | remus 5060 Ti Path B RPC docker built (`Atomic-Llama-Remus-PathB`). Config B matrix PASS (27B-36B, +9-31% vs Config A). Config C dual-RPC PASS but slower on MoE. 72B IQ4_XS loads (21s) but G=1.9 t/s (RPC not engaged with `--fit on -ngl 0`). Romulus root: 243 GB free after runs. |
 | 2026-06-26 | 72B matrix P1-4 | `pathb-72b-matrix.sh` phases 1-4 on Config C `ts=35,15,50`. RPC fix in ggml-rpc.cpp; dense 72B fitoff ngl=60 ~5 t/s; coder-next-q4 G=16-21; qwen-next-80b fiton. See `72b-matrix/README.md`. |
+| 2026-06-26 | Config D RX6600 | Compartmentalized ROCm docker on remus (`Atomic-Llama-Remus-RX6600`). Standalone server + rpc images built. gfx1030 build + HSA_OVERRIDE 10.3.0. 9B turbo3/turbo3 smoke PASS (standalone 32.4 t/s, RPC 26.5 t/s). Doc: `docs/rpc-remus-rx6600.md`. |
 
 ---
 
