@@ -36,14 +36,7 @@ static int rpc_trace_lvl() {
 
 static std::mutex rpc_trace_mutex;
 
-static void rpc_trace_emit(const char * fn, const char * phase, int cmd, size_t bytes, bool blocking, int64_t elapsed_us) {
-    if (!rpc_trace_lvl()) {
-        return;
-    }
-    const auto ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-    std::lock_guard<std::mutex> lock(rpc_trace_mutex);
-    FILE * out = stderr;
+static FILE * rpc_trace_file() {
     static FILE * trace_f = nullptr;
     static bool trace_f_init = false;
     if (!trace_f_init) {
@@ -53,8 +46,19 @@ static void rpc_trace_emit(const char * fn, const char * phase, int cmd, size_t 
             trace_f = fopen(path, "a");
         }
     }
-    if (trace_f) {
-        out = trace_f;
+    return trace_f;
+}
+
+static void rpc_trace_emit(const char * fn, const char * phase, int cmd, size_t bytes, bool blocking, int64_t elapsed_us) {
+    if (!rpc_trace_lvl()) {
+        return;
+    }
+    const auto ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    std::lock_guard<std::mutex> lock(rpc_trace_mutex);
+    FILE * out = rpc_trace_file();
+    if (!out) {
+        out = stderr;
     }
     fprintf(out,
         "{\"ts_us\":%lld,\"fn\":\"%s\",\"phase\":\"%s\",\"cmd\":%d,\"bytes\":%zu,\"blocking\":%s,\"elapsed_us\":%lld}\n",
@@ -116,6 +120,42 @@ enum rpc_cmd {
 };
 
 static_assert(RPC_CMD_HELLO == 14, "RPC_CMD_HELLO must be always 14");
+
+static void rpc_trace_emit_hello(const char * endpoint, int minor, bool peer_copy) {
+    if (!rpc_trace_lvl()) {
+        return;
+    }
+    const auto ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    std::lock_guard<std::mutex> lock(rpc_trace_mutex);
+    FILE * out = rpc_trace_file();
+    if (!out) {
+        out = stderr;
+    }
+    fprintf(out,
+        "{\"ts_us\":%lld,\"fn\":\"negotiate_hello\",\"phase\":\"hello\",\"cmd\":%d,\"endpoint\":\"%s\",\"minor\":%d,\"peer_copy\":%s,\"elapsed_us\":0}\n",
+        (long long) ts_us, RPC_CMD_HELLO, endpoint, minor, peer_copy ? "true" : "false");
+    fflush(out);
+}
+
+static void rpc_trace_emit_copy_issue(int cmd, const char * src_ep, const char * dst_ep, bool peer_copy, bool defer) {
+    if (!rpc_trace_lvl()) {
+        return;
+    }
+    const auto ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    std::lock_guard<std::mutex> lock(rpc_trace_mutex);
+    FILE * out = rpc_trace_file();
+    if (!out) {
+        out = stderr;
+    }
+    fprintf(out,
+        "{\"ts_us\":%lld,\"fn\":\"rpc_issue_copy_tensor\",\"phase\":\"copy_issue\",\"cmd\":%d,"
+        "\"src_ep\":\"%s\",\"dst_ep\":\"%s\",\"peer_copy\":%s,\"defer\":%s,\"elapsed_us\":0}\n",
+        (long long) ts_us, cmd, src_ep ? src_ep : "", dst_ep ? dst_ep : "",
+        peer_copy ? "true" : "false", defer ? "true" : "false");
+    fflush(out);
+}
 
 // Try RPC_CMD_SET_TENSOR_HASH first when data size is larger than this threshold
 const size_t HASH_THRESHOLD = 10 * 1024 * 1024;
@@ -603,7 +643,7 @@ static bool send_rpc_cmd(socket_ptr sock, enum rpc_cmd cmd, const void * input, 
 // Performs HELLO handshake with transport auto-negotiation.
 // Advertises local capabilities via conn_caps; if the server responds with
 // matching capabilities, the socket is upgraded transparently.
-static bool negotiate_hello(const std::shared_ptr<socket_t> & sock) {
+static bool negotiate_hello(const std::shared_ptr<socket_t> & sock, const char * endpoint) {
     rpc_msg_hello_req request = {};
     rpc_msg_hello_rsp response = {};
 
@@ -621,6 +661,11 @@ static bool negotiate_hello(const std::shared_ptr<socket_t> & sock) {
     sock->server_supports_batch = (response.major == RPC_PROTO_MAJOR_VERSION && response.minor >= 1);
     sock->server_supports_peer_copy = (response.major == RPC_PROTO_MAJOR_VERSION && response.minor >= 3);
     sock->update_caps(response.conn_caps);
+    if (endpoint && endpoint[0]) {
+        rpc_trace_emit_hello(endpoint, response.minor, sock->server_supports_peer_copy);
+        GGML_LOG_INFO("RPC %s: proto %d.%d peer_copy=%s\n", endpoint, response.major, response.minor,
+                      sock->server_supports_peer_copy ? "yes" : "no");
+    }
     return true;
 }
 
@@ -637,7 +682,7 @@ static socket_ptr rpc_ephemeral_connect(const std::string & endpoint) {
     if (!sock) {
         return nullptr;
     }
-    if (!negotiate_hello(sock)) {
+    if (!negotiate_hello(sock, endpoint.c_str())) {
         return nullptr;
     }
     return sock;
@@ -682,7 +727,7 @@ static std::shared_ptr<socket_t> get_socket(const std::string & endpoint) {
     if (sock == nullptr) {
         return nullptr;
     }
-    if (!negotiate_hello(sock)) {
+    if (!negotiate_hello(sock, endpoint.c_str())) {
         return nullptr;
     }
     LOG_DBG("[%s] connected to %s\n", __func__, endpoint.c_str());
@@ -886,6 +931,7 @@ static bool rpc_issue_copy_tensor(const ggml_tensor * src, ggml_tensor * dst, bo
     flush_set_tensor_batch();
 
     if (peer_copy) {
+        rpc_trace_emit_copy_issue(RPC_CMD_COPY_TENSOR_PEER, src_ep, dst_ep, true, defer_response);
         rpc_msg_copy_tensor_peer_req request = {};
         snprintf(request.src_endpoint, sizeof(request.src_endpoint), "%s", src_ep);
         request.src = serialize_tensor(src);
@@ -904,6 +950,7 @@ static bool rpc_issue_copy_tensor(const ggml_tensor * src, ggml_tensor * dst, bo
         return response.result;
     }
 
+    rpc_trace_emit_copy_issue(RPC_CMD_COPY_TENSOR, src_ep, dst_ep, false, defer_response);
     rpc_msg_copy_tensor_req request;
     request.src = serialize_tensor(src);
     request.dst = serialize_tensor(dst);

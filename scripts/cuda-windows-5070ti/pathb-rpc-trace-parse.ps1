@@ -13,13 +13,25 @@ $lines = @()
 $lines += "=== trace summary ==="
 $lines += "dir=$TraceDir"
 
+# Matches rpc_cmd enum in ggml/src/ggml-rpc/ggml-rpc.cpp
 $cmdNames = @{
-    4  = "SET_TENSOR"
-    5  = "SET_TENSOR_HASH"
-    6  = "GET_TENSOR"
-    7  = "COPY_TENSOR"
-    8  = "GRAPH_COMPUTE"
-    13 = "GRAPH_RECOMPUTE"
+    0  = "ALLOC_BUFFER"
+    1  = "GET_ALIGNMENT"
+    2  = "GET_MAX_SIZE"
+    3  = "BUFFER_GET_BASE"
+    4  = "FREE_BUFFER"
+    5  = "BUFFER_CLEAR"
+    6  = "SET_TENSOR"
+    7  = "SET_TENSOR_HASH"
+    8  = "GET_TENSOR"
+    9  = "COPY_TENSOR"
+    10 = "GRAPH_COMPUTE"
+    11 = "GET_DEVICE_MEMORY"
+    12 = "INIT_TENSOR"
+    13 = "GET_ALLOC_SIZE"
+    14 = "HELLO"
+    15 = "DEVICE_COUNT"
+    16 = "GRAPH_RECOMPUTE"
     17 = "SET_TENSOR_BATCH"
     18 = "EVENT_RECORD"
     19 = "COPY_TENSOR_PEER"
@@ -43,6 +55,23 @@ if (Test-Path $rpcFile) {
         $drain = $rpcRows | Where-Object { $_.fn -match "drain|flush" }
         if ($drain) {
             $lines += "  drain_flush_ms=$([math]::Round((@($drain | ForEach-Object { [int64]$_.elapsed_us }) | Measure-Object -Sum).Sum/1000,2))"
+        }
+        $drainCopy = $rpcRows | Where-Object { $_.phase -eq "drain_copy" }
+        if ($drainCopy) {
+            $lines += "  drain_copy_count=$($drainCopy.Count) drain_copy_ms=$([math]::Round((@($drainCopy | ForEach-Object { [int64]$_.elapsed_us }) | Measure-Object -Sum).Sum/1000,2))"
+        }
+        $hello = $rpcRows | Where-Object { $_.phase -eq "hello" }
+        if ($hello) {
+            foreach ($h in $hello) {
+                $ep = if ($h.endpoint) { $h.endpoint } else { "?" }
+                $lines += "  hello endpoint=$ep minor=$($h.minor) peer_copy=$($h.peer_copy)"
+            }
+        }
+        $copyIssue = $rpcRows | Where-Object { $_.phase -eq "copy_issue" }
+        if ($copyIssue) {
+            $defer = @($copyIssue | Where-Object { $_.defer -eq "true" })
+            $peer = @($copyIssue | Where-Object { $_.peer_copy -eq "true" })
+            $lines += "  copy_issue_count=$($copyIssue.Count) defer_count=$($defer.Count) peer_copy_count=$($peer.Count)"
         }
     }
 } else {

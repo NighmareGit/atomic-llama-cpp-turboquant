@@ -1,0 +1,6 @@
+﻿=== trace summary ===
+dir=D:\projects\atomic-llama-cpp-5070ti\atomic-llama-cpp-turboquant\docs\cuda-windows-5070ti\benchmarks\trace-f-3gpu-tier1b
+
+[rpc] missing D:\projects\atomic-llama-cpp-5070ti\atomic-llama-cpp-turboquant\docs\cuda-windows-5070ti\benchmarks\trace-f-3gpu-tier1b\rpc-trace.jsonl
+
+[sched] missing D:\projects\atomic-llama-cpp-5070ti\atomic-llama-cpp-turboquant\docs\cuda-windows-5070ti\benchmarks\trace-f-3gpu-tier1b\sched-trace.jsonl

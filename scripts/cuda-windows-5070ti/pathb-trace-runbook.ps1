@@ -11,6 +11,7 @@ if (-not $model) { throw "Missing model" }
 
 $Matrix = @{
     "trace-f-3gpu" = @{ Config = "config-f"; TensorSplit = "30,12,58"; Rpc = "" }
+    "trace-f-3gpu-tier1b" = @{ Config = "config-f"; TensorSplit = "30,12,58"; Rpc = "" }
     "trace-f-2gpu" = @{ Config = "config-f"; TensorSplit = "50,50"; Rpc = "192.168.8.176:50051" }
     "trace-e-2gpu" = @{ Config = "config-e"; TensorSplit = "50,50"; Rpc = "" }
 }
