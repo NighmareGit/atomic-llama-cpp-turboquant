@@ -1,7 +1,7 @@
 # Path-B Plus Tracking
 
 **Overall:** B+1 VALIDATED | Tier 1 SHIPPED | tier1b = run variance (fluke)  
-**Build:** 9963 (`5e48bb3a4`) client + remus v4.3 deployed  
+**Build:** 9964 client + remus **proto 4.3.2** (`peer_copy=yes` on :50051/:50052)  
 **Current Phase:** Phase 5 topology (2-device F ops + Path C spike)  
 **Branch:** Path-B-Event-Support-Pipeline-Plus (private fork)
 
@@ -16,6 +16,7 @@
 | 2026-06-27 | B+3 | COPY_TENSOR_PEER proto v4.3 (client+server; remus deployed) |
 | 2026-06-27 | B+3b | tier1b bench: remus v4.3 non-event on 3gpu F; peer COPY N/A (CUDA-RPC topology) |
 | 2026-06-27 | Phase 2 | Trace parser cmd map fix; hello/copy_issue RPC trace fields |
+| 2026-06-27 | Deploy | `pathb-remus-deploy-sync.sh`; build auto-syncs deploy to remus; proto 4.3.2 verified |
 
 ## Issues
 
@@ -41,13 +42,18 @@ Artifacts: `docs/cuda-windows-5070ti/benchmarks/trace-f-3gpu-{plus,legacy,tier1,
 
 ## Remus deploy
 
+`build` and `rebuild` sync `rpc-patch/deploy/*` to remus before compiling (no stale `GIT_BRANCH`).
+
 ```bash
-./rpc-patch/scripts/pathb-remus-rpc.sh build
-./rpc-patch/scripts/pathb-remus-rx6600-rpc.sh build
+./rpc-patch/scripts/pathb-remus-rpc.sh rebuild      # deploy + build + restart :50051
+./rpc-patch/scripts/pathb-remus-rx6600-rpc.sh rebuild # deploy + build + restart :50052
+# or
 ./rpc-patch/scripts/pathb-remus-multi-rpc-win.sh start
 ```
 
-Server logs: `RPC <endpoint>: proto 4.3 peer_copy=yes` (when trace/load connects).
+`deploy` only: `pathb-remus-rpc.sh deploy`. Skip sync: `PATHB_REMUS_SKIP_DEPLOY=1 build`.
+
+Server: `[hello] version: 4.3.2`. Client trace: `"minor":3,"peer_copy":true`.
 
 ## Next steps (Phase 5)
 

@@ -1,27 +1,36 @@
 #!/usr/bin/env bash
 # Lifecycle for remus RX6600 RPC docker compose (Config F worker on port 50052).
 #
-# usage: pathb-remus-rx6600-rpc.sh start|stop|status|logs|build
+# usage: pathb-remus-rx6600-rpc.sh start|stop|status|logs|deploy|build|rebuild
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=pathb-remus-deploy-sync.sh
+source "${SCRIPT_DIR}/pathb-remus-deploy-sync.sh"
 
 REMUS_SSH="${PATHB_REMUS_SSH:-hunter@${REMUS_RPC_IP:-192.168.8.176}}"
 REMUS_SSH_PASS="${PATHB_REMUS_SSH_PASS:-}"
 REMUS_DIR="${PATHB_REMUS_RX6600_DIR:-~/docker/Atomic-Llama-Remus-RX6600}"
 RPC_PORT="${PATHB_RX6600_RPC_PORT:-50052}"
+DEPLOY_SRC="${SCRIPT_DIR}/../deploy/Atomic-Llama-Remus-RX6600"
 
-SSH_CMD=(ssh -o StrictHostKeyChecking=accept-new)
-if [[ -n "$REMUS_SSH_PASS" ]] && command -v sshpass >/dev/null; then
-    SSH_CMD=(sshpass -p "$REMUS_SSH_PASS" ssh -o StrictHostKeyChecking=accept-new)
-fi
+pathb_remus_init_ssh
 
 remote() {
-    "${SSH_CMD[@]}" "$REMUS_SSH" "$@"
+    pathb_remus_remote "$@"
+}
+
+deploy_sync() {
+    pathb_remus_deploy_sync "$DEPLOY_SRC" "$REMUS_DIR"
 }
 
 ACTION="${1:-status}"
 
 case "$ACTION" in
+    deploy)
+        deploy_sync
+        ;;
     start)
         remote "cd $REMUS_DIR && RPC_PORT=${RPC_PORT} docker compose up -d rx6600-rpc"
         sleep 2
@@ -38,10 +47,21 @@ case "$ACTION" in
         remote "cd $REMUS_DIR && docker compose logs --tail=${tail_n} rx6600-rpc"
         ;;
     build)
+        if [[ "${PATHB_REMUS_SKIP_DEPLOY:-}" != "1" ]]; then
+            deploy_sync
+        fi
         remote "cd $REMUS_DIR && ./build-rpc.sh"
         ;;
+    rebuild)
+        deploy_sync
+        remote "cd $REMUS_DIR && ./build-rpc.sh"
+        remote "cd $REMUS_DIR && RPC_PORT=${RPC_PORT} docker compose up -d --force-recreate rx6600-rpc"
+        sleep 2
+        nc -zv "${REMUS_RPC_IP:-192.168.8.176}" "${RPC_PORT}"
+        ;;
     *)
-        echo "usage: $0 start|stop|status|logs|build" >&2
+        echo "usage: $0 start|stop|status|logs|deploy|build|rebuild" >&2
+        echo "  build/rebuild: sync deploy from repo first (set PATHB_REMUS_SKIP_DEPLOY=1 to skip)" >&2
         exit 1
         ;;
 esac
