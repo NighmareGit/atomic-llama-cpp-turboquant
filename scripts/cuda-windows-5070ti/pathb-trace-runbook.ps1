@@ -1,6 +1,6 @@
 # Trace matrix for RPC bug hunt (requires rebuilt llama-server with GGML_*_TRACE).
 param(
-    [string[]]$Runs = @("trace-f-3gpu", "trace-f-2gpu"),
+    [string[]]$Runs = @("trace-f-2gpu-plus"),
     [string]$ModelsRoot = "D:\models"
 )
 
@@ -10,6 +10,8 @@ $model = Get-ChildItem -Path $ModelsRoot -Recurse -Filter "Qwen3.6-35B-A3B-UD-IQ
 if (-not $model) { throw "Missing model" }
 
 $Matrix = @{
+    "trace-f-2gpu-plus" = @{ Config = "config-f"; TensorSplit = "50,50"; Rpc = "192.168.8.176:50051" }
+    "trace-f-3gpu-plus" = @{ Config = "config-f"; TensorSplit = "30,12,58"; Rpc = "" }
     "trace-f-3gpu" = @{ Config = "config-f"; TensorSplit = "30,12,58"; Rpc = "" }
     "trace-f-3gpu-tier1b" = @{ Config = "config-f"; TensorSplit = "30,12,58"; Rpc = "" }
     "trace-f-2gpu" = @{ Config = "config-f"; TensorSplit = "50,50"; Rpc = "192.168.8.176:50051" }

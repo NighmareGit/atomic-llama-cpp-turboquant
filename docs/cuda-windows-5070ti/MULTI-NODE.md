@@ -4,6 +4,8 @@
 
 **Config F:** Config E + remus RX 6600 RPC (`:50052`)
 
+**Path-B Plus production default (36B NL MoE):** use Config F as **2-device** only -- single `:50051`, `-ts 50,50`, `GGML_PIPELINE_PLUS=1`. Do not attach `:50052` unless VRAM requires it. Measured G=**48.9 t/s** (`trace-f-2gpu-plus`). See [rpc-patch/docs/rpc-path-b-plus-handover.md](../../rpc-patch/docs/rpc-path-b-plus-handover.md).
+
 ## Topology
 
 | Device | Role | VRAM |

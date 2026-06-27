@@ -49,4 +49,17 @@ See [PROFILING.md](../PROFILING.md) for bottleneck classification.
 
 Matrix summary: `config-f-matrix-summary.txt`
 
+## Path-B Plus trace matrix (2026-06-27)
+
+Production default for 36B NL MoE: **2-device F** (`trace-f-2gpu-plus`).
+
+| Label | Topology | Plus | G (t/s) | Notes |
+|-------|----------|------|---------|-------|
+| `trace-f-2gpu-plus` | 5070 + 5060 `ts=50,50` | 1 | **48.9** | **recommended** |
+| `trace-f-3gpu-plus` | 5070 + 5060 + 6600 `ts=30,12,58` | 1 | 42.8 | topology-limited |
+| `trace-f-3gpu-legacy` | 3-device | 0 | 39.3 | Plus=0 baseline |
+| `s4-4b-2gpu-plus` | 2-device, gemma-4-E4B | 1 | 44.2 | S4 correctness smoke |
+
+Run: `pathb-trace-runbook.ps1 -Runs trace-f-2gpu-plus`. Tracking: [rpc-patch/docs/rpc-path-b-plus-tracking.md](../../../rpc-patch/docs/rpc-path-b-plus-tracking.md).
+
 Details and offload guidance: [../MULTI-NODE.md](../MULTI-NODE.md)

@@ -5,7 +5,7 @@ Private fork work on **llama.cpp RPC cross-GPU performance**: batching and pipel
 **Git repo root:** parent of this folder (`atomic-llama-cpp-turboquant/`)  
 **This folder:** `rpc-patch/` (docs, scripts, handover, bench artifacts)  
 **Builds:** `../build-cuda-b-bin/`, `../build-rocm-docker/`  
-**Status (2026-06-27):** Path B on Config A-D; **Path-B Plus** B+1 validated (G=42.8), Tier 1 client shipped on `Path-B-Event-Support-Pipeline-Plus`. See [docs/rpc-path-b-plus-plan.md](docs/rpc-path-b-plus-plan.md). Prior: Config C 72B+ matrix phases 1-4 complete; Config D RX 6600 ROCm docker smoke PASS. See [patch/HANDOVER.md](patch/HANDOVER.md), [docs/rpc-remus-rx6600.md](docs/rpc-remus-rx6600.md), [patch/bench-results/72b-matrix/README.md](patch/bench-results/72b-matrix/README.md).
+**Status (2026-06-27):** Path B on Config A-D; **Path-B Plus B+1 PRODUCTION READY** (Phase 5 complete). Production default: 2-device Config F `ts=50,50`, single `:50051`, G=**48.9 t/s** on 36B NL. Tier 1 client shipped. Start here: [docs/rpc-path-b-plus-overview.md](docs/rpc-path-b-plus-overview.md). See also [docs/rpc-path-b-plus-tracking.md](docs/rpc-path-b-plus-tracking.md), [docs/rpc-path-b-plus-handover.md](docs/rpc-path-b-plus-handover.md). Prior: Config C 72B+ matrix phases 1-4 complete; Config D RX 6600 ROCm docker smoke PASS.
 
 ---
 
