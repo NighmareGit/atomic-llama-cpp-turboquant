@@ -16,6 +16,8 @@ $Matrix = @{
     "trace-f-3gpu-tier1b" = @{ Config = "config-f"; TensorSplit = "30,12,58"; Rpc = "" }
     "trace-f-2gpu" = @{ Config = "config-f"; TensorSplit = "50,50"; Rpc = "192.168.8.176:50051" }
     "trace-e-2gpu" = @{ Config = "config-e"; TensorSplit = "50,50"; Rpc = "" }
+    # Config G: romulus-client benches use pathb-romulus-4gpu-bench.sh (not this runbook)
+    "trace-g-4gpu-plus-legacy" = @{ Config = "config-f"; TensorSplit = "28,12,28,32"; Rpc = "" }  # 6600; HANG
 }
 
 if ($Runs.Count -eq 1 -and $Runs[0] -match ',') {

@@ -3,7 +3,7 @@
 Trace-proven blocking sites for multi-RPC pipeline stalls. Static map: [`RPC-WAIT-MAP.md`](../../docs/cuda-windows-5070ti/RPC-WAIT-MAP.md). Parse tools: `rpc-patch/scripts/pathb-rpc-trace-parse.sh`, `pathb-hotpath-summary.sh`.
 
 **Last updated:** 2026-06-27  
-**Evidence bench:** `trace-f-2gpu-plus` (production 2-device F), `trace-f-3gpu-plus` (3-device comparison)
+**Evidence bench:** `trace-f-2gpu-plus` (Windows 2-device F), `trace-f-3gpu-plus` (3-device), `trace-g-4gpu-primary-trace` (romulus 4-GPU stable)
 
 ---
 
@@ -21,6 +21,8 @@ These six sites were proven on `GGML_RPC_TRACE=1` / `GGML_SCHED_TRACE=1` runs an
 | 6 | **Cross-port COPY GET+SET relay** — no peer path on wire | `SET_TENSOR_HASH` dominates RPC ms on CUDA↔RPC; `COPY_TENSOR` on 3gpu F | B+3 | **SHIPPED** proto 4.3.2; **topology-limited** on 3gpu F (CUDA↔RPC hash, not RPC↔RPC) | `ggml/src/ggml-rpc/ggml-rpc.cpp` `RPC_CMD_COPY_TENSOR_PEER` (~934-948), `SET_TENSOR_HASH` (~832); server `rpc_serve_client` |
 
 **Tier 0/1 exit:** 2-device F `trace-f-2gpu-plus` — G=48.9, `assembly_overlap_count=267`, `drain_flush_ms` 2523→1734 vs legacy, `SET_TENSOR_HASH` hash path with `COPY_TENSOR=0`.
+
+**4-GPU cluster exit:** `trace-g-4gpu-primary-trace` — G~40, `split_total` 20.7 ms/tok, 5060 straggler 9.6 ms/tok, `assembly_overlap_count=1075`, slot init OK (vs RX6600 4-GPU hang at `initializing slots`).
 
 ---
 

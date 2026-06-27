@@ -17,13 +17,15 @@ atomic-llama-cpp-turboquant/
 │   ├── README.md
 │   ├── BUILD.md
 │   ├── MULTI-NODE.md              # Config E/F topology + results
+│   ├── CLUSTER-4GPU-PRIMARY.md    # Stable 4-GPU (7900+3060+5060+5070)
 │   └── benchmarks/                # see benchmarks/README.md
 ├── scripts/cuda-windows-5070ti/   # <-- Windows 5070 Ti scripts
 │   ├── build.ps1
 │   ├── smoke-llama-server.ps1
 │   ├── rpc-server-bench.ps1       # Config E/F hybrid bench
 │   ├── pathb-remus-rpc.ps1        # WSL -> remus 5060 RPC (Config E)
-│   ├── pathb-remus-multi-rpc.ps1  # WSL -> 5060 + RX6600 RPC (Config F)
+│   ├── pathb-remus-multi-rpc.ps1  # WSL -> 5060 + RX6600 RPC (Config F, experimental)
+│   ├── pathb-rpc-server.ps1       # Windows 5070 RPC worker :50053 (Config G)
 │   ├── invoke-wsl.ps1             # WSL + SSH bridge
 │   ├── pathb-vram-calc.ps1        # VRAM/ts planner
 │   ├── pathb-config-e-matrix.ps1  # Config E preset loop

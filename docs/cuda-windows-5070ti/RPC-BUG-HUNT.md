@@ -121,9 +121,35 @@ Server-side `rpc_trace_emit` in remus docker requires **rebuilt rpc-server image
 | `scripts/cuda-windows-5070ti/pathb-rpc-trace-parse.ps1` | jsonl -> `trace-summary.txt` |
 | `scripts/cuda-windows-5070ti/pathb-trace-runbook.ps1` | trace matrix driver |
 
+## RX6600 slot-init hang (2026-06-27)
+
+Separate from gen-time straggler analysis above: **4-GPU with RX6600 hangs at `initializing slots`**, not during `load_tensors` fan-out.
+
+| Run | Client | Endpoints | Stall | Result |
+|-----|--------|-----------|-------|--------|
+| `trace-g-4gpu-romulus-q8-pp1` | romulus 7900 | 5060+6600+3060 | slot init after ~64s load | HANG |
+| `trace-g-4gpu-plus` | Windows 5070 | 5060+6600+3060 | slot init ~45min | RPC recv failed |
+| `trace-g-4gpu-primary` (x3) | romulus 7900 | 5060+3060+5070 | slot init OK ~85s load | **PASS** G 38-43 |
+
+Load-phase `SET_TENSOR_HASH` completes on all variants. Failure is **first slot graph warmup** with `:50052` in the scheduler (likely EVENT_RECORD/COPY drain ordering).
+
+**Production 4-GPU:** drop `:50052`; use Windows 5070 `:50053`. See [CLUSTER-4GPU-PRIMARY.md](CLUSTER-4GPU-PRIMARY.md).
+
+## 4-GPU primary trace (7900 + 3060 + 5060 + 5070)
+
+`trace-g-4gpu-primary-trace` hotpath (romulus client, build `833ad4429`):
+
+| Metric | Value |
+|--------|-------|
+| Serial split sum | 20.7 ms/tok |
+| 5060 straggler | 9.6 ms/tok |
+| 3060 / 5070 | 5.5 / 5.4 ms/tok |
+| SET_TENSOR_HASH | 6.5s / 280 calls (load) |
+| assembly_overlap | 1075 (B+1 pass) |
+
 ## Next steps (fixes -- separate from diagnosis)
 
-1. **Ops:** Run 2-device F for 36B NL; update matrix defaults to drop `:50052`.
-2. **Path C spike:** CPU-only client, one remus rpc-server owning 5060+6600; measure split count vs current 4.
-3. **Path A3 / RPC copy:** Implement cross-endpoint `cpy_tensor_async` or server-side COPY to cut COPY_TENSOR blocking bucket.
-4. **Optional:** Split-level overlap in scheduler (large change; discuss before coding).
+1. **Ops:** 2-device F for Windows-client 36B NL (`ts=50,50`, drop `:50052`). **4-GPU romulus:** use primary topology (no 6600).
+2. **RX6600 debug:** dedicated session for ROCm docker slot-init hang (not blocking primary cluster).
+3. **Path A3 / RPC copy:** cross-endpoint `cpy_tensor_async` to cut COPY_TENSOR bucket on gen path.
+4. **Optional:** Split-level overlap in scheduler (large change).

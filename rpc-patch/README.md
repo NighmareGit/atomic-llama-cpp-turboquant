@@ -5,7 +5,7 @@ Private fork work on **llama.cpp RPC cross-GPU performance**: batching and pipel
 **Git repo root:** parent of this folder (`atomic-llama-cpp-turboquant/`)  
 **This folder:** `rpc-patch/` (docs, scripts, handover, bench artifacts)  
 **Builds:** `../build-cuda-b-bin/`, `../build-rocm-docker/`  
-**Status (2026-06-27):** Path B on Config A-D; **Path-B Plus B+1 PRODUCTION READY** (Phase 5 complete). Production default: 2-device Config F `ts=50,50`, single `:50051`, G=**48.9 t/s** on 36B NL. Tier 1 client shipped. Start here: [docs/rpc-path-b-plus-overview.md](docs/rpc-path-b-plus-overview.md). See also [docs/rpc-path-b-plus-tracking.md](docs/rpc-path-b-plus-tracking.md), [docs/rpc-path-b-plus-handover.md](docs/rpc-path-b-plus-handover.md). Prior: Config C 72B+ matrix phases 1-4 complete; Config D RX 6600 ROCm docker smoke PASS.
+**Status (2026-06-27):** Path B on Config A-D; **Path-B Plus B+1 PRODUCTION READY** (Phase 5). **4-GPU Config G primary STABLE** (Phase 10): romulus 7900 + 3060 + 5060 + 5070, G ~40 t/s, no RX6600. Windows 2-device default: `ts=50,50`, G=**48.9 t/s**. Start: [docs/rpc-path-b-plus-overview.md](docs/rpc-path-b-plus-overview.md), [CLUSTER-4GPU-PRIMARY.md](../docs/cuda-windows-5070ti/CLUSTER-4GPU-PRIMARY.md). Tracking: [docs/rpc-path-b-plus-tracking.md](docs/rpc-path-b-plus-tracking.md). RX6600 4-GPU: slot-init hang (parked).
 
 ---
 
@@ -120,8 +120,10 @@ Multi-node benches (remus RPC from Windows): [docs/cuda-windows-5070ti/MULTI-NOD
 |--------|----------|------------|--------------|
 | E | remus 5060 Ti + Windows 5070 Ti | `50,50` | `pathb-72b-vram-calc.py --config config-e` |
 | F | remus 5060 + RX6600 + Windows 5070 Ti | `30,12,58` | `pathb-72b-vram-calc.py --config config-f` |
+| G | romulus 7900 + 3060 + 5060 + 5070 (no 6600) | `36,24,24,16` | `pathb-romulus-4gpu-bench.sh` |
 
-Windows bench results (2026-06-27): Config E through 27B; Config F through 80B MoE.
+Windows bench results (2026-06-27): Config E through 27B; Config F through 80B MoE.  
+Romulus 4-GPU primary (2026-06-27): G 38-43 t/s, load ~85s. See `patch/bench-results/cluster-4gpu-primary/summary.md`.
 Artifact index: [docs/cuda-windows-5070ti/benchmarks/README.md](../docs/cuda-windows-5070ti/benchmarks/README.md).
 
 Linux Docker deploy (`rpc-patch/deploy/`) is separate; do not edit those files for Windows builds.

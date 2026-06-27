@@ -4,7 +4,7 @@ Overview: [rpc-path-b-plus-overview.md](rpc-path-b-plus-overview.md)
 
 **Overall:** B+1 **PRODUCTION READY** | B+4..B+6 **SHIPPED** (rebuild required) | Phase 7-8 tooling/cluster **SHIPPED**  
 **Build:** 9964+ client + remus/romulus **proto 4.3.2**  
-**Current Phase:** Phase 9 **S0-lite** (72B cluster benches after rebuild)
+**Current Phase:** Phase 10 **4-GPU cluster primary** (Config G stable, no RX6600)
 **Branch:** Path-B-Event-Support-Pipeline-Plus (private fork)
 
 ## Implementation log
@@ -29,6 +29,8 @@ Overview: [rpc-path-b-plus-overview.md](rpc-path-b-plus-overview.md)
 | 2026-06-27 | B+6 | Remove GRAPH entry drain; assembly-line unlock |
 | 2026-06-27 | Phase 7 | Linux trace parse + hotpath-summary + BENCH_TRACE |
 | 2026-06-27 | Phase 8 | Romulus PathB deploy + cluster-up + Windows :50053 script + config-g |
+| 2026-06-27 | Phase 10 | **4-GPU primary stable:** 7900+3060+5060+5070; RX6600 slot-init hang bisected |
+| 2026-06-27 | Phase 10 | `pathb-romulus-{3,4}gpu-bench.sh`, gdb-repro presets, cluster summary docs |
 
 ## Issues
 
@@ -39,6 +41,9 @@ Overview: [rpc-path-b-plus-overview.md](rpc-path-b-plus-overview.md)
 | 2026-06-27 | tier1 vs plus G delta -2.0 | Same build 9962; single-run jitter | Multi-run not needed; closed as fluke | CLOSED |
 | 2026-06-27 | tier1b no COPY_TENSOR_PEER | 3gpu F copies are CUDA<->RPC not RPC<->RPC | Pivot B+3 to Path C / 5-ep | WONTFIX on 3gpu |
 | 2026-06-27 | trace-f-2gpu-plus HELLO minor=2 | Bench ran before remus 4.3.2 deploy sync | Remus now 4.3.2; re-bench optional | CLOSED |
+| 2026-06-27 | 4-GPU + RX6600 slot-init hang | EVENT_RECORD/COPY drain at first slot warmup with `:50052` | Use **primary** topology (5070 `:50053`); park 6600 | **WORKAROUND** |
+| 2026-06-27 | Windows :50053 unreachable from romulus | rpc-server not started / wrong bind IP | `pathb-rpc-server.ps1` + foreground start; prefer `192.168.8.21` | FIXED |
+| 2026-06-27 | bench curl FAIL http=200 | Multi-prompt fox parser false negative | Inference OK; RESULT may show FAIL | KNOWN |
 
 ## Benchmarks
 
@@ -52,8 +57,13 @@ Overview: [rpc-path-b-plus-overview.md](rpc-path-b-plus-overview.md)
 | trace-f-2gpu-plus | 2-device ts=50,50, Plus=1 | **48.9** | 9964 | **Production default**; 3 splits; overlap 0.5% |
 | s4-4b-2gpu-plus | 2-device gemma-4-E4B, Plus=1 | 44.2 | 9964 | S4 correctness smoke PASS |
 | proto-check-v43 | HELLO negotiate | - | 9964 | minor=3 peer_copy on :50051/:50052 |
+| trace-g-3gpu-primary-r1/r3 | romulus 7900+5060+3060 | ~29-35 | 833ad4429 | Tier 0 control PASS |
+| trace-g-4gpu-primary (x3) | romulus 7900+5060+3060+5070 | **38-43** | 833ad4429 | **4-GPU production stable** |
+| trace-g-4gpu-primary-trace | 4-GPU + trace | ~37 | 833ad4429 | hotpath 20.7 ms/tok |
+| trace-g-4gpu-romulus-q8-pp1 | legacy 6600 4-GPU | HANG | 833ad4429 | slot init stall (aborted) |
 
-Artifacts: `docs/cuda-windows-5070ti/benchmarks/trace-f-{3gpu-plus,legacy,tier1,tier1b,2gpu-plus}/`, `s4-4b-2gpu-plus/`, `proto-check-v43/`
+Artifacts: `docs/cuda-windows-5070ti/benchmarks/trace-f-{3gpu-plus,legacy,tier1,tier1b,2gpu-plus}/`, `s4-4b-2gpu-plus/`, `proto-check-v43/`  
+Romulus: `patch/bench-results/rpc-server-bench/trace-g-4gpu-primary*/`, `cluster-4gpu-primary/summary.md`
 
 ## Production default (Phase 5a)
 
@@ -70,6 +80,26 @@ Artifacts: `docs/cuda-windows-5070ti/benchmarks/trace-f-{3gpu-plus,legacy,tier1,
 Runbook label: `trace-f-2gpu-plus`. See [rpc-path-b-plus-handover.md](rpc-path-b-plus-handover.md).
 
 3-device F (`ts=30,12,58`) remains valid when VRAM requires RX6600; expect ~38-43 t/s, not 45+.
+
+### 4-GPU cluster primary (Phase 10, romulus client)
+
+**Stable topology (no RX6600):** 7900 XTX client + 3060 + 5060 + 5070 RPC workers.
+
+| Setting | Value |
+|---------|-------|
+| `--rpc` | `192.168.8.176:50051,127.0.0.1:50051,192.168.8.21:50053` |
+| `-ts` | `36,24,24,16` |
+| Model | `Qwen3.6-35B-A3B-APEX-I-Quality.gguf` (romulus) |
+| KV | `q8_0` / `q8_0` |
+| Expected G | **~40 t/s** (measured 38-43) |
+| Load | ~85s |
+
+```bash
+./rpc-patch/scripts/pathb-romulus-4gpu-bench.sh trace-g-4gpu-primary
+```
+
+**Do not** use `BENCH_4GPU_PRESET=legacy-6600` for production (hangs at slot init).  
+Doc: [CLUSTER-4GPU-PRIMARY.md](../../docs/cuda-windows-5070ti/CLUSTER-4GPU-PRIMARY.md).
 
 ## Remus deploy
 

@@ -35,6 +35,14 @@ if (-not $check) {
     throw "rpc-server failed to bind :$Port"
 }
 
-$ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -match '^192\.168\.' } | Select-Object -First 1).IPAddress
+# Prefer LAN segment used by romulus/remus (192.168.8.x), not VMware/Hyper-V adapters.
+$ip = (Get-NetIPAddress -AddressFamily IPv4 |
+    Where-Object { $_.IPAddress -match '^192\.168\.8\.' } |
+    Select-Object -First 1).IPAddress
+if (-not $ip) {
+    $ip = (Get-NetIPAddress -AddressFamily IPv4 |
+        Where-Object { $_.IPAddress -match '^192\.168\.' -and $_.IPAddress -notmatch '\.(159|126)\.' } |
+        Select-Object -First 1).IPAddress
+}
 Write-Host "RPC worker up on :$Port (LAN IP: $ip)"
 Write-Host "Config G endpoint third hop: ${ip}:$Port"

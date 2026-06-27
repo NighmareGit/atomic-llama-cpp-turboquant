@@ -159,7 +159,60 @@ capture_rpc_artifacts() {
     fi
 }
 
+LLAMA_NATIVE=0
+LLAMA_PID=""
+LLAMA_LOG=""
+
+llama_log_path() {
+    if [[ "$LLAMA_NATIVE" == "1" ]]; then
+        echo "$LLAMA_LOG"
+    else
+        echo "/tmp/server.log"
+    fi
+}
+
+llama_running() {
+    if [[ "$LLAMA_NATIVE" == "1" ]]; then
+        [[ -n "$LLAMA_PID" ]] && kill -0 "$LLAMA_PID" 2>/dev/null
+    else
+        docker ps -q --filter "name=^${LLAMA_NAME}$" | grep -q .
+    fi
+}
+
+llama_log_has() {
+    local pat="$1"
+    if [[ "$LLAMA_NATIVE" == "1" ]]; then
+        grep -q "$pat" "$LLAMA_LOG" 2>/dev/null
+    else
+        docker exec "$LLAMA_NAME" sh -c "grep -q \"$pat\" /tmp/server.log 2>/dev/null" 2>/dev/null
+    fi
+}
+
+llama_log_tail() {
+    local n="${1:-15}"
+    if [[ "$LLAMA_NATIVE" == "1" ]]; then
+        tail -"$n" "$LLAMA_LOG" 2>/dev/null || true
+    else
+        docker exec "$LLAMA_NAME" sh -c "tail -c 32768 /tmp/server.log" 2>/dev/null \
+            | strings | grep -vE '^[\\|/-]+$' | tail -"$n" || true
+    fi
+}
+
+llama_copy_log() {
+    local dst="${LOG_DIR}/${LABEL}-server.log"
+    if [[ "$LLAMA_NATIVE" == "1" ]]; then
+        cp -f "$LLAMA_LOG" "$dst" 2>/dev/null || true
+    else
+        docker cp "${LLAMA_NAME}:/tmp/server.log" "$dst" 2>/dev/null || true
+    fi
+}
+
 cleanup() {
+    if [[ -n "$LLAMA_PID" ]]; then
+        kill "$LLAMA_PID" 2>/dev/null || true
+        wait "$LLAMA_PID" 2>/dev/null || true
+        LLAMA_PID=""
+    fi
     docker rm -f "$LLAMA_NAME" "$RPC_NAME" 2>/dev/null || true
 }
 
@@ -191,6 +244,10 @@ case "$VARIANT" in
         fi
         ROCM_IMAGE="llama-rocm-patched"
         ROCM_BIN_HOST="${TQ}/build-rocm-docker/bin"
+        ROCM_LD_PATH="${BENCH_ROCM_LD_PATH:-/opt/rocm-7.2.3/lib:/opt/rocm/lib}"
+        if [[ "${BENCH_ROCM_NATIVE:-1}" == "1" && -x "${ROCM_BIN_HOST}/llama-server" ]]; then
+            LLAMA_NATIVE=1
+        fi
         PROTO="Path B (v4.2.2 workspace)"
         ;;
     *)
@@ -247,11 +304,33 @@ else
 fi
 
 # AMD 7900 XTX client only
-log "starting llama-server (ROCm HIP device 0)..."
+if [[ "$LLAMA_NATIVE" == "1" ]]; then
+    log "starting llama-server (native ROCm HIP device 0)..."
+else
+    log "starting llama-server (ROCm HIP device 0)..."
+fi
 EXTRA_HOSTS=()
 [[ "$RPC_MODE" != "local" ]] && EXTRA_HOSTS+=(--add-host "remus.local:${REMUS_RPC_IP:-192.168.8.176}")
 
-if [[ "$VARIANT" == "pathb" ]]; then
+if [[ "$VARIANT" == "pathb" && "$LLAMA_NATIVE" == "1" ]]; then
+    LLAMA_LOG="${LOG_DIR}/${LABEL}-server.log"
+    : >"$LLAMA_LOG"
+    export LD_LIBRARY_PATH="${ROCM_BIN_HOST}:${ROCM_LD_PATH}"
+    export HIP_VISIBLE_DEVICES=0
+    if [[ "$BENCH_TRACE" == "1" ]]; then
+        export GGML_PIPELINE_PLUS="${GGML_PIPELINE_PLUS:-1}"
+        export GGML_RPC_TRACE=1
+        export GGML_SCHED_TRACE=1
+        export GGML_RPC_TRACE_FILE="${TELEMETRY_DIR}/rpc-trace.jsonl"
+        export GGML_SCHED_TRACE_FILE="${TELEMETRY_DIR}/sched-trace.jsonl"
+    fi
+    "${ROCM_BIN_HOST}/llama-server" \
+        --rpc "${RPC_ENDPOINT}" -m "${MODEL}" -ngl "${NGL}" -c "${CTX}" \
+        -ctk "${CTK}" -ctv "${CTV}" -sm "${SPLIT_MODE}" -ts "${TS}" \
+        --host 127.0.0.1 --port "${PORT}" "${SERVER_EXTRA[@]}" >>"$LLAMA_LOG" 2>&1 &
+    LLAMA_PID=$!
+    log "native llama-server pid=${LLAMA_PID} log=${LLAMA_LOG}"
+elif [[ "$VARIANT" == "pathb" ]]; then
     LLAMA_VOLUMES=(-v "${ROCM_BIN_HOST}:/app/bin:ro" -v /mnt/models:/mnt/models:ro)
     LLAMA_TRACE_ENV=()
     if [[ "$BENCH_TRACE" == "1" ]]; then
@@ -268,7 +347,7 @@ if [[ "$VARIANT" == "pathb" ]]; then
         --device=/dev/kfd --device=/dev/dri --group-add video --network host \
         "${EXTRA_HOSTS[@]}" \
         "${LLAMA_VOLUMES[@]}" \
-        -e LD_LIBRARY_PATH=/app/bin -e HIP_VISIBLE_DEVICES=0 \
+        -e LD_LIBRARY_PATH=/app/bin:${ROCM_LD_PATH} -e HIP_VISIBLE_DEVICES=0 \
         ${GGML_RPC_DEBUG:+-e GGML_RPC_DEBUG=${GGML_RPC_DEBUG}} \
         ${GGML_SCHED_DEBUG:+-e GGML_SCHED_DEBUG=${GGML_SCHED_DEBUG}} \
         "${LLAMA_TRACE_ENV[@]}" \
@@ -296,16 +375,15 @@ ready=0
 while true; do
     elapsed=$(( $(date +%s) - start ))
     if curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
-        if docker exec "$LLAMA_NAME" sh -c 'grep -q "model loaded" /tmp/server.log 2>/dev/null' 2>/dev/null; then
+        if llama_log_has "model loaded"; then
             ready=1
             log "server ready at ${elapsed}s (model loaded)"
             break
         fi
     fi
-    if ! docker ps -q --filter "name=^${LLAMA_NAME}$" | grep -q .; then
-        log "ERROR: llama-server container exited during load"
-        docker cp "${LLAMA_NAME}:/tmp/server.log" "${LOG_DIR}/${LABEL}-server.log" 2>/dev/null || \
-            docker logs "$LLAMA_NAME" >"${LOG_DIR}/${LABEL}-server.log" 2>&1 || true
+    if ! llama_running; then
+        log "ERROR: llama-server exited during load"
+        llama_copy_log
         tail -30 "${LOG_DIR}/${LABEL}-server.log" | tee -a "$META"
         capture_rpc_artifacts "load_exit"
         cleanup
@@ -313,19 +391,17 @@ while true; do
     fi
     if [[ "$elapsed" -ge "$LOAD_TIMEOUT" ]]; then
         log "TIMEOUT: server not healthy after ${LOAD_TIMEOUT}s"
-        docker exec "$LLAMA_NAME" sh -c 'tail -c 32768 /tmp/server.log' 2>/dev/null \
-            | strings | grep -vE '^[\\|/-]+$' | tail -15 | tee -a "$META"
+        llama_log_tail 15 | tee -a "$META"
         capture_rpc_artifacts "load_timeout"
         cleanup
         exit 2
     fi
     if (( elapsed % 30 == 0 && elapsed > 0 )); then
         log "poll ${elapsed}s: still loading..."
-        docker exec "$LLAMA_NAME" sh -c 'strings /tmp/server.log | grep -vE "^[\\\\|/-]+$" | tail -2' 2>/dev/null | tee -a "$META" || true
+        llama_log_tail 2 | tee -a "$META" || true
         if [[ "$EXTRACT_VRAM" == "1" ]]; then
-            docker exec "$LLAMA_NAME" sh -c 'strings /tmp/server.log' 2>/dev/null \
-                | rg -i 'MiB|load_tensors|offload|assign|buffer|tensor split|RPC[0-9]|ROCm' \
-                | tail -8 | tee -a "$META" || true
+            rg -i 'MiB|load_tensors|offload|assign|buffer|tensor split|RPC[0-9]|ROCm' \
+                "$(llama_log_path)" 2>/dev/null | tail -8 | tee -a "$META" || true
         fi
     fi
     sleep 5
@@ -336,7 +412,7 @@ if [[ "$ready" -ne 1 ]]; then
     exit 2
 fi
 
-docker cp "${LLAMA_NAME}:/tmp/server.log" "${LOG_DIR}/${LABEL}-server.log" 2>/dev/null || true
+llama_copy_log
 if [[ "$EXTRACT_VRAM" == "1" && -f "${LOG_DIR}/${LABEL}-server.log" ]]; then
     log "--- vram allocation excerpt (load) ---"
     rg -i 'MiB|load_tensors|offload|assign|buffer|tensor|RPC[0-9]|ROCm|CPU|layer' \
@@ -371,12 +447,12 @@ print(json.dumps({
         -d "$payload" \
         2>"${LOG_DIR}/${LABEL}-curl.err") || {
         local http_code="?"
-        if docker ps -q --filter "name=^${LLAMA_NAME}$" | grep -q .; then
+        if llama_running; then
             http_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
                 "http://127.0.0.1:${PORT}/v1/chat/completions" -H "Content-Type: application/json" -d "$payload" 2>/dev/null || echo '?')
         else
-            log "WARN: llama-server container exited during generation"
-            docker logs "$LLAMA_NAME" 2>/dev/null | tail -20 | tee -a "$META" || true
+            log "WARN: llama-server exited during generation"
+            llama_log_tail 20 | tee -a "$META" || true
         fi
         log "FAIL run $run_idx prompt=$prompt_id: curl error (http=${http_code})"
         cat "${LOG_DIR}/${LABEL}-curl.err" 2>/dev/null | tee -a "$META" || true
@@ -429,7 +505,7 @@ else
     done
 fi
 
-docker cp "${LLAMA_NAME}:/tmp/server.log" "${LOG_DIR}/${LABEL}-server.log" 2>/dev/null || true
+llama_copy_log
 if [[ "$RPC_MODE" == "local" ]]; then
     docker logs "$RPC_NAME" >"${LOG_DIR}/${LABEL}-rpc.log" 2>&1 || true
 else

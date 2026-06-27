@@ -2,39 +2,39 @@
 dir=D:\projects\atomic-llama-cpp-5070ti\atomic-llama-cpp-turboquant\docs\cuda-windows-5070ti\benchmarks\trace-f-2gpu-plus\telemetry
 
 [rpc] events=5294
-  ALLOC_BUFFER count=8 total_ms=529.56 avg_us=66195
-  GET_ALIGNMENT count=2 total_ms=0.44 avg_us=218
-  GRAPH_COMPUTE count=8 total_ms=17.01 avg_us=2126
-  GET_DEVICE_MEMORY count=8 total_ms=166.52 avg_us=20814
-  GET_ALLOC_SIZE count=4352 total_ms=676.32 avg_us=155
-  HELLO count=18 total_ms=2.94 avg_us=163
-  DEVICE_COUNT count=2 total_ms=0.41 avg_us=204
-  GRAPH_RECOMPUTE count=252 total_ms=6.1 avg_us=24
-  EVENT_RECORD count=130 total_ms=1733.82 avg_us=13337
-  GET_MAX_SIZE count=2 total_ms=0.41 avg_us=204
-  BUFFER_GET_BASE count=8 total_ms=0.96 avg_us=120
-  BUFFER_CLEAR count=12 total_ms=2.06 avg_us=171
-  SET_TENSOR_HASH count=168 total_ms=42792.66 avg_us=254718
-  GET_TENSOR count=324 total_ms=202.71 avg_us=626
-  blocking_events=2579 blocking_ms=29811.54
-  drain_flush_ms=1733.82
-  hello endpoint=192.168.8.176:50051 minor=2 peer_copy=False
-  hello endpoint=192.168.8.176:50051 minor=2 peer_copy=False
-  hello endpoint=192.168.8.176:50051 minor=2 peer_copy=False
-  hello endpoint=192.168.8.176:50051 minor=2 peer_copy=False
-  hello endpoint=192.168.8.176:50051 minor=2 peer_copy=False
-  hello endpoint=192.168.8.176:50051 minor=2 peer_copy=False
+  ALLOC_BUFFER count=8 total_ms=548.03 avg_us=68504
+  GET_ALIGNMENT count=2 total_ms=0.41 avg_us=206
+  GRAPH_COMPUTE count=8 total_ms=16.2 avg_us=2024
+  GET_DEVICE_MEMORY count=8 total_ms=162.4 avg_us=20300
+  GET_ALLOC_SIZE count=4352 total_ms=1824.06 avg_us=419
+  HELLO count=18 total_ms=3.11 avg_us=173
+  DEVICE_COUNT count=2 total_ms=0.4 avg_us=200
+  GRAPH_RECOMPUTE count=252 total_ms=5.6 avg_us=22
+  EVENT_RECORD count=130 total_ms=1755.29 avg_us=13502
+  GET_MAX_SIZE count=2 total_ms=0.4 avg_us=200
+  BUFFER_GET_BASE count=8 total_ms=1.16 avg_us=145
+  BUFFER_CLEAR count=12 total_ms=2.48 avg_us=207
+  SET_TENSOR_HASH count=168 total_ms=42045.37 avg_us=250270
+  GET_TENSOR count=324 total_ms=216.56 avg_us=668
+  blocking_events=2579 blocking_ms=30683.64
+  drain_flush_ms=1755.29
+  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=True
+  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=True
+  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=True
+  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=True
+  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=True
+  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=True
 
 [sched] events=1560
   split_total_count=390
-  split_total_ms_sum=2658.24 avg_us=6816
-    backend2 splits=130 ms=9.25
-    backend0 splits=130 ms=31.58
-    backend1 splits=130 ms=2617.41
-  input_wait_copy_ms=1817.52
-  graph_compute_async_ms=827.72
-  event_record_ms=0.84
-  assembly_overlap_count=267 pairs=50700 overlap_pct=0.5
+  split_total_ms_sum=2715.92 avg_us=6964
+    backend2 splits=130 ms=32.68
+    backend0 splits=130 ms=29.72
+    backend1 splits=130 ms=2653.51
+  input_wait_copy_ms=1839.1
+  graph_compute_async_ms=864.05
+  event_record_ms=0.7
+  assembly_overlap_count=297 pairs=50700 overlap_pct=0.6
     copy0 splits=99
     copy1 splits=99
     copy2 splits=96

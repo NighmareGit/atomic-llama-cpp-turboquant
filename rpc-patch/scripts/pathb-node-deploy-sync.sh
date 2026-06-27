@@ -62,5 +62,10 @@ pathb_node_deploy_sync() {
     pathb_node_remote "find ${dst} -maxdepth 1 -name '*.sh' -exec sed -i 's/\\r$//' {} + 2>/dev/null || true"
     pathb_node_remote "chmod +x ${dst}/build.sh ${dst}/build-rpc.sh ${dst}/build-server.sh 2>/dev/null || true"
     pathb_node_remote "grep -h 'GIT_BRANCH=' ${dst}/build.sh ${dst}/build-rpc.sh 2>/dev/null | head -3 || true"
+
+    local branch="${GIT_BRANCH:-Path-B-Event-Support-Pipeline-Plus}"
+    local url="${GIT_URL:-http://192.168.8.108:3005/hunter/atomic-llama-cpp-turboquant.git}"
+    pathb_node_remote "tip=\$(git ls-remote '${url}' 'refs/heads/${branch}' 2>/dev/null | awk '{print \$1}' | cut -c1-9); echo GITEA_TIP: \${branch}@\${tip:-unknown}"
+
     echo "DEPLOY_SYNC_OK"
 }

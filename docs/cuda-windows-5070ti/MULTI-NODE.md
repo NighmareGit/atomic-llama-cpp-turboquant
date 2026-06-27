@@ -2,9 +2,13 @@
 
 **Config E:** native `llama-server.exe` (RTX 5070 Ti) + remus RTX 5060 Ti RPC (`:50051`)
 
-**Config F:** Config E + remus RX 6600 RPC (`:50052`)
+**Config F:** Config E + remus RX 6600 RPC (`:50052`) -- **gen straggler** on 3-GPU; **slot-init hang** on 4-GPU with 6600.
 
-**Path-B Plus production default (36B NL MoE):** use Config F as **2-device** only -- single `:50051`, `-ts 50,50`, `GGML_PIPELINE_PLUS=1`. Do not attach `:50052` unless VRAM requires it. Measured G=**48.9 t/s** (`trace-f-2gpu-plus`). See [rpc-patch/docs/rpc-path-b-plus-handover.md](../../rpc-patch/docs/rpc-path-b-plus-handover.md).
+**Config G primary (4-GPU stable):** romulus 7900 client + 3060 + 5060 + Windows 5070 (`:50053`). **No RX6600.** G ~40 t/s. See [CLUSTER-4GPU-PRIMARY.md](CLUSTER-4GPU-PRIMARY.md).
+
+**Path-B Plus production default (Windows client, 36B NL MoE):** Config F as **2-device** -- single `:50051`, `-ts 50,50`. G=**48.9 t/s** (`trace-f-2gpu-plus`).
+
+**Path-B Plus 4-GPU (romulus client):** Config G primary -- `pathb-romulus-4gpu-bench.sh`. Windows must run `pathb-rpc-server.ps1` on `:50053`.
 
 ## Topology
 
@@ -44,6 +48,9 @@ Models on `D:\models` only. RPC worker does not mount GGUFs.
 | `rpc-server-bench.ps1` | Single hybrid bench run |
 | `pathb-config-e-matrix.ps1` | Config E preset loop (9b / 27b / 31b) |
 | `pathb-config-f-matrix.ps1` | Config F preset loop (9b through 80b) |
+| `pathb-rpc-server.ps1` | Windows 5070 as RPC worker `:50053` (Config G) |
+| `pathb-romulus-4gpu-bench.sh` | romulus 4-GPU primary launcher (WSL + sshpass) |
+| `pathb-romulus-3gpu-bench.sh` | romulus 3-GPU subset launcher |
 
 Benchmark index: [benchmarks/README.md](benchmarks/README.md)
 

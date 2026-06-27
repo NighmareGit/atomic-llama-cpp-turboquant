@@ -34,6 +34,7 @@ timeout 1 bash -c 'cat < /dev/null > /dev/tcp/${PROXY_IP}/3128' 2>/dev/null && \
 apt-get update && apt-get install -y git cmake ninja-build build-essential libopenblas-dev libomp-dev
 rm -rf /tmp/src && git clone '${GIT_URL}' /tmp/src
 cd /tmp/src && git checkout '${GIT_BRANCH}'
+echo ggml source commit: \$(git rev-parse --short HEAD) \$(git log -1 --oneline)
 export LD_LIBRARY_PATH=/usr/local/cuda/lib64:\$LD_LIBRARY_PATH
 cmake -S . -B build -G Ninja \
     -DGGML_CUDA=ON -DGGML_RPC=ON -DCMAKE_BUILD_TYPE=Release \

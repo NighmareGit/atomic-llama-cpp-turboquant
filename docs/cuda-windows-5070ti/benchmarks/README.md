@@ -62,4 +62,25 @@ Production default for 36B NL MoE: **2-device F** (`trace-f-2gpu-plus`).
 
 Run: `pathb-trace-runbook.ps1 -Runs trace-f-2gpu-plus`. Tracking: [rpc-patch/docs/rpc-path-b-plus-tracking.md](../../../rpc-patch/docs/rpc-path-b-plus-tracking.md).
 
+## Config G primary: 4-GPU cluster (romulus client, 2026-06-27)
+
+Stable topology: 7900 + 3060 + 5060 + 5070 (no RX6600). Artifacts on romulus host under `rpc-patch/patch/bench-results/rpc-server-bench/`.
+
+| Label | G (t/s) | Load | Result |
+|-------|---------|------|--------|
+| `trace-g-4gpu-primary` | 43.0 | 85s | PASS |
+| `trace-g-4gpu-primary-r2` | 38.2 | 85s | PASS |
+| `trace-g-4gpu-primary-r3` | 43.1 | 85s | PASS |
+| `trace-g-4gpu-primary-trace` | ~37 | 85s | trace captured |
+
+Summary: [rpc-patch/patch/bench-results/cluster-4gpu-primary/summary.md](../../../rpc-patch/patch/bench-results/cluster-4gpu-primary/summary.md).  
+Doc: [../CLUSTER-4GPU-PRIMARY.md](../CLUSTER-4GPU-PRIMARY.md).
+
+### Legacy / failed 4-GPU (RX6600 -- do not use)
+
+| Label | Result |
+|-------|--------|
+| `trace-g-4gpu-plus` (Windows client) | HANG at slot init |
+| `trace-g-4gpu-smoke` | smoke only |
+
 Details and offload guidance: [../MULTI-NODE.md](../MULTI-NODE.md)

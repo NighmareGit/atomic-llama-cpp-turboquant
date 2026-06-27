@@ -9,6 +9,7 @@ Static map of blocking paths for Qwen3.6-35B-A3B-UD-IQ4_NL_XL on Config F vs 2-d
 | profile-f-36b-nl-base | CUDA0 + RPC:50051 + RPC:50052 | **4** | 37.0 |
 | profile-f-36b-nl-no6600 | CUDA0 + RPC:50051 | **3** | 48.9 |
 | profile-e-36b-nl | CUDA0 + RPC:50051 | **3** | 42.4 |
+| trace-g-4gpu-primary-trace | ROCm0 + RPC 5060/3060/5070 | **5** | ~40 (romulus client) |
 
 Weight map (3-device F):
 

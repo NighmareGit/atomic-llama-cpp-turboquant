@@ -1,22 +1,22 @@
 ﻿=== profile summary: trace-f-2gpu-plus ===
-generated: 2026-06-27T08:00:37Z
+generated: 2026-06-27T12:15:03Z
 
 [throughput]
   
-  run=1 P=30.4 G=48.9 preview=
+  run=1 P=27.2 G=48.1 preview=
 
-[win-5070] samples=26
-  power: min=25.9W max=65.8W avg=32.5W
-  duty_cycle_20pct_tdp=3.8%
-  peak_pct_tdp=21.9%
-  util_gpu: max=31% avg=5.1%
+[win-5070] samples=27
+  power: min=24.1W max=46.3W avg=27.1W
+  duty_cycle_20pct_tdp=0%
+  peak_pct_tdp=15.4%
+  util_gpu: max=26% avg=2.6%
 
 [ram]
-  LOAD: min_avail=1524MB max_pages_sec=75606.8
-  GEN: min_avail=4877MB max_pages_sec=12515.4
+  LOAD: min_avail=1209MB max_pages_sec=138803.9
+  GEN: min_avail=1641MB max_pages_sec=851.9
 
-[nic] peak_mbps=1609.22 (2.5G ceiling=2500)
-  nic_headroom_pct=35.6
+[nic] peak_mbps=1486.48 (2.5G ceiling=2500)
+  nic_headroom_pct=40.5
   nic_ok=False
 
 [verdict]

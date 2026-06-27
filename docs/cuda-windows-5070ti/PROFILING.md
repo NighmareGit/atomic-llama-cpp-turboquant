@@ -8,6 +8,8 @@ Investigation of why Qwen3.6-35B-A3B MoE (IQ4_NL_XL) shows high VRAM use but low
 
 The RX6600 third hop is actively harmful: dropping it raised throughput **37 -> 49 t/s** (+32%) on the same model.
 
+**2026-06-27 addendum (4-GPU cluster):** On romulus-client 4-GPU, RX6600 causes **slot-init hang** (not just gen straggler). Stable path: 7900 + 3060 + 5060 + 5070 (`:50053`), G ~40 t/s. See [CLUSTER-4GPU-PRIMARY.md](CLUSTER-4GPU-PRIMARY.md).
+
 Low `utilization.gpu` is partly a **measurement blind spot** (1s `nvidia-smi` average vs bursty 500ms samples). During gen bursts, the 5070 Ti briefly hits **78 W (26% TDP)** and **25% SM util** before returning to idle between RPC round-trips.
 
 ## Profile runs (2026-06-27)

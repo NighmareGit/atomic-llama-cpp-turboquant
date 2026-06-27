@@ -8,6 +8,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=pathb-node-deploy-sync.sh
 source "${SCRIPT_DIR}/pathb-node-deploy-sync.sh"
+# shellcheck source=pathb-node-git-sync.sh
+source "${SCRIPT_DIR}/pathb-node-git-sync.sh"
 
 PATHB_NODE_SSH="${PATHB_NODE_SSH:-${PATHB_ROMULUS_SSH:-hunter@${ROMULUS_RPC_IP:-192.168.8.108}}}"
 PATHB_NODE_SSH_PASS="${PATHB_NODE_SSH_PASS:-${PATHB_ROMULUS_SSH_PASS:-}}"
@@ -22,6 +24,19 @@ remote() {
 
 deploy_sync() {
     pathb_node_deploy_sync "$DEPLOY_SRC" "$ROMULUS_DIR"
+}
+
+host_git_sync() {
+    if [[ "${PATHB_ROMULUS_SKIP_GIT_SYNC:-}" == "1" ]]; then
+        return 0
+    fi
+    pathb_node_git_sync "${PATHB_ROMULUS_GIT_REPO:-/home/hunter/atomic-llama-cpp-turboquant}"
+}
+
+remote_build() {
+    local branch
+    branch="$(pathb_node_git_branch)"
+    remote "cd $ROMULUS_DIR && GIT_BRANCH='${branch}' ./build.sh"
 }
 
 ACTION="${1:-status}"
@@ -56,11 +71,13 @@ case "$ACTION" in
         if [[ "${PATHB_ROMULUS_SKIP_DEPLOY:-}" != "1" ]]; then
             deploy_sync
         fi
-        remote "cd $ROMULUS_DIR && ./build.sh"
+        host_git_sync
+        remote_build
         ;;
     rebuild)
         deploy_sync
-        remote "cd $ROMULUS_DIR && ./build.sh"
+        host_git_sync
+        remote_build
         remote "cd $ROMULUS_DIR && docker compose up -d --force-recreate"
         sleep 2
         nc -zv "${ROMULUS_RPC_IP:-192.168.8.108}" 50051

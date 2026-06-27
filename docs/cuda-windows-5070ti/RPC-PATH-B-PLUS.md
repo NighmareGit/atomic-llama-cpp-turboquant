@@ -15,7 +15,7 @@ Canonical docs live under `rpc-patch/docs/`. Start with the overview.
 
 ## Status
 
-B+1 **production ready** on 2-device Config F (`ts=50,50`, G ~49 t/s). Phase 5 complete. Phase 6 closed (Path C declined). B+4..B+6 shipped — **rebuild required**. Phase 7-8: Linux trace tooling + Config G cluster scripts shipped. Phase 9: S0-lite 72B benches.
+B+1 **production ready** on 2-device Config F (`ts=50,50`, G ~49 t/s). **4-GPU Config G primary stable** (romulus 7900 + 3060 + 5060 + 5070, G ~40 t/s). Phase 10 complete for cluster fan-out. RX6600 4-GPU parked (slot-init hang). See [CLUSTER-4GPU-PRIMARY.md](CLUSTER-4GPU-PRIMARY.md).
 
 ## Production bench (recommended)
 
