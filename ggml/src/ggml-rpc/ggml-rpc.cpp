@@ -19,6 +19,10 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <functional>
+#include <thread>
 
 static const char * RPC_DEBUG = std::getenv("GGML_RPC_DEBUG");
 
@@ -232,6 +236,13 @@ static thread_local struct {
     bool pending;
     rpc_event_t * ev;
 } tls_pending_event = {nullptr, false, nullptr};
+
+// B+4: skip redundant SET_TENSOR_HASH RTTs when server already confirmed hash
+static thread_local std::unordered_map<uint64_t, bool> tls_hash_present;
+
+static uint64_t rpc_hash_cache_key(uint64_t hash, uint64_t data_ptr, uint64_t offset) {
+    return hash ^ (data_ptr * 0x9e3779b97f4a7c15ULL) ^ (offset * 0xbf58476d1ce4e5b9ULL);
+}
 
 static bool send_rpc_cmd_deferred(const socket_ptr & sock, enum rpc_cmd cmd,
                                    const void * input, size_t input_size) {
@@ -828,12 +839,19 @@ static void ggml_backend_rpc_buffer_set_tensor(ggml_backend_buffer_t buffer, ggm
         request.tensor = rpc_tensor;
         request.offset = offset;
         request.hash = fnv_hash((const uint8_t*)data, size);
+        const uint64_t cache_key = rpc_hash_cache_key(request.hash, request.tensor.data, request.offset);
+        auto cache_it = tls_hash_present.find(cache_key);
+        if (cache_it != tls_hash_present.end() && cache_it->second) {
+            return;
+        }
         rpc_msg_set_tensor_hash_rsp response;
         bool status = send_rpc_cmd(sock, RPC_CMD_SET_TENSOR_HASH, &request, sizeof(request), &response, sizeof(response));
         RPC_STATUS_ASSERT(status);
         if (response.result) {
+            tls_hash_present[cache_key] = true;
             return;
         }
+        tls_hash_present[cache_key] = false;
     }
     if (sock->server_supports_batch) {
         if (tls_set_batch.count > 0 && tls_set_batch_sock && tls_set_batch_sock != sock) {
@@ -1201,8 +1219,6 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
 
     GGML_ASSERT(cgraph->n_nodes > 0);
     auto sock = get_socket(rpc_ctx->endpoint);
-    drain_pending_event_response(sock);
-    flush_pending_get_tensor();
     flush_set_tensor_batch();
 
     const auto t0 = std::chrono::steady_clock::now();
@@ -1340,6 +1356,7 @@ public:
     rpc_server(std::vector<ggml_backend_t> all_backends, const char * cache_dir)
         : backends(std::move(all_backends)), cache_dir(cache_dir) {
         stored_graphs.resize(backends.size());
+        compute_worker = std::thread([this]() { compute_worker_loop(); });
     }
     ~rpc_server();
 
@@ -1361,6 +1378,10 @@ public:
     bool get_alloc_size(const rpc_msg_get_alloc_size_req & request, rpc_msg_get_alloc_size_rsp & response);
     bool get_device_memory(const rpc_msg_get_device_memory_req & request, rpc_msg_get_device_memory_rsp & response);
 
+    void enqueue_graph_compute(std::vector<uint8_t> input);
+    void enqueue_graph_recompute(rpc_msg_graph_recompute_req request);
+    void wait_compute_idle();
+
     struct stored_graph {
         std::vector<uint8_t>   buffer;
         ggml_cgraph          * graph;
@@ -1375,11 +1396,21 @@ private:
                               std::unordered_map<uint64_t, struct ggml_tensor*> & tensor_map);
 
 
+    void compute_worker_loop();
+    void submit_compute_job(std::function<void()> job);
+
     std::vector<ggml_backend_t> backends;
     const char * cache_dir;
     std::unordered_set<ggml_backend_buffer_t> buffers;
     // store the last computed graph for each backend
     std::vector<stored_graph> stored_graphs;
+
+    std::mutex                    compute_mtx;
+    std::condition_variable         compute_cv;
+    std::deque<std::function<void()>> compute_queue;
+    std::thread                     compute_worker;
+    std::atomic<bool>               compute_shutdown{false};
+    std::atomic<int>                compute_inflight{0};
 };
 
 void rpc_server::hello(rpc_msg_hello_rsp & response) {
@@ -1980,7 +2011,69 @@ bool rpc_server::get_device_memory(const rpc_msg_get_device_memory_req & request
     return true;
 }
 
+void rpc_server::submit_compute_job(std::function<void()> job) {
+    {
+        std::lock_guard<std::mutex> lock(compute_mtx);
+        compute_inflight++;
+        compute_queue.push_back(std::move(job));
+    }
+    compute_cv.notify_one();
+}
+
+void rpc_server::compute_worker_loop() {
+    while (true) {
+        std::function<void()> job;
+        {
+            std::unique_lock<std::mutex> lock(compute_mtx);
+            compute_cv.wait(lock, [this] {
+                return compute_shutdown.load() || !compute_queue.empty();
+            });
+            if (compute_shutdown.load() && compute_queue.empty()) {
+                break;
+            }
+            job = std::move(compute_queue.front());
+            compute_queue.pop_front();
+        }
+        if (job) {
+            job();
+        }
+        compute_inflight--;
+        compute_cv.notify_all();
+    }
+}
+
+void rpc_server::enqueue_graph_compute(std::vector<uint8_t> input) {
+    submit_compute_job([this, input = std::move(input)]() mutable {
+        if (!graph_compute(input)) {
+            GGML_LOG_ERROR("[%s] async graph_compute failed\n", __func__);
+        }
+    });
+}
+
+void rpc_server::enqueue_graph_recompute(rpc_msg_graph_recompute_req request) {
+    submit_compute_job([this, request]() {
+        if (!graph_recompute(request)) {
+            GGML_LOG_ERROR("[%s] async graph_recompute failed\n", __func__);
+        }
+    });
+}
+
+void rpc_server::wait_compute_idle() {
+    std::unique_lock<std::mutex> lock(compute_mtx);
+    compute_cv.wait(lock, [this] {
+        return compute_queue.empty() && compute_inflight.load() == 0;
+    });
+}
+
 rpc_server::~rpc_server() {
+    {
+        std::lock_guard<std::mutex> lock(compute_mtx);
+        compute_shutdown = true;
+    }
+    compute_cv.notify_all();
+    if (compute_worker.joinable()) {
+        compute_worker.join();
+    }
     for (auto buffer : buffers) {
         ggml_backend_buffer_free(buffer);
     }
@@ -2230,9 +2323,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!recv_msg(sock, input)) {
                     return;
                 }
-                if (!server.graph_compute(input)) {
-                    return;
-                }
+                server.enqueue_graph_compute(std::move(input));
                 break;
             }
             case RPC_CMD_GRAPH_RECOMPUTE: {
@@ -2240,9 +2331,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!recv_msg(sock, &request, sizeof(request))) {
                     return;
                 }
-                if (!server.graph_recompute(request)) {
-                    return;
-                }
+                server.enqueue_graph_recompute(request);
                 break;
             }
             case RPC_CMD_SET_TENSOR_BATCH: {
@@ -2308,6 +2397,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!recv_msg(sock, &request, sizeof(request))) {
                     return;
                 }
+                server.wait_compute_idle();
                 rpc_msg_event_record_rsp response = {request.event_id, 0};
                 if (!send_msg(sock, &response, sizeof(response))) {
                     return;

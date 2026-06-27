@@ -160,7 +160,41 @@ export BENCH_CTK=turbo3 BENCH_CTV=turbo3
 
 Bench summary: [`patch/bench-results/remus-rx6600/summary.txt`](../patch/bench-results/remus-rx6600/summary.txt)
 
+## Config G (4-GPU S0-lite)
+
+Romulus is online at **192.168.8.108** (`romulus.local`), user `hunter`, same `~/docker/` layout as remus.
+
+| Role | Host | GPU | Port |
+|------|------|-----|------|
+| Client | romulus | 7900 XTX 24GB | llama-server ROCm0 |
+| RPC0 | remus | 5060 Ti 16GB | :50051 |
+| RPC1 | romulus | 3060 Ti 8GB | :50051 |
+| RPC2 | Windows | 5070 Ti 16GB | :50053 |
+
+```bash
+export PATHB_ROMULUS_SSH_PASS=...
+./rpc-patch/scripts/pathb-romulus-rpc.sh rebuild
+./rpc-patch/scripts/pathb-cluster-up.sh start
+
+# Windows (LAN IP for third hop)
+powershell -File scripts/cuda-windows-5070ti/pathb-rpc-server.ps1
+
+# S0-lite trace benches (after B+4..B+6 rebuild on all nodes)
+WIN_RPC_IP=<windows_lan_ip> ./rpc-patch/scripts/pathb-72b-cluster-matrix.sh qwen72b coder-next-q4
+```
+
+VRAM planner: `python3 rpc-patch/scripts/pathb-72b-vram-calc.py --config config-g --gguf <model.gguf>`
+
+Trace smoke on Romulus Config C:
+
+```bash
+BENCH_TRACE=1 GGML_PIPELINE_PLUS=1 BENCH_RPC_MODE=multi \
+  BENCH_RPC_ENDPOINT="192.168.8.176:50051,127.0.0.1:50051" \
+  BENCH_TS=35,15,50 BENCH_GEN_TOKENS=128 \
+  ./rpc-patch/scripts/rpc-server-bench.sh pathb trace-c-plus-smoke
+```
+
 ## Open roadmap
 
-- Config D matrix (27B+) on RX 6600 8 GB worker
-- Path C single-node multi-GPU aggregation (same physical rpc-server)
+- S0-lite go/no-go vs Config C baselines (dense ~5 t/s, MoE ~16-21 t/s)
+- Re-bench `trace-f-2gpu-plus` after B+4..B+6 for `overlap_pct > 5%` gate

@@ -23,6 +23,8 @@
 #   BENCH_RPC_ENDPOINT=host1:50051,host2:50051  (multi; overrides BENCH_RPC_HOST)
 #   BENCH_RPC_WAIT=5                   (seconds after remote RPC expected up)
 #   PATHB_CUDA_DISABLE_GRAPHS=1        (GGML_CUDA_DISABLE_GRAPHS on rpc-server workers)
+#   BENCH_TRACE=1                      (GGML_RPC_TRACE + GGML_SCHED_TRACE under ${LOG_DIR}/${LABEL}/telemetry/)
+#   GGML_PIPELINE_PLUS=1               (default when BENCH_TRACE=1)
 
 set -euo pipefail
 
@@ -80,6 +82,15 @@ mkdir -p "$LOG_DIR"
 META="${LOG_DIR}/${LABEL}.meta"
 RESULT="${LOG_DIR}/${LABEL}.result"
 : >"$META"
+
+BENCH_TRACE="${BENCH_TRACE:-0}"
+TELEMETRY_DIR="${LOG_DIR}/${LABEL}/telemetry"
+if [[ "$BENCH_TRACE" == "1" ]]; then
+    mkdir -p "$TELEMETRY_DIR"
+    export GGML_PIPELINE_PLUS="${GGML_PIPELINE_PLUS:-1}"
+    : >"${TELEMETRY_DIR}/rpc-trace.jsonl"
+    : >"${TELEMETRY_DIR}/sched-trace.jsonl"
+fi
 
 log() { echo "$*" | tee -a "$META"; }
 
@@ -189,7 +200,10 @@ case "$VARIANT" in
 esac
 
 log "=== $LABEL ==="
-log "variant=$VARIANT proto=$PROTO rpc_mode=$RPC_MODE endpoint=$RPC_ENDPOINT"
+log "variant=$VARIANT proto=$PROTO rpc_mode=$RPC_MODE endpoint=$RPC_ENDPOINT trace=$BENCH_TRACE"
+if [[ "$BENCH_TRACE" == "1" ]]; then
+    log "telemetry=$TELEMETRY_DIR"
+fi
 log "model=$MODEL ctx=$CTX ctk=$CTK ctv=$CTV ngl=$NGL ts=$TS ncmoe=${NCMOE:-none} np=$NP no_warmup=$NO_WARMUP load_timeout=${LOAD_TIMEOUT}s"
 log "server_extra=${SERVER_EXTRA[*]:-none}"
 log "prompts_file=${PROMPTS_FILE:-default-fox} verbose_lv=${VERBOSE_LV:-default} extract_vram=$EXTRACT_VRAM"
@@ -238,13 +252,26 @@ EXTRA_HOSTS=()
 [[ "$RPC_MODE" != "local" ]] && EXTRA_HOSTS+=(--add-host "remus.local:${REMUS_RPC_IP:-192.168.8.176}")
 
 if [[ "$VARIANT" == "pathb" ]]; then
+    LLAMA_VOLUMES=(-v "${ROCM_BIN_HOST}:/app/bin:ro" -v /mnt/models:/mnt/models:ro)
+    LLAMA_TRACE_ENV=()
+    if [[ "$BENCH_TRACE" == "1" ]]; then
+        LLAMA_VOLUMES+=(-v "${TELEMETRY_DIR}:/telemetry:rw")
+        LLAMA_TRACE_ENV=(
+            -e "GGML_PIPELINE_PLUS=${GGML_PIPELINE_PLUS:-1}"
+            -e GGML_RPC_TRACE=1
+            -e GGML_SCHED_TRACE=1
+            -e GGML_RPC_TRACE_FILE=/telemetry/rpc-trace.jsonl
+            -e GGML_SCHED_TRACE_FILE=/telemetry/sched-trace.jsonl
+        )
+    fi
     docker run -d --name "$LLAMA_NAME" --entrypoint bash \
         --device=/dev/kfd --device=/dev/dri --group-add video --network host \
         "${EXTRA_HOSTS[@]}" \
-        -v "${ROCM_BIN_HOST}:/app/bin:ro" -v /mnt/models:/mnt/models:ro \
+        "${LLAMA_VOLUMES[@]}" \
         -e LD_LIBRARY_PATH=/app/bin -e HIP_VISIBLE_DEVICES=0 \
         ${GGML_RPC_DEBUG:+-e GGML_RPC_DEBUG=${GGML_RPC_DEBUG}} \
         ${GGML_SCHED_DEBUG:+-e GGML_SCHED_DEBUG=${GGML_SCHED_DEBUG}} \
+        "${LLAMA_TRACE_ENV[@]}" \
         "$ROCM_IMAGE" \
         -c "exec > /tmp/server.log 2>&1; /app/bin/llama-server \
             --rpc ${RPC_ENDPOINT} -m ${MODEL} -ngl ${NGL} -c ${CTX} \
@@ -415,6 +442,12 @@ else
     } >"${LOG_DIR}/${LABEL}-rpc.log" 2>&1 || true
 fi
 df -h / | tee -a "$META"
+
+if [[ "$BENCH_TRACE" == "1" && -f "${TELEMETRY_DIR}/rpc-trace.jsonl" ]]; then
+    log "parsing trace telemetry..."
+    "${SCRIPT_DIR}/pathb-rpc-trace-parse.sh" "$TELEMETRY_DIR" 2>&1 | tee -a "$META" || true
+    "${SCRIPT_DIR}/pathb-hotpath-summary.sh" "$TELEMETRY_DIR" 2>&1 | tee -a "$META" || true
+fi
 
 cleanup
 log "RESULT=PASS"

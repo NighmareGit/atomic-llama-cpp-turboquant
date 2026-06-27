@@ -9,6 +9,7 @@ Device index order with --rpc: RPC workers first (index 0..N-1), local CUDA last
 Config C remus-first: RPC0=5060 Ti, RPC1=3060 Ti, ROCm0=7900 XTX.
 Config E: RPC0=remus 5060 Ti, CUDA0=Windows 5070 Ti.
 Config F: RPC0=remus 5060 Ti, RPC1=remus RX 6600, CUDA0=Windows 5070 Ti.
+Config G: RPC0=remus 5060, RPC1=romulus 3060, RPC2=Windows 5070, ROCm0=romulus 7900 client.
 """
 from __future__ import annotations
 
@@ -47,6 +48,12 @@ CONFIGS = {
         "vrams": [15.5, 7.5, 15.5],
         "ts_default": [30, 12, 58],
         "rpc_order": "5060,6600,5070",
+    },
+    "config-g": {
+        "name": "Config G (remus 5060 + romulus 3060 + win 5070 + romulus 7900 client)",
+        "vrams": [15.5, 7.0, 15.5, 22.0],
+        "ts_default": [28, 12, 28, 32],
+        "rpc_order": "5060,3060,5070,7900",
     },
 }
 
@@ -295,8 +302,12 @@ def main() -> None:
     ngl_rec = ngl_candidates(layers)[1][0] if len(ngl_candidates(layers)) > 1 else ngl_candidates(layers)[0][0]
     print(f"  BENCH_NGL={ngl_rec} BENCH_CTX={args.ctx} BENCH_TS={ts_s} BENCH_CTK=q4_0 BENCH_CTV=q4_0 \\")
     print("  BENCH_EXTRA='--fit off --verbose -lv 4 --reasoning off' \\")
-    print("  BENCH_RPC_ENDPOINT='192.168.8.176:50051,127.0.0.1:50051' \\")
-    print("  ./rpc-patch/scripts/pathb-72b-matrix.sh --phase 1 qwen72b")
+    if args.config == "config-g":
+        print("  BENCH_RPC_ENDPOINT='192.168.8.176:50051,192.168.8.108:50051,<WIN_IP>:50053' \\")
+        print("  ./rpc-patch/scripts/pathb-72b-cluster-matrix.sh qwen72b")
+    else:
+        print("  BENCH_RPC_ENDPOINT='192.168.8.176:50051,127.0.0.1:50051' \\")
+        print("  ./rpc-patch/scripts/pathb-72b-matrix.sh --phase 1 qwen72b")
     print()
     print("Fallback (fit on, same ts):")
     print(f"  BENCH_NGL=0 BENCH_EXTRA='--fit on --fit-target {fit_targets} --verbose -lv 4 --reasoning off'")

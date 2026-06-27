@@ -2,9 +2,9 @@
 
 Overview: [rpc-path-b-plus-overview.md](rpc-path-b-plus-overview.md)
 
-**Overall:** B+1 **PRODUCTION READY** (Phase 5 complete) | Tier 1 SHIPPED | tier1b = run variance (fluke)  
-**Build:** 9964 client + remus **proto 4.3.2** (`peer_copy=yes` on :50051/:50052)  
-**Current Phase:** Phase 5 **COMPLETE** -- 2-device F ops default; Path C deferred  
+**Overall:** B+1 **PRODUCTION READY** | B+4..B+6 **SHIPPED** (rebuild required) | Phase 7-8 tooling/cluster **SHIPPED**  
+**Build:** 9964+ client + remus/romulus **proto 4.3.2**  
+**Current Phase:** Phase 9 **S0-lite** (72B cluster benches after rebuild)
 **Branch:** Path-B-Event-Support-Pipeline-Plus (private fork)
 
 ## Implementation log
@@ -21,6 +21,14 @@ Overview: [rpc-path-b-plus-overview.md](rpc-path-b-plus-overview.md)
 | 2026-06-27 | Deploy | `pathb-remus-deploy-sync.sh`; build auto-syncs deploy to remus; proto 4.3.2 verified |
 | 2026-06-27 | Phase 5a | 2-device F production default (`ts=50,50`, single `:50051`, `GGML_PIPELINE_PLUS=1`) |
 | 2026-06-27 | Phase 5b | Spikes S4/S5/S1/S3 PASS on `trace-f-2gpu-plus`; S0 deferred |
+| 2026-06-27 | Docs | Refresh stale mirror + `RPC-PATH-B-PLUS.md`; proto-check-v43 in deploy section |
+| 2026-06-27 | Phase 6 | Path C kickoff: C1 baseline catalog + remus feasibility spike |
+| 2026-06-27 | Phase 6 | **CLOSED** — Path C C2+ declined |
+| 2026-06-27 | B+4 | SET_TENSOR_HASH client cache (`tls_hash_present`) |
+| 2026-06-27 | B+5 | Server async compute queue + EVENT_RECORD barrier |
+| 2026-06-27 | B+6 | Remove GRAPH entry drain; assembly-line unlock |
+| 2026-06-27 | Phase 7 | Linux trace parse + hotpath-summary + BENCH_TRACE |
+| 2026-06-27 | Phase 8 | Romulus PathB deploy + cluster-up + Windows :50053 script + config-g |
 
 ## Issues
 
@@ -43,8 +51,9 @@ Overview: [rpc-path-b-plus-overview.md](rpc-path-b-plus-overview.md)
 | trace-f-3gpu-tier1b | 3-device, Plus=1, remus v4.3 | 40.6 | 9963 | Within noise of tier1; 0 peer COPY (expected) |
 | trace-f-2gpu-plus | 2-device ts=50,50, Plus=1 | **48.9** | 9964 | **Production default**; 3 splits; overlap 0.5% |
 | s4-4b-2gpu-plus | 2-device gemma-4-E4B, Plus=1 | 44.2 | 9964 | S4 correctness smoke PASS |
+| proto-check-v43 | HELLO negotiate | - | 9964 | minor=3 peer_copy on :50051/:50052 |
 
-Artifacts: `docs/cuda-windows-5070ti/benchmarks/trace-f-{3gpu-plus,legacy,tier1,tier1b,2gpu-plus}/`, `s4-4b-2gpu-plus/`
+Artifacts: `docs/cuda-windows-5070ti/benchmarks/trace-f-{3gpu-plus,legacy,tier1,tier1b,2gpu-plus}/`, `s4-4b-2gpu-plus/`, `proto-check-v43/`
 
 ## Production default (Phase 5a)
 
@@ -86,7 +95,7 @@ Server: `[hello] version: 4.3.2`. Client trace: `"minor":3,"peer_copy":true`. Ar
 | Document 2-device F as production default | PASS | tracking + handover + runbook |
 | `trace-f-2gpu-plus` bench captured | PASS | G=48.9, RESULT=PASS |
 | Runbook/README updated | PASS | `pathb-trace-runbook.ps1`, benchmarks README |
-| Remus deploy proto 4.3.2 | PASS | deploy sync + proto-check |
+| Remus deploy proto 4.3.2 | PASS | deploy sync + `proto-check-v43` |
 
 ### 5b -- Validation spikes (DONE)
 
@@ -100,9 +109,37 @@ Server: `[hello] version: 4.3.2`. Client trace: `"minor":3,"peer_copy":true`. Ar
 
 Details: [rpc-path-b-plus-spikes.md](rpc-path-b-plus-spikes.md)
 
+## Phase 6 checklist (Path C kickoff)
+
+### 6a -- C1 baseline catalog (IN PROGRESS)
+
+| Item | Status | Evidence |
+|------|--------|----------|
+| Client-split baseline (3gpu) | PASS | `trace-f-3gpu-plus` G=42.8, 4 splits, COPY_TENSOR=144 |
+| Ops baseline (2gpu, no Path C) | PASS | `trace-f-2gpu-plus` G=48.9, 3 splits |
+| Delta documents Path C motivation | PASS | +29% dropping 6600 hop; serial split sum in RPC-BUG-HUNT |
+
+### 6b -- Remus feasibility (IN PROGRESS)
+
+| Finding | Implication |
+|---------|-------------|
+| `:50051` = CUDA 5060 Ti container (`-d CUDA0`, 1 GPU) | `DEVICE_COUNT=1` per endpoint today |
+| `:50052` = ROCm 6600 container (separate image) | CUDA+ROCm not one rpc-server process |
+| `rpc-server` supports `-d CUDA0,CUDA1` | Path C C1 viable on **same-vendor multi-GPU** host |
+| Config F 36B NL | Phase 5 ops fix (2-device) already optimal without Path C code |
+
+Path C on remus 5060+6600 requires **C2+ server aggregation**, not just multi-device flags. See [rpc-path-c-plan.md](rpc-path-c-plan.md).
+
+### 6c / 6d -- PENDING
+
+- 6c: multi-CUDA rpc-server spike (Config A/B style: 2 NVIDIA on one box)
+- 6d: C2 internal scheduler + single logical backend
+
+Details: [rpc-path-c-tracking.md](rpc-path-c-tracking.md)
+
 ## Next steps (post Phase 5)
 
-1. Path C spike: single remus rpc-server for 5060+6600 (eliminate client split hop).
+1. ~~Path C spike kickoff~~ -> **Phase 6** (above).
 2. `pathb-hotpath-summary.ps1` (trace + layer map).
 3. Optional: re-bench `trace-f-2gpu-plus` on remus 4.3.2 for updated HELLO trace fields.
 

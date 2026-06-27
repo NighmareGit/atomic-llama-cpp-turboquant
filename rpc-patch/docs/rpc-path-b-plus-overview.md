@@ -127,7 +127,7 @@ Predecessor behavior and Config A-D matrix: [rpc-path-b-plan.md](rpc-path-b-plan
 | Phase 5a | 2-device F production default | DONE |
 | Phase 5b | Spikes S4/S5/S1/S3 | DONE |
 | S0 | 5-endpoint 72B+ baseline | DEFERRED |
-| Path C | Single remus rpc-server (5060+6600) | NEXT |
+| Phase 6 / Path C | C1 baseline + feasibility; C2 server sched | **IN PROGRESS** |
 
 Spike details: [rpc-path-b-plus-spikes.md](rpc-path-b-plus-spikes.md). Live status and issue log: [rpc-path-b-plus-tracking.md](rpc-path-b-plus-tracking.md).
 
@@ -144,6 +144,8 @@ Spike details: [rpc-path-b-plus-spikes.md](rpc-path-b-plus-spikes.md). Live stat
 | [rpc-path-b-plus-handover.md](rpc-path-b-plus-handover.md) | Production ops, verify, fallback |
 | [RPC-BUG-HUNT.md](../../docs/cuda-windows-5070ti/RPC-BUG-HUNT.md) | Trace-led root cause (pre-Plus) |
 | [benchmarks/README.md](../../docs/cuda-windows-5070ti/benchmarks/README.md) | Bench artifact index |
+| [rpc-path-c-plan.md](rpc-path-c-plan.md) | Path C / Phase 6 implementation plan |
+| [rpc-path-c-tracking.md](rpc-path-c-tracking.md) | Path C status and C1 baseline |
 | [README.md](../README.md) | rpc-patch folder, hardware configs, scripts |
 
 ---
@@ -152,13 +154,13 @@ Spike details: [rpc-path-b-plus-spikes.md](rpc-path-b-plus-spikes.md). Live stat
 
 1. **3-device F 45+ t/s:** Not achieved. Serial split sum (~27 ms/tok) dominates; RX6600 third hop adds ~16 ms/tok. Use 2-device F for throughput.
 2. **B+3 peer COPY on 3gpu F:** Copies are CUDA<->RPC (`SET_TENSOR_HASH`), not RPC<->RPC. Peer copy benefits Path C / multi-RPC-same-host layouts.
-3. **Overlap % low (0.3-0.5%):** Splits within one token remain serial; Plus overlap is token-pipeline across copy slots, not split-level parallelism.
-4. **72B+ cluster target (25-30+ t/s):** Not bench-validated on this branch. Requires S0 and/or Path C.
+3. **Overlap % gate:** B+6 targets **>5%** after rebuild (baseline 0.5% on pre-B+6 binary).
+4. **72B+ cluster:** Phase 9 S0-lite via `pathb-72b-cluster-matrix.sh` on Config G.
 
 ---
 
 ## What's next
 
-1. **Path C spike** -- one remus `rpc-server` spanning 5060 Ti + RX6600; removes client-side split between remus GPUs.
-2. **`pathb-hotpath-summary.ps1`** -- trace + layer map for hot-path tuning.
-3. **Optional re-bench** -- `trace-f-2gpu-plus` on remus 4.3.2 for updated HELLO trace fields (bench artifact predates deploy sync).
+1. **Rebuild** client + remus + romulus rpc-server with B+4..B+6 (`ggml-rpc.cpp`).
+2. **Re-bench** `trace-f-2gpu-plus` and check `pathb-hotpath-summary.sh` assembly-line gap.
+3. **S0-lite** -- `pathb-72b-cluster-matrix.sh` with `WIN_RPC_IP` set.

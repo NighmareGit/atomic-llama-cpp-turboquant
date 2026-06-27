@@ -1,67 +1,75 @@
 # Path-B Plus: Multi-RPC Pipeline Extension
 
-Fork-local successor to shipped Path B. Completes the assembly-line Path B started: unblock pipeline sync, then per-hop copy fixes.
+Fork-local successor to shipped Path B. Completes the assembly-line Path B started: unblock pipeline sync, fix proven blockers, unlock cross-token overlap.
 
 **Predecessor:** [rpc-path-b-plan.md](rpc-path-b-plan.md) | **Baseline:** [../../docs/cuda-windows-5070ti/RPC-BUG-HUNT.md](../../docs/cuda-windows-5070ti/RPC-BUG-HUNT.md)
 
 ## Goal
 
-**25-30+ t/s** on 72B+ multi-worker topologies (head + 3 workers, 5+ RPC backends) without Path C unified rpc-server.
+**25-30+ t/s** on 72B+ multi-worker topologies without Path C unified rpc-server.
 
-## Root cause (why Path B plateaued)
+## Proven root cause
 
-Path B enabled `pipeline_parallel` and `n_copies=4`, but:
+Source-code lateral forced-sync + serial server loop — not hardware. See [RPC-WAIT-MAP.md](../../docs/cuda-windows-5070ti/RPC-WAIT-MAP.md), [pathb-sync-site-audit.md](pathb-sync-site-audit.md).
 
-1. **Graph reuse never rotated copy slots** (`is_alloc` stays true; `alloc_graph` skipped) -> same buffers every token -> forced full `sched_synchronize`.
-2. **C API `llama_get_logits_*` syncs all backends** after async decode.
-3. **`send_rpc_cmd` drain on every fire-and-forget send** emptied RPC overlap windows.
-4. **COPY cross-port on same host** falls back to client GET+SET relay.
+## Tier 0 -- Pipeline unblock (B+1) COMPLETE
 
-## Tier 0 -- Pipeline unblock (B+1)
+| ID | Fix | Status |
+|----|-----|--------|
+| P0 | `ggml_backend_sched_pipeline_barrier` | SHIPPED |
+| P1 | `synchronize_sampling()` | SHIPPED |
+| P2 | Scoped drain | SHIPPED |
+| P3 | Trace copy/overlap metric | SHIPPED |
 
-| ID | Fix | File(s) |
-|----|-----|---------|
-| P0 | `ggml_backend_sched_pipeline_barrier` -- rotate copy slot + event wait only | `ggml-backend.cpp`, `llama-context.cpp` |
-| P1 | `synchronize_sampling()` -- sync logits/sampling backends only | `llama-context.cpp` |
-| P2 | Scoped drain -- response-read `send_rpc_cmd` only | `ggml-rpc.cpp` |
-| P3 | Trace: `copy` field + assembly-line overlap metric | `ggml-backend.cpp`, `pathb-rpc-trace-parse.ps1` |
+## Tier 1 -- Per-hop COMPLETE
 
-Env: `GGML_PIPELINE_PLUS=1` (default on when `pipeline_parallel` active). Set `0` to revert to legacy full sync.
+| Phase | Work | Status |
+|-------|------|--------|
+| B+2 | `cpy_tensor_async` + deferred COPY drain | SHIPPED |
+| B+3 | COPY_TENSOR_PEER proto 4.3 | SHIPPED |
+| B+4 | SET_TENSOR_HASH client cache | SHIPPED |
+| B+5 | Server async compute queue | SHIPPED |
+| B+6 | Client assembly-line (no GRAPH entry drain) | SHIPPED |
 
-## Tier 1 -- Per-hop (after Tier 0 bench)
+## Phase 5 COMPLETE
 
-| Phase | Work |
-|-------|------|
-| B+3 | Same-host peer COPY |
-| B+2 | `cpy_tensor_async` + HELLO caps |
-| B+4/B+5 | Drain tuning, server prefetch |
+2-device F production default (`ts=50,50`, G ~49 t/s).
 
-## Tier 2 -- Topology
+## Phase 6 CLOSED
 
-- Pipeline segment ordering (`--rpc` list matches layer flow)
-- `pathb-hotpath-summary.ps1` (trace + layer map)
+Path C C2+ declined. Feasibility 6a/6b done.
 
-## Phase 5 (topology + validation) -- COMPLETE 2026-06-27
+## Phase 7 -- Tier 2 trace tooling (Romulus)
 
-| Step | Work | Status |
-|------|------|--------|
-| 5a | 2-device F production default (`ts=50,50`, drop :50052) | DONE |
-| 5b | Spikes S4/S5/S1/S3 on `trace-f-2gpu-plus` | DONE |
-| S0 | 5-endpoint baseline | DEFERRED (Path C first) |
+| Deliverable | Status |
+|-------------|--------|
+| `pathb-rpc-trace-parse.sh` | SHIPPED |
+| `pathb-hotpath-summary.sh` | SHIPPED |
+| `pathb-sync-site-audit.md` | SHIPPED |
+| `BENCH_TRACE=1` in `rpc-server-bench.sh` | SHIPPED |
 
-## Success metrics
+## Phase 8 -- Config G cluster standup
 
-| Metric | Baseline | Target | Actual | Pass |
-|--------|----------|--------|--------|------|
-| trace-f-3gpu G | 38 t/s | 45+ after B+1 | 42.8 | PARTIAL |
-| trace-f-2gpu G (ops) | 48.9 pre-Plus | maintain | **48.9** | PASS |
-| split ms/token (2gpu) | 16.3 | <20 | 16.3 | PASS |
-| sched overlap (S5) | none | >0 | 267 pairs | PASS |
-| 72B+ cluster | TBD | 25-30+ t/s | - | DEFERRED |
+| Item | Status |
+|------|--------|
+| `Atomic-Llama-Romulus-PathB` deploy | SHIPPED |
+| `pathb-romulus-rpc.sh` / `pathb-cluster-up.sh` | SHIPPED |
+| `pathb-rpc-server.ps1` (Windows :50053) | SHIPPED |
+| `config-g` in `pathb-72b-vram-calc.py` | SHIPPED |
+
+## Phase 9 -- S0-lite benches
+
+Run after rebuild with B+4..B+6:
+
+```bash
+WIN_RPC_IP=<lan_ip> ./rpc-patch/scripts/pathb-72b-cluster-matrix.sh qwen72b coder-next-q4
+```
+
+Pass: MoE **>=25 t/s**, `overlap_pct` **>5%**, positive worker scaling vs 2-device.
 
 ## Doc map
 
-- [rpc-path-b-plus-overview.md](rpc-path-b-plus-overview.md) -- project overview (start here)
-- [rpc-path-b-plus-tracking.md](rpc-path-b-plus-tracking.md) -- status
-- [rpc-path-b-plus-spikes.md](rpc-path-b-plus-spikes.md) -- validation spikes
-- [rpc-path-b-plus-handover.md](rpc-path-b-plus-handover.md) -- ops when shipped
+- [rpc-path-b-plus-overview.md](rpc-path-b-plus-overview.md)
+- [rpc-path-b-plus-tracking.md](rpc-path-b-plus-tracking.md)
+- [pathb-sync-site-audit.md](pathb-sync-site-audit.md)
+- [rpc-multi-node-remus.md](rpc-multi-node-remus.md)
