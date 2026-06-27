@@ -1,0 +1,35 @@
+# Cluster node status snapshot -- 2026-06-27 17:32 CEST (pre-shutdown)
+
+## Git
+Windows:  6363d6f02 + handover commit (pending push at snapshot time)
+Romulus:  833ad4429 (behind -- run pathb-node-git-sync.sh on resume)
+Gitea:    6363d6f02 on Path-B-Event-Support-Pipeline-Plus
+
+## Processes (live at snapshot)
+Windows rpc-server.exe:  RUNNING pid 79096 :50053 (0.0.0.0, started 17:15)
+Romulus llama-server:    none
+Romulus rpc-server:      pid 466559 :50051 (3060 docker pathb-rpc-romulus, Up 3h)
+Remus pathb-rpc-remus:   Up 3h :50051 (5060)
+Remus rx6600-rpc:        Up 3h :50052 (parked)
+
+## Remote snapshot files (on host home dirs)
+romulus: ~/CLUSTER-SHUTDOWN-SNAPSHOT-2026-06-27.txt
+remus:   ~/CLUSTER-SHUTDOWN-SNAPSHOT-2026-06-27.txt
+
+## Bench artifacts in git
+rpc-patch/patch/bench-results/cluster-4gpu-primary/romulus-host/*.meta
+rpc-patch/patch/bench-results/cluster-4gpu-primary/romulus-host/*.result
+rpc-patch/patch/bench-results/cluster-4gpu-primary/romulus-host/trace-g-4gpu-primary-trace-summary.txt
+rpc-patch/patch/bench-results/cluster-4gpu-primary/romulus-host/trace-g-4gpu-romulus-q8-pp1.meta
+
+## Full logs remain on romulus (not in git)
+~/atomic-llama-cpp-turboquant/rpc-patch/patch/bench-results/rpc-server-bench/trace-g-*
+
+## Shutdown order (safe)
+1. pgrep -a llama-server on romulus (kill if any)
+2. Windows: pathb-rpc-server.ps1 -Stop or Stop-Process rpc-server
+3. Optional: docker stop pathb-rpc-remus rx6600-rpc pathb-rpc-romulus
+4. Power off nodes
+
+## Resume
+See rpc-patch/patch/HANDOVER-CLUSTER-4GPU-2026-06-27.md

@@ -1,0 +1,112 @@
+=== trace-g-4gpu-romulus-q8-pp1 ===
+variant=pathb proto=Path B (v4.2.2 workspace) rpc_mode=multi endpoint=192.168.8.176:50051,192.168.8.176:50052,127.0.0.1:50051 trace=0
+model=/mnt/models/Qwen3.6-35B-A3B-APEX-I-Quality.gguf ctx=4096 ctk=q8_0 ctv=q8_0 ngl=99 ts=28,12,28,32 ncmoe=none np=1 no_warmup=1 load_timeout=4200s
+server_extra=--no-warmup -np 1 --fit off --verbose -lv 4 --reasoning off
+prompts_file=default-fox verbose_lv=default extract_vram=0
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  437G  256G  64% /
+2026-06-27T14:31:10Z
+using remote/multi RPC at 192.168.8.176:50051,192.168.8.176:50052,127.0.0.1:50051 (no local bench-rpc)
+Connection to 192.168.8.176 50051 port [tcp/*] succeeded!
+RPC reachable: 192.168.8.176:50051
+Connection to 192.168.8.176 50052 port [tcp/*] succeeded!
+RPC reachable: 192.168.8.176:50052
+Connection to 127.0.0.1 50051 port [tcp/*] succeeded!
+RPC reachable: 127.0.0.1:50051
+starting llama-server (native ROCm HIP device 0)...
+native llama-server pid=584806 log=/home/hunter/atomic-llama-cpp-turboquant/rpc-patch/patch/bench-results/rpc-server-bench/trace-g-4gpu-romulus-q8-pp1-server.log
+polling server health (max 4200s)...
+poll 30s: still loading...
+0.00.696.696 I load_tensors: RPC0[192.168.8.176:50052] model buffer size =  2193.30 MiB
+.........................................................................ERROR: llama-server exited during load
+1.04.043.909 I llama_context: n_outputs_max = 1
+1.04.043.910 W llama_context: n_ctx_seq (4096) < n_ctx_train (262144) -- the full capacity of the model will not be utilized
+1.04.407.589 I llama_context:  ROCm_Host  output buffer size =     0.95 MiB
+1.04.407.973 I llama_kv_cache:      ROCm0 KV buffer size =    12.75 MiB
+1.04.411.344 I llama_kv_cache: RPC0[127.0.0.1:50051] KV buffer size =    12.75 MiB
+1.04.426.926 I llama_kv_cache: RPC0[192.168.8.176:50051] KV buffer size =    12.75 MiB
+1.04.430.897 I llama_kv_cache: RPC0[192.168.8.176:50052] KV buffer size =     4.25 MiB
+1.04.431.080 I llama_kv_cache: size =   42.50 MiB (  4096 cells,  10 layers,  1/1 seqs), K (q8_0):   21.25 MiB, V (q8_0):   21.25 MiB
+1.04.431.082 I llama_kv_cache: attn_rot_k = 0, n_embd_head_k_all = 256
+1.04.431.082 I llama_kv_cache: attn_rot_v = 0, n_embd_head_k_all = 256
+1.04.431.584 I llama_memory_recurrent:      ROCm0 RS buffer size =    18.84 MiB
+1.04.431.826 I llama_memory_recurrent: RPC0[127.0.0.1:50051] RS buffer size =    16.75 MiB
+1.04.433.210 I llama_memory_recurrent: RPC0[192.168.8.176:50051] RS buffer size =    18.84 MiB
+1.04.433.850 I llama_memory_recurrent: RPC0[192.168.8.176:50052] RS buffer size =     8.38 MiB
+1.04.433.853 I llama_memory_recurrent: size =   62.81 MiB (     1 cells,  40 layers,  1 seqs  0 rs_seq), R (f32):    2.81 MiB, S (f32):   60.00 MiB
+1.04.437.517 I llama_context: pipeline parallelism enabled
+1.04.437.518 I sched_reserve: reserving ...
+1.04.439.692 I sched_reserve: Flash Attention was auto, set to enabled
+1.04.439.693 I sched_reserve: resolving fused Gated Delta Net support:
+1.04.440.304 I sched_reserve: fused Gated Delta Net (autoregressive) enabled
+1.04.440.914 I sched_reserve: fused Gated Delta Net (chunked) enabled
+1.04.974.948 I sched_reserve: RPC0[192.168.8.176:50051] compute buffer size =   100.06 MiB
+1.04.974.958 I sched_reserve: RPC0[192.168.8.176:50052] compute buffer size =   100.06 MiB
+1.04.974.961 I sched_reserve: RPC0[127.0.0.1:50051] compute buffer size =   100.06 MiB
+1.04.974.962 I sched_reserve:      ROCm0 compute buffer size =   100.06 MiB
+1.04.974.965 I sched_reserve:        CPU compute buffer size =    24.07 MiB
+1.04.974.966 I sched_reserve: graph nodes  = 3727
+1.04.974.967 I sched_reserve: graph splits = 5
+1.04.974.973 I sched_reserve: reserve took 537.45 ms, sched copies = 4
+1.04.975.364 I srv    load_model: initializing slots, n_slots = 1
+--- artifact capture (load_exit) @ 2026-06-27T14:52:54Z ---
+=== 2026-06-27T14:52:54Z reason=load_exit ===
+[docker ps -a]
+pathb-rpc-romulus                Up 2 hours                atomic-llama-romulus-pathb-rpc:latest
+llama_nv_tq_rpc                  Exited (137) 2 days ago   vllm-deploy-llama-nv-tq-rpc:latest
+llama_amd_tq_rpc                 Exited (137) 2 days ago   vllm-deploy-llama-amd-tq-rpc:latest
+=== 2026-06-27T14:52:54Z reason=load_exit ===
+[romulus-rocm]
+
+
+============================ ROCm System Management Interface ============================
+================================== Memory Usage (Bytes) ==================================
+GPU[0]		: VRAM Total Memory (B): 25753026560
+GPU[0]		: VRAM Total Used Memory (B): 341676032
+==========================================================================================
+================================== End of ROCm SMI Log ===================================
+[romulus-nvidia]
+Sat Jun 27 16:52:55 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.71.05              Driver Version: 595.71.05      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3060 Ti     Off |   00000000:0A:00.0 Off |                  N/A |
+|  0%   44C    P8             25W /  220W |     155MiB /   8192MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            3061      G   /usr/lib/xorg/Xorg                        4MiB |
+|    0   N/A  N/A          466559      C   /usr/local/bin/rpc-server               132MiB |
++-----------------------------------------------------------------------------------------+
+[remus-nvidia]
+remus nvidia-smi failed
+--- rpc-local (tail) ---
+no local rpc container (pathb-rpc or bench-rpc)
+--- rpc-remus (tail) ---
+endpoint=192.168.8.176:50051,192.168.8.176:50052,127.0.0.1:50051 mode=multi
+--- logs-since ---
+--- server log tail (infer) ---
+1.04.437.517 I llama_context: pipeline parallelism enabled
+1.04.437.518 I sched_reserve: reserving ...
+1.04.439.692 I sched_reserve: Flash Attention was auto, set to enabled
+1.04.439.693 I sched_reserve: resolving fused Gated Delta Net support:
+1.04.440.304 I sched_reserve: fused Gated Delta Net (autoregressive) enabled
+1.04.440.914 I sched_reserve: fused Gated Delta Net (chunked) enabled
+1.04.974.948 I sched_reserve: RPC0[192.168.8.176:50051] compute buffer size =   100.06 MiB
+1.04.974.958 I sched_reserve: RPC0[192.168.8.176:50052] compute buffer size =   100.06 MiB
+1.04.974.961 I sched_reserve: RPC0[127.0.0.1:50051] compute buffer size =   100.06 MiB
+1.04.974.962 I sched_reserve:      ROCm0 compute buffer size =   100.06 MiB
+1.04.974.965 I sched_reserve:        CPU compute buffer size =    24.07 MiB
+1.04.974.966 I sched_reserve: graph nodes  = 3727
+1.04.974.967 I sched_reserve: graph splits = 5
+1.04.974.973 I sched_reserve: reserve took 537.45 ms, sched copies = 4
+1.04.975.364 I srv    load_model: initializing slots, n_slots = 1

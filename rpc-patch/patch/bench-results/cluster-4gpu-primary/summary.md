@@ -59,6 +59,10 @@ Replacing `:50052` (RX6600) with `:50053` (5070) fixes slot init.
 | trace-g-3gpu-primary-r2 | FAIL* | ~41 | *curl run 3 |
 | trace-g-3gpu-primary-r3 | PASS | ~35 |
 
+## Romulus host snapshot (in git)
+
+Meta/result files pulled to `romulus-host/` before cluster shutdown. Full server logs and jsonl telemetry remain on romulus at `rpc-patch/patch/bench-results/rpc-server-bench/`. Pull script: `rpc-patch/scripts/pull-romulus-bench-snapshot.sh`.
+
 ## Launchers
 
 ```bash

@@ -123,7 +123,8 @@ Multi-node benches (remus RPC from Windows): [docs/cuda-windows-5070ti/MULTI-NOD
 | G | romulus 7900 + 3060 + 5060 + 5070 (no 6600) | `36,24,24,16` | `pathb-romulus-4gpu-bench.sh` |
 
 Windows bench results (2026-06-27): Config E through 27B; Config F through 80B MoE.  
-Romulus 4-GPU primary (2026-06-27): G 38-43 t/s, load ~85s. See `patch/bench-results/cluster-4gpu-primary/summary.md`.
+Romulus 4-GPU primary (2026-06-27): G 38-43 t/s, load ~85s. See `patch/bench-results/cluster-4gpu-primary/summary.md`.  
+**Handover:** `patch/HANDOVER-CLUSTER-4GPU-2026-06-27.md`
 Artifact index: [docs/cuda-windows-5070ti/benchmarks/README.md](../docs/cuda-windows-5070ti/benchmarks/README.md).
 
 Linux Docker deploy (`rpc-patch/deploy/`) is separate; do not edit those files for Windows builds.

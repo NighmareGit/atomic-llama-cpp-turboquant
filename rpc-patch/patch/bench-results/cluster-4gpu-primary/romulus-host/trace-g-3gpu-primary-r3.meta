@@ -1,0 +1,86 @@
+=== trace-g-3gpu-primary-r3 ===
+variant=pathb proto=Path B (v4.2.2 workspace) rpc_mode=multi endpoint=192.168.8.176:50051,127.0.0.1:50051 trace=0
+model=/mnt/models/Qwen3.6-35B-A3B-APEX-I-Quality.gguf ctx=4096 ctk=q8_0 ctv=q8_0 ngl=99 ts=50,28,22 ncmoe=none np=1 no_warmup=1 load_timeout=1200s
+server_extra=--no-warmup -np 1 --fit off --verbose -lv 4 --reasoning off
+prompts_file=default-fox verbose_lv=default extract_vram=0
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  437G  256G  64% /
+2026-06-27T14:58:56Z
+using remote/multi RPC at 192.168.8.176:50051,127.0.0.1:50051 (no local bench-rpc)
+Connection to 192.168.8.176 50051 port [tcp/*] succeeded!
+RPC reachable: 192.168.8.176:50051
+Connection to 127.0.0.1 50051 port [tcp/*] succeeded!
+RPC reachable: 127.0.0.1:50051
+starting llama-server (native ROCm HIP device 0)...
+native llama-server pid=620383 log=/home/hunter/atomic-llama-cpp-turboquant/rpc-patch/patch/bench-results/rpc-server-bench/trace-g-3gpu-primary-r3-server.log
+polling server health (max 1200s)...
+server ready at 81s (model loaded)
+benchmark 3 runs...
+run=1 prompt=fox P=14.7 G=36.6 preview='This sentence is is is a the a known as as as as a ** the a ** ** ** **ppppangangangangramramramram****.**.**.\n\n\n\n\n\n\n\nIt###ItIt contains is is is a a widely a commonly sentence phrase very common famo'
+run=2 prompt=fox P=7.4 G=32.8 preview="That is is is's a a correct a classic well pang famous pang ** pang pangramramramram!.—a—a sentence phrase sentence sentence that that that that contains contains contains contains every every every e"
+run=3 prompt=fox P=5.9 G=35.1 preview="That is is's is a a the a ** well famous famous ** English ** sentence known known that, known known called that contains is is is often also used used for for in in typography typography order order "
+--- artifact capture (pass_final) @ 2026-06-27T15:00:34Z ---
+=== 2026-06-27T15:00:34Z reason=pass_final ===
+[docker ps -a]
+pathb-rpc-romulus                Up 2 hours                atomic-llama-romulus-pathb-rpc:latest
+llama_nv_tq_rpc                  Exited (137) 2 days ago   vllm-deploy-llama-nv-tq-rpc:latest
+llama_amd_tq_rpc                 Exited (137) 2 days ago   vllm-deploy-llama-amd-tq-rpc:latest
+=== 2026-06-27T15:00:34Z reason=pass_final ===
+[romulus-rocm]
+
+
+============================ ROCm System Management Interface ============================
+================================== Memory Usage (Bytes) ==================================
+GPU[0]		: VRAM Total Memory (B): 25753026560
+GPU[0]		: VRAM Total Used Memory (B): 6522380288
+==========================================================================================
+================================== End of ROCm SMI Log ===================================
+[romulus-nvidia]
+Sat Jun 27 17:00:35 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.71.05              Driver Version: 595.71.05      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3060 Ti     Off |   00000000:0A:00.0 Off |                  N/A |
+| 54%   53C    P2             48W /  220W |    5381MiB /   8192MiB |     14%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            3061      G   /usr/lib/xorg/Xorg                        4MiB |
+|    0   N/A  N/A          466559      C   /usr/local/bin/rpc-server              5358MiB |
++-----------------------------------------------------------------------------------------+
+[remus-nvidia]
+remus nvidia-smi failed
+--- rpc-local (tail) ---
+no local rpc container (pathb-rpc or bench-rpc)
+--- rpc-remus (tail) ---
+endpoint=192.168.8.176:50051,127.0.0.1:50051 mode=multi
+--- logs-since ---
+--- server log tail (infer) ---
+	top_k = 20, top_p = 0.950, min_p = 0.050, xtc_probability = 0.000, xtc_threshold = 0.100, typical_p = 1.000, top_n_sigma = -1.000, temp = 1.000
+	mirostat = 0, mirostat_lr = 0.100, mirostat_ent = 5.000, adaptive_target = -1.000, adaptive_decay = 0.900
+1.28.928.954 I slot launch_slot_: id  0 | task 218 | processing task, is_child = 0
+1.28.928.969 I slot update_slots: id  0 | task 218 | new prompt, n_ctx_slot = 4096, n_keep = 0, task.n_tokens = 22
+1.28.928.974 I slot update_slots: id  0 | task 218 | Checking checkpoint with [17, 17] against 21...
+1.29.054.525 W slot update_slots: id  0 | task 218 | restored context checkpoint (pos_min = 17, pos_max = 17, n_tokens = 18, n_past = 18, size = 62.813 MiB)
+1.29.054.529 I slot update_slots: id  0 | task 218 | cached n_tokens = 18, memory_seq_rm [18, end)
+1.29.054.552 I slot init_sampler: id  0 | task 218 | init sampler, took 0.00 ms, tokens: text = 22, total = 22
+1.32.523.479 I slot print_timing: id  0 | task 218 | n_decoded =    100, tg =  34.32 t/s
+1.32.856.454 I slot print_timing: id  0 | task 218 | prompt eval time =     680.34 ms /     4 tokens (  170.09 ms per token,     5.88 tokens per second)
+1.32.856.466 I slot print_timing: id  0 | task 218 |        eval time =    3247.12 ms /   114 tokens (   28.48 ms per token,    35.11 tokens per second)
+1.32.856.469 I slot print_timing: id  0 | task 218 |       total time =    3927.46 ms /   118 tokens
+1.32.856.470 I slot print_timing: id  0 | task 218 |    graphs reused =        323
+1.32.856.512 I slot      release: id  0 | task 218 | stop processing: n_tokens = 135, truncated = 0
+1.32.856.541 I srv  update_slots: all slots are idle
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  437G  256G  64% /
+RESULT=PASS
+results in /home/hunter/atomic-llama-cpp-turboquant/rpc-patch/patch/bench-results/rpc-server-bench/trace-g-3gpu-primary-r3.result
