@@ -1,7 +1,7 @@
 # Cluster node status snapshot -- 2026-06-27 17:32 CEST (pre-shutdown)
 
 ## Git
-Windows:  6363d6f02 + handover commit (pending push at snapshot time)
+Windows:  d9c3e6754 (pushed gitea + GitHub)
 Romulus:  833ad4429 (behind -- run pathb-node-git-sync.sh on resume)
 Gitea:    6363d6f02 on Path-B-Event-Support-Pipeline-Plus
 

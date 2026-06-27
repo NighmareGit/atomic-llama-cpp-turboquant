@@ -6,8 +6,7 @@
 
 | Location | Git commit | Notes |
 |----------|------------|-------|
-| Windows + gitea + GitHub | `6363d6f02` | Stable 4-GPU primary committed |
-| Handover commit (this doc) | pending push | Adds snapshots + pull script |
+| Windows + gitea + GitHub | `d9c3e6754` | Handover + bench snapshots (includes `6363d6f02`) |
 | Romulus host | `833ad4429` | **One commit behind** -- sync on resume |
 
 ---
