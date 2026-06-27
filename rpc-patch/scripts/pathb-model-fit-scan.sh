@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Rank /mnt/models GGUFs by fit against combined GPU VRAM + host RAM.
 #
-# usage: pathb-model-fit-scan.sh [--config config-a|remus|config-c] [--top 15]
+# usage: pathb-model-fit-scan.sh [--config config-a|remus|config-c|config-e|config-f] [--top 15]
 
 set -euo pipefail
 
@@ -21,6 +21,8 @@ case "$CONFIG" in
     config-a) GPU_GB=32; NAME="Config A (3060+7900)" ;;
     remus)    GPU_GB=40; NAME="Config B (remus 5060+7900)" ;;
     config-c) GPU_GB=48; NAME="Config C (remus 5060+3060+7900)" ;;
+    config-e) GPU_GB=31; NAME="Config E (remus 5060+Windows 5070 Ti)" ;;
+    config-f) GPU_GB=39; NAME="Config F (remus 5060+6600+Windows 5070 Ti)" ;;
     *) echo "unknown config $CONFIG" >&2; exit 1 ;;
 esac
 

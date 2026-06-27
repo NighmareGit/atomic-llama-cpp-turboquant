@@ -114,6 +114,16 @@ Portable binary also targets Ampere (`86-real`) for 3070/3090 nodes.
 ```
 
 Docs: [docs/cuda-windows-5070ti/README.md](../docs/cuda-windows-5070ti/README.md).  
+Multi-node benches (remus RPC from Windows): [docs/cuda-windows-5070ti/MULTI-NODE.md](../docs/cuda-windows-5070ti/MULTI-NODE.md).
+
+| Config | Topology | ts default | VRAM planner |
+|--------|----------|------------|--------------|
+| E | remus 5060 Ti + Windows 5070 Ti | `50,50` | `pathb-72b-vram-calc.py --config config-e` |
+| F | remus 5060 + RX6600 + Windows 5070 Ti | `30,12,58` | `pathb-72b-vram-calc.py --config config-f` |
+
+Windows bench results (2026-06-27): Config E through 27B; Config F through 80B MoE.
+Artifact index: [docs/cuda-windows-5070ti/benchmarks/README.md](../docs/cuda-windows-5070ti/benchmarks/README.md).
+
 Linux Docker deploy (`rpc-patch/deploy/`) is separate; do not edit those files for Windows builds.
 
 ---

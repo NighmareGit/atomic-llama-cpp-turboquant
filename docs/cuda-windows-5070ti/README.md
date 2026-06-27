@@ -16,10 +16,18 @@ atomic-llama-cpp-turboquant/
 ├── docs/cuda-windows-5070ti/      # <-- Windows 5070 Ti docs + benchmarks
 │   ├── README.md
 │   ├── BUILD.md
-│   └── benchmarks/
+│   ├── MULTI-NODE.md              # Config E/F topology + results
+│   └── benchmarks/                # see benchmarks/README.md
 ├── scripts/cuda-windows-5070ti/   # <-- Windows 5070 Ti scripts
 │   ├── build.ps1
-│   └── smoke-llama-server.ps1
+│   ├── smoke-llama-server.ps1
+│   ├── rpc-server-bench.ps1       # Config E/F hybrid bench
+│   ├── pathb-remus-rpc.ps1        # WSL -> remus 5060 RPC (Config E)
+│   ├── pathb-remus-multi-rpc.ps1  # WSL -> 5060 + RX6600 RPC (Config F)
+│   ├── invoke-wsl.ps1             # WSL + SSH bridge
+│   ├── pathb-vram-calc.ps1        # VRAM/ts planner
+│   ├── pathb-config-e-matrix.ps1  # Config E preset loop
+│   └── pathb-config-f-matrix.ps1  # Config F preset loop (through 80b)
 └── rpc-patch/                     # Path B source docs, Linux bench harnesses
 ```
 
@@ -60,7 +68,28 @@ For protocol changes, tensor-split presets, and Linux matrix benches see:
 - [rpc-patch/docs/RPC_PATH_AB_OPTIMIZATION_REPORT.md](../../rpc-patch/docs/RPC_PATH_AB_OPTIMIZATION_REPORT.md)
 - [rpc-patch/scripts/rpc-server-bench-matrix.sh](../../rpc-patch/scripts/rpc-server-bench-matrix.sh) (blueprint for later phases)
 
-## Later phases (not yet)
+## Phase 2: Multi-node RPC (Config E / F)
 
-- Multi-node RPC (`rpc-server` worker + remote client) - see Config B in rpc-patch README
-- Windows matrix benches modeled on `rpc-server-bench-matrix.sh`
+Windows 5070 Ti client + remus RPC workers. See [MULTI-NODE.md](MULTI-NODE.md).
+
+**Config E** (5070 Ti + remus 5060 Ti):
+
+```powershell
+.\scripts\cuda-windows-5070ti\pathb-remus-rpc.ps1 start
+.\scripts\cuda-windows-5070ti\rpc-server-bench.ps1 -Label config-e-smoke-9b -Config config-e `
+  -ModelPath "D:\models\Qwen3.5-9B-MTP-Q4_K_M.gguf"
+```
+
+Latest PASS: `benchmarks/config-e-smoke-9b-v2/` (9B, G~65 t/s), `benchmarks/config-e-27b/` (27B, G~24 t/s).
+
+**Config F** (5070 Ti + remus 5060 Ti + RX6600 on :50052):
+
+```powershell
+.\scripts\cuda-windows-5070ti\pathb-remus-multi-rpc.ps1 start
+.\scripts\cuda-windows-5070ti\rpc-server-bench.ps1 -Label config-f-smoke-9b -Config config-f `
+  -ModelPath "D:\models\Qwen3.5-9B-MTP-Q4_K_M.gguf"
+```
+
+Latest PASS: through 80B MoE on Config F. Highlights: `config-f-35b-gpu/` (G~34.5, full GPU),
+`config-f-48b-gpu/` (48B, G~11.3, ngl=33), `config-f-80b/` (80B, G~4.8, ngl=28 + ncmoe=8).
+See [MULTI-NODE.md](MULTI-NODE.md) offload cheat sheet.

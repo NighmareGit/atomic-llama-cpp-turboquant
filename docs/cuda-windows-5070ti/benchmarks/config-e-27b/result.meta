@@ -1,0 +1,46 @@
+﻿=== config-e-27b ===
+config=config-e endpoint=192.168.8.176:50051 model=D:\models\Qwen3.6-27B-Q5_K_M.gguf
+ctx=8192 ctk=q8_0 ctv=turbo3 ngl=99 ts=50,50 fitt=1024,1024
+extra=
+RPC reachable: 192.168.8.176:50051
+starting llama-server: D:\projects\atomic-llama-cpp-5070ti\atomic-llama-cpp-turboquant\build-cuda-b-bin\portable\llama-server.exe --rpc 192.168.8.176:50051 -m D:\models\Qwen3.6-27B-Q5_K_M.gguf -ngl 99 -c 8192 -ctk q8_0 -ctv turbo3 -sm layer -ts 50,50 --fit off --fit-target 1024,1024 --verbose -lv 4 --no-warmup -np 1 --host 127.0.0.1 --port 8081
+poll 30s: still loading...
+poll 60s: still loading...
+server ready at 70s
+0.00.104.930 I device_info:
+0.00.203.778 I   - CUDA0   : NVIDIA GeForce RTX 5070 Ti (16302 MiB, 15037 MiB free)
+0.00.203.801 I   - CPU     : 13th Gen Intel(R) Core(TM) i7-13700K (65220 MiB, 14399 MiB free)
+0.00.211.154 I   - RPC0    : 192.168.8.176:50051 (15849 MiB, 15679 MiB free)
+0.00.567.108 I llama_model_loader: loaded meta data with 51 key-value pairs and 851 tensors from D:\models\Qwen3.6-27B-Q5_K_M.gguf (version GGUF V3 (latest))
+0.00.567.460 I llama_model_loader: - kv  25:    qwen35.attention.layer_norm_rms_epsilon f32              = 0.000001
+0.01.811.399 I llama_model_loader: - type  f32:  449 tensors
+0.01.811.401 I llama_model_loader: - type q5_K:  289 tensors
+0.01.811.402 I llama_model_loader: - type q6_K:  113 tensors
+0.01.890.420 I llama_prepare_model_devices: using device RPC0 (192.168.8.176:50051) (unknown id) - 15679 MiB free
+0.01.964.000 I llama_prepare_model_devices: using device CUDA0 (NVIDIA GeForce RTX 5070 Ti) (0000:01:00.0) - 15037 MiB free
+0.04.633.870 I print_info: n_layer               = 64
+0.04.633.871 I print_info: n_layer_all           = 64
+0.04.634.037 I load_tensors: loading model tensors, this can take a while... (mmap = true, direct_io = false)
+0.08.048.602 I load_tensors: offloading output layer to GPU
+0.08.048.611 I load_tensors: offloading 63 repeating layers to GPU
+0.08.048.627 I load_tensors: offloaded 65/65 layers to GPU
+0.08.048.639 I load_tensors:   CPU_Mapped model buffer size =   833.59 MiB
+0.08.048.643 I load_tensors:        CUDA0 model buffer size =  9121.29 MiB
+0.08.048.646 I load_tensors: RPC0[192.168.8.176:50051] model buffer size =  8640.63 MiB
+1.09.931.377 I llama_context:  CUDA_Host  output buffer size =     0.95 MiB
+1.09.936.755 I llama_kv_cache:      CUDA0 KV buffer size =    93.00 MiB
+1.10.335.275 I llama_kv_cache: RPC0[192.168.8.176:50051] KV buffer size =    93.00 MiB
+1.10.336.105 I llama_kv_cache: size =  186.00 MiB (  8192 cells,  16 layers,  1/1 seqs), K (q8_0):  136.00 MiB, V (turbo3):   50.00 MiB
+1.10.337.435 I llama_memory_recurrent:      CUDA0 RS buffer size =    71.70 MiB
+1.10.338.326 I llama_memory_recurrent: RPC0[192.168.8.176:50051] RS buffer size =    77.93 MiB
+1.10.338.350 I llama_memory_recurrent: size =  149.62 MiB (     1 cells,  64 layers,  1 seqs  0 rs_seq), R (f32):    5.62 MiB, S (f32):  144.00 MiB
+1.10.535.246 I sched_reserve: RPC0[192.168.8.176:50051] compute buffer size =   194.06 MiB
+1.10.535.292 I sched_reserve:      CUDA0 compute buffer size =   194.06 MiB
+1.10.535.303 I sched_reserve:        CPU compute buffer size =    52.07 MiB
+1.10.964.804 I srv    load_model: prompt cache is enabled, size limit: 8192 MiB
+benchmark 3 runs...
+run=1 P=15.1 G=23.6 preview=
+run=2 P=6.4 G=23.4 preview=
+run=3 P=7.4 G=23.6 preview=
+RESULT=PASS
+logs=D:\projects\atomic-llama-cpp-5070ti\atomic-llama-cpp-turboquant\docs\cuda-windows-5070ti\benchmarks\config-e-27b

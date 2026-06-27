@@ -5,8 +5,10 @@ Usage:
   pathb-72b-vram-calc.py --gguf /mnt/models/Qwen3-72B-Instruct.IQ4_XS.gguf
   pathb-72b-vram-calc.py --config config-c --model-gb 38 --layers 80 --ctx 8192
 
-Device index order with --rpc: RPC workers first (index 0..N-1), ROCm last.
+Device index order with --rpc: RPC workers first (index 0..N-1), local CUDA last.
 Config C remus-first: RPC0=5060 Ti, RPC1=3060 Ti, ROCm0=7900 XTX.
+Config E: RPC0=remus 5060 Ti, CUDA0=Windows 5070 Ti.
+Config F: RPC0=remus 5060 Ti, RPC1=remus RX 6600, CUDA0=Windows 5070 Ti.
 """
 from __future__ import annotations
 
@@ -34,12 +36,68 @@ CONFIGS = {
         "ts_default": [35, 15, 50],
         "rpc_order": "5060,3060,7900",
     },
+    "config-e": {
+        "name": "Config E (remus 5060 Ti + Windows 5070 Ti)",
+        "vrams": [15.5, 15.5],
+        "ts_default": [50, 50],
+        "rpc_order": "5060,5070",
+    },
+    "config-f": {
+        "name": "Config F (remus 5060 + remus RX6600 + Windows 5070 Ti)",
+        "vrams": [15.5, 7.5, 15.5],
+        "ts_default": [30, 12, 58],
+        "rpc_order": "5060,6600,5070",
+    },
 }
 
 DEFAULT_MODEL_GB = 38.0
 DEFAULT_LAYERS = 80
 MARGIN_GB = 1.0
 CPU_OFFLOAD_FRACS = (0.25, 0.30, 0.35, 0.40)
+
+
+def _gguf_skip_value(f, vtype: int) -> object | None:
+    """Skip or read one GGUF KV value (ggml/include/gguf.h enum)."""
+    if vtype in (0, 1):
+        f.read(1)
+        return None
+    if vtype in (2, 3):
+        f.read(2)
+        return None
+    if vtype == 4:
+        return struct.unpack("<I", f.read(4))[0]
+    if vtype == 5:
+        return struct.unpack("<i", f.read(4))[0]
+    if vtype == 6:
+        f.read(4)
+        return None
+    if vtype == 7:
+        f.read(1)
+        return None
+    if vtype == 8:
+        vlen = struct.unpack("<Q", f.read(8))[0]
+        return f.read(vlen).decode("utf-8", errors="replace")
+    if vtype == 9:
+        atype = struct.unpack("<I", f.read(4))[0]
+        alen = struct.unpack("<Q", f.read(8))[0]
+        esize = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 8: 0, 10: 8, 11: 8, 12: 8}.get(atype)
+        if esize is None:
+            raise ValueError(f"unknown GGUF array element type {atype}")
+        if atype == 8:
+            for _ in range(alen):
+                slen = struct.unpack("<Q", f.read(8))[0]
+                f.read(slen)
+        else:
+            f.read(alen * esize)
+        return None
+    if vtype == 10:
+        return struct.unpack("<Q", f.read(8))[0]
+    if vtype == 11:
+        return struct.unpack("<q", f.read(8))[0]
+    if vtype == 12:
+        f.read(8)
+        return None
+    raise ValueError(f"unknown GGUF value type {vtype}")
 
 
 def gguf_read_metadata(path: str) -> dict[str, object]:
@@ -51,53 +109,39 @@ def gguf_read_metadata(path: str) -> dict[str, object]:
         version = struct.unpack("<I", f.read(4))[0]
         if version < 2:
             raise ValueError(f"unsupported GGUF version {version}")
-        n_tensors = struct.unpack("<Q", f.read(8))[0]
+        _n_tensors = struct.unpack("<Q", f.read(8))[0]
         n_kv = struct.unpack("<Q", f.read(8))[0]
-        del n_tensors
-
-        GGUF_TYPE_UINT32 = 4
-        GGUF_TYPE_STRING = 8
 
         for _ in range(n_kv):
             klen = struct.unpack("<Q", f.read(8))[0]
             key = f.read(klen).decode("utf-8", errors="replace")
             vtype = struct.unpack("<I", f.read(4))[0]
-            if vtype == GGUF_TYPE_STRING:
-                vlen = struct.unpack("<Q", f.read(8))[0]
-                val = f.read(vlen).decode("utf-8", errors="replace")
-            elif vtype == GGUF_TYPE_UINT32:
-                val = struct.unpack("<I", f.read(4))[0]
-            else:
-                # skip unknown value types (arrays etc.)
-                if vtype in (0, 1, 2, 3):
-                    _ = struct.unpack("<" + "BHIf"[vtype], f.read({0: 1, 1: 2, 2: 4, 3: 4}[vtype]))
-                    val = None
-                elif vtype == 5:
-                    val = struct.unpack("<q", f.read(8))[0]
-                elif vtype == 6:
-                    val = struct.unpack("<f", f.read(4))[0]
-                elif vtype == 7:
-                    val = struct.unpack("<d", f.read(8))[0]
-                elif vtype == 9:
-                    val = struct.unpack("<B", f.read(1))[0] != 0
-                elif vtype == 10:
-                    vlen = struct.unpack("<Q", f.read(8))[0]
-                    _ = f.read(vlen)
-                    val = None
-                elif vtype == 11:
-                    atype = struct.unpack("<I", f.read(4))[0]
-                    alen = struct.unpack("<Q", f.read(8))[0]
-                    esize = {0: 1, 1: 2, 2: 4, 3: 4, 4: 4, 5: 8, 6: 4, 7: 8, 9: 1}[atype]
-                    _ = f.read(alen * esize)
-                    val = None
-                else:
-                    raise ValueError(f"unknown GGUF value type {vtype} for key {key}")
+            val = _gguf_skip_value(f, vtype)
             if key == "general.architecture" and isinstance(val, str):
                 out["arch"] = val
             if key.endswith(".block_count") and isinstance(val, int):
-                out["block_count"] = val
+                out["block_count"] = int(val)
 
     return out
+
+
+def layers_from_filename(path: str) -> int | None:
+    low = path.lower()
+    if "9b" in low or "-9-" in low:
+        return 36
+    if "12b" in low or "12-b" in low:
+        return 42
+    if "27b" in low:
+        return 64
+    if "31b" in low:
+        return 64
+    if "35b" in low or "36b" in low:
+        return 64
+    if "70b" in low or "72b" in low or "80b" in low:
+        return 80
+    if "4b" in low or "e4b" in low:
+        return 34
+    return None
 
 
 def model_gb_from_path(path: str) -> float:
@@ -179,26 +223,13 @@ def main() -> None:
                 layers = int(meta["block_count"])
         except Exception as e:
             print(f"WARN: GGUF metadata read failed: {e}", file=sys.stderr)
-            try:
-                with open(args.gguf, "rb") as f:
-                    head = f.read(4 << 20).decode("utf-8", errors="ignore")
-                for token in head.split("\x00"):
-                    if token.endswith(".block_count") and not token.startswith("general."):
-                        continue
-                    if ".block_count" in token:
-                        pass
-                for line in head.split("\x00"):
-                    if line.endswith(".block_count"):
-                        arch = line.rsplit(".", 1)[0] or arch
-                # block_count numeric keys often appear as separate strings; use arch heuristics
-                if "70b" in args.gguf.lower() or "llama-3-70" in args.gguf.lower():
-                    layers = 80
-                elif "72b" in args.gguf.lower():
-                    layers = 80
-                elif "80b" in args.gguf.lower() or "next-80" in args.gguf.lower():
-                    layers = 80
-            except Exception:
-                pass
+            guess = layers_from_filename(args.gguf)
+            if guess is not None:
+                layers = guess
+            if "qwen" in args.gguf.lower():
+                arch = "qwen35"
+            elif "gemma" in args.gguf.lower():
+                arch = "gemma4"
     if model_gb is None:
         model_gb = DEFAULT_MODEL_GB
     if layers is None:
@@ -216,7 +247,7 @@ def main() -> None:
     print(f"  ts (default):       {','.join(str(t) for t in ts_default)}")
     print(f"  rpc order:          {cfg['rpc_order']}")
     for i, v in enumerate(vrams):
-        label = "RPC" if i < len(vrams) - 1 else "ROCm"
+        label = "RPC" if i < len(vrams) - 1 else "CUDA"
         print(f"  dev{i} ({label}):         {v:.2f} GB usable")
     print(f"  combined GPU:       {total_vram:.2f} GB")
     print(f"  CPU offload (min):  {cpu_min:.2f} GB weights (before KV)")
@@ -229,7 +260,7 @@ def main() -> None:
 
     ts_candidates = [ts_default]
     if len(vrams) == 2:
-        ts_candidates += [(15, 85), (20, 80), (30, 70)]
+        ts_candidates += [(50, 50), (45, 55), (40, 60), (35, 65), (30, 70)]
     else:
         ts_candidates += [(12, 8, 80), (10, 25, 65)]
 
