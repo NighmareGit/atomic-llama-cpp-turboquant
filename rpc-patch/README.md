@@ -32,8 +32,11 @@ Path B enables multi-backend **pipeline parallelism** (`sched copies = 4`) when 
 ```
 atomic-llama-cpp-turboquant/            # git repo root (branch Path-B-Event-Support)
 ├── ggml/src/ggml-rpc/                  # RPC patch source code
-├── build-cuda-b-bin/bin/rpc-server
+├── build-cuda-b-bin/bin/rpc-server     # Linux Docker + Windows native (see below)
+├── build-cuda-b-bin/portable/          # Windows portable bundle (CUDA DLLs included)
 ├── build-rocm-docker/bin/llama-server, llama-cli
+├── docs/cuda-windows-5070ti/           # Windows RTX 5070 Ti build docs + benchmarks
+├── scripts/cuda-windows-5070ti/        # Windows native build/smoke scripts
 └── rpc-patch/                          # <-- you are here
     ├── README.md                       # this file
     ├── docs/                           # optimization reports, tracking, plans
@@ -94,6 +97,24 @@ export BENCH_RPC_MODE=remote BENCH_CTK=turbo3 BENCH_CTV=turbo3 BENCH_TS=1,1
 ```
 
 9B on 8 GB RPC worker: **turbo3/turbo3** KV cache (`-ctk turbo3 -ctv turbo3`).
+
+### Windows native: RTX 5070 Ti build host
+
+| Role | GPU | Host | Binary |
+|------|-----|------|--------|
+| Standalone `llama-server` (phase 1) | RTX 5070 Ti 16 GB | Windows 11 | `build-cuda-b-bin/portable/` |
+| Future `rpc-server` worker | same | same | `build-cuda-b-bin/portable/rpc-server.exe` |
+
+Uses the **same** `build-cuda-b-bin` tree and Path B flags (`GGML_RPC=ON`, `GGML_SCHED_MAX_COPIES=4`) as Linux benches.
+Portable binary also targets Ampere (`86-real`) for 3070/3090 nodes.
+
+```powershell
+.\scripts\cuda-windows-5070ti\build.ps1
+.\scripts\cuda-windows-5070ti\smoke-llama-server.ps1
+```
+
+Docs: [docs/cuda-windows-5070ti/README.md](../docs/cuda-windows-5070ti/README.md).  
+Linux Docker deploy (`rpc-patch/deploy/`) is separate; do not edit those files for Windows builds.
 
 ---
 
