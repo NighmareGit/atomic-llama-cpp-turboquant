@@ -1,0 +1,7 @@
+=== proto-check-v43 ===
+purpose=remus deploy verify: HELLO proto 4.3.2 negotiation
+config=config-f endpoint=192.168.8.176:50051,192.168.8.176:50052
+model=D:\models\Qwen3.5-9B-MTP-Q4_K_M.gguf
+trace=rpc-trace.jsonl (minor=3 peer_copy=true on :50051 and :50052)
+RESULT=PASS
+date=2026-06-27

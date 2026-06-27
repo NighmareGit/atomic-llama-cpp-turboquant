@@ -168,3 +168,10 @@ rpc-patch/patch/bench-results/72b-matrix/phase1-all.log
 rpc-patch/patch/bench-results/72b-matrix/phase1-rerun-*.log
 rpc-patch/patch/bench-results/72b-matrix/*.pre-fix-*
 rpc-patch/patch/bench-results/72b-matrix/debug/
+
+# Agent / IDE session artifacts (not project source)
+/agent-tools/
+/mcps/
+/terminals/
+/ggml-backend.cpp
+/ggml-rpc.cpp

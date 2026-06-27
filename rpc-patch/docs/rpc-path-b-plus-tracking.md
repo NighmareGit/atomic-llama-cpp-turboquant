@@ -75,7 +75,7 @@ Runbook label: `trace-f-2gpu-plus`. See [rpc-path-b-plus-handover.md](rpc-path-b
 
 `deploy` only: `pathb-remus-rpc.sh deploy`. Skip sync: `PATHB_REMUS_SKIP_DEPLOY=1 build`.
 
-Server: `[hello] version: 4.3.2`. Client trace: `"minor":3,"peer_copy":true`.
+Server: `[hello] version: 4.3.2`. Client trace: `"minor":3,"peer_copy":true`. Artifact: `benchmarks/proto-check-v43/`.
 
 ## Phase 5 checklist
 
