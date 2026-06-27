@@ -30,6 +30,15 @@ static llm_graph_type ctx_type_to_graph_type(llama_context_type ctx_type) {
     throw std::runtime_error("Unsupported ctx type");
 }
 
+static bool llama_pipeline_plus_enabled() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_PIPELINE_PLUS");
+        v = (e == nullptr || atoi(e) != 0) ? 1 : 0;
+    }
+    return v != 0;
+}
+
 llama_context::llama_context(
         const llama_model & model,
               llama_context_params params) :
@@ -716,6 +725,42 @@ void llama_context::synchronize() {
     t_compute_start_us = 0;
 }
 
+void llama_context::synchronize_sampling() {
+    if (!sched) {
+        return;
+    }
+
+    if (!cparams.pipeline_parallel || !llama_pipeline_plus_enabled()) {
+        synchronize();
+        return;
+    }
+
+    bool synced_any = false;
+    auto sync_tensor = [&](ggml_tensor * t) {
+        if (!t) {
+            return;
+        }
+        ggml_backend_t backend = ggml_backend_sched_get_tensor_backend(sched.get(), t);
+        if (backend) {
+            ggml_backend_synchronize(backend);
+            synced_any = true;
+        }
+    };
+
+    if (auto * res = gf_res_prev.get()) {
+        for (auto & kv : res->t_sampled_logits) {
+            sync_tensor(kv.second);
+        }
+        if (!synced_any) {
+            sync_tensor(res->get_logits());
+        }
+    }
+
+    if (!synced_any) {
+        synchronize();
+    }
+}
+
 const llama_model & llama_context::get_model() const {
     return model;
 }
@@ -1315,11 +1360,12 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
     if (!graph_reuse_disable && res->can_reuse(gparams)) {
         //LLAMA_LOG_DEBUG("%s: reusing previous graph\n", __func__);
 
-        // with pipeline parallelism, the previous graph_compute_async may still be running
-        // on the GPU. we must synchronize before set_inputs to avoid overwriting input tensors
-        // that the previous compute is still reading.
         if (cparams.pipeline_parallel) {
-            ggml_backend_sched_synchronize(sched.get());
+            if (llama_pipeline_plus_enabled()) {
+                ggml_backend_sched_pipeline_barrier(sched.get());
+            } else {
+                ggml_backend_sched_synchronize(sched.get());
+            }
         }
 
         n_reused++;
@@ -3680,13 +3726,13 @@ void llama_synchronize(llama_context * ctx) {
 }
 
 float * llama_get_logits(llama_context * ctx) {
-    ctx->synchronize();
+    ctx->synchronize_sampling();
 
     return ctx->get_logits();
 }
 
 float * llama_get_logits_ith(llama_context * ctx, int32_t i) {
-    ctx->synchronize();
+    ctx->synchronize_sampling();
 
     float * res = nullptr;
 
@@ -3768,7 +3814,7 @@ float * llama_get_sampled_probs_ith(llama_context * ctx, int32_t i) {
 }
 
 float * llama_get_sampled_logits_ith(llama_context * ctx, int32_t i) {
-    ctx->synchronize();
+    ctx->synchronize_sampling();
 
     return ctx->get_sampled_logits_ith(i);
 }

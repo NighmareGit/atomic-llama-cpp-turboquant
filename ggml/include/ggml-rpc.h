@@ -7,7 +7,7 @@ extern "C" {
 #endif
 
 #define RPC_PROTO_MAJOR_VERSION    4
-#define RPC_PROTO_MINOR_VERSION    2   // bumped for RPC_CMD_SET_TENSOR_BATCH (1) + RPC_CMD_EVENT_RECORD (2)
+#define RPC_PROTO_MINOR_VERSION    3   // + RPC_CMD_COPY_TENSOR_PEER (3)
 #define RPC_PROTO_PATCH_VERSION    2
 
 #ifdef  __cplusplus

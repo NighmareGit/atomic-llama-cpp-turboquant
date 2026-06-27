@@ -20,7 +20,39 @@
 #include <stdlib.h>
 #include <string.h>
 #include <algorithm>
+#include <chrono>
 #include <vector>
+
+static int sched_trace_lvl() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_SCHED_TRACE");
+        v = e ? atoi(e) : 0;
+    }
+    return v;
+}
+
+static void sched_trace_emit(int split_id, int backend_id, int copy_id, const char * phase, int64_t elapsed_us) {
+    if (!sched_trace_lvl()) {
+        return;
+    }
+    static FILE * trace_f = nullptr;
+    static bool trace_f_init = false;
+    if (!trace_f_init) {
+        trace_f_init = true;
+        const char * path = getenv("GGML_SCHED_TRACE_FILE");
+        if (path && path[0]) {
+            trace_f = fopen(path, "a");
+        }
+    }
+    FILE * out = trace_f ? trace_f : stderr;
+    const auto ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    fprintf(out,
+        "{\"ts_us\":%lld,\"split\":%d,\"backend\":%d,\"copy\":%d,\"phase\":\"%s\",\"elapsed_us\":%lld}\n",
+        (long long) ts_us, split_id, backend_id, copy_id, phase, (long long) elapsed_us);
+    fflush(out);
+}
 
 #ifdef __APPLE__
 #include <sys/types.h>
@@ -1547,11 +1579,13 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
     std::vector<ggml_bitset_t> used_ids;
 
     for (int split_id = 0; split_id < sched->n_splits; split_id++) {
+        const auto split_t0 = std::chrono::steady_clock::now();
         struct ggml_backend_sched_split * split = &splits[split_id];
         int split_backend_id = split->backend_id;
         ggml_backend_t split_backend = sched->backends[split_backend_id];
 
         // copy the input tensors to the split backend
+        const auto wait_t0 = std::chrono::steady_clock::now();
         for (int input_id = 0; input_id < split->n_inputs; input_id++) {
             ggml_backend_t input_backend = ggml_backend_sched_get_tensor_backend(sched, split->inputs[input_id]);
             struct ggml_tensor * input = split->inputs[input_id];
@@ -1673,7 +1707,13 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 }
             }
         }
+        {
+            const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - wait_t0).count();
+            sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "input_wait_copy", us);
+        }
 
+        const auto compute_t0 = std::chrono::steady_clock::now();
         if (!sched->callback_eval) {
             enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &split->graph);
             if (ec != GGML_STATUS_SUCCESS) {
@@ -1713,11 +1753,26 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
             }
         }
 
+        {
+            const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - compute_t0).count();
+            sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "graph_compute_async", us);
+        }
+
         // record the event of this copy
+        const auto record_t0 = std::chrono::steady_clock::now();
         if (split->n_inputs > 0) {
             if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
                 ggml_backend_event_record(sched->events[split_backend_id][sched->cur_copy], split_backend);
             }
+        }
+        {
+            const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - record_t0).count();
+            sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "event_record", us);
+            const auto split_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - split_t0).count();
+            sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "split_total", split_us);
         }
     }
 
@@ -1912,6 +1967,24 @@ void ggml_backend_sched_synchronize(ggml_backend_sched_t sched) {
         // which avoids changes in the graph that could cause CUDA or other graphs to be disabled
         sched->next_copy = 0;
     }
+}
+
+void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
+    GGML_ASSERT(sched);
+    if (sched->n_copies <= 1 || !sched->is_alloc) {
+        ggml_backend_sched_synchronize(sched);
+        return;
+    }
+
+    const int new_copy = sched->next_copy;
+    for (int i = 0; i < sched->n_backends; i++) {
+        if (sched->events[i][new_copy] != NULL) {
+            ggml_backend_event_synchronize(sched->events[i][new_copy]);
+        }
+    }
+
+    sched->cur_copy  = new_copy;
+    sched->next_copy = (new_copy + 1) % sched->n_copies;
 }
 
 void ggml_backend_sched_set_eval_callback(ggml_backend_sched_t sched, ggml_backend_sched_eval_callback callback, void * user_data) {

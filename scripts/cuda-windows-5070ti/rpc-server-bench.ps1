@@ -17,6 +17,9 @@ param(
     [int]$GenTokens = 64,
     [int]$Runs = 3,
     [int]$LoadTimeout = 600,
+    [switch]$Profile,
+    [switch]$Trace,
+    [switch]$SchedDebug,
     [switch]$StartRemusRpc,
     [switch]$StopRemusRpc,
     [switch]$EnsurePathbRpc,
@@ -74,14 +77,36 @@ $Result = Join-Path $LogDir "bench.result"
 $ServerLog = Join-Path $LogDir "server.log"
 $ServerLogErr = Join-Path $LogDir "server.log.err"
 $GpuLog = Join-Path $LogDir "gpu-monitor.log"
+$TelDir = Join-Path $LogDir "telemetry"
+$PhaseLog = Join-Path $TelDir "phase.log"
 $serverExe = Join-Path $BinDir "llama-server.exe"
-if (-not (Test-Path $serverExe)) { throw "Missing $serverExe - run build.ps1 first" }
 
 function Log-Meta([string]$Line) {
     if ($Line -match '^[\x00-\x08\x0B\x0C\x0E-\x1F]*$') { return }
     Write-Host $Line
     Add-Content -Path $Meta -Value $Line -Encoding utf8
 }
+
+if ($Profile -or $Trace) {
+    New-Item -ItemType Directory -Force -Path $TelDir | Out-Null
+    if ($GenTokens -lt 128) { $GenTokens = 256 }
+    if ($Runs -lt 1) { $Runs = 1 }
+}
+if ($Trace -or $Profile) {
+    if (-not $env:GGML_PIPELINE_PLUS) { $env:GGML_PIPELINE_PLUS = "1" }
+}
+if ($Trace) {
+    $rpcTrace = Join-Path $TelDir "rpc-trace.jsonl"
+    $schedTrace = Join-Path $TelDir "sched-trace.jsonl"
+    "" | Set-Content -Path $rpcTrace -Encoding utf8 -NoNewline
+    "" | Set-Content -Path $schedTrace -Encoding utf8 -NoNewline
+    $env:GGML_RPC_TRACE = "1"
+    $env:GGML_SCHED_TRACE = "1"
+    $env:GGML_RPC_TRACE_FILE = $rpcTrace
+    $env:GGML_SCHED_TRACE_FILE = $schedTrace
+    Log-Meta "trace: rpc=$rpcTrace sched=$schedTrace"
+}
+if (-not (Test-Path $serverExe)) { throw "Missing $serverExe - run build.ps1 first" }
 
 function Invoke-VramCalc {
     param([string]$WslModelPath)
@@ -134,13 +159,37 @@ foreach ($ep in ($RpcEndpoint -split ',')) {
     Log-Meta "RPC reachable: $ep"
 }
 
+function Write-Phase([string]$Phase) {
+    if (-not $Profile) { return }
+    $ts = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    Add-Content -Path $PhaseLog -Value "$ts $Phase" -Encoding utf8
+    Log-Meta "phase=$Phase"
+}
+
+$monDur = $LoadTimeout + 180
 $monRocmFlag = if ($MonitorRocm) { "1" } else { "0" }
 $wslGpuLog = "/mnt/" + ($GpuLog -replace '^([A-Za-z]):\\', '$1/') -replace '\\', '/'
 $wslGpuLog = $wslGpuLog.ToLower()
-$monJob = Start-Job -ScriptBlock {
-    param($InvokeWsl, $WslGpuLog, $Dur, $Ip, $Pass, $Rocm)
-    & $InvokeWsl -BashCommand "chmod +x rpc-patch/scripts/pathb-gpu-monitor-win.sh; PATHB_MONITOR_REMUS_ROCM=$Rocm ./rpc-patch/scripts/pathb-gpu-monitor-win.sh '$WslGpuLog' $Dur" -RemusIp $Ip -RemusPass $Pass
-} -ArgumentList $InvokeWsl, $wslGpuLog, ($LoadTimeout + 120), $RemusIp, $(if ($RemusPass) { $RemusPass } elseif ($env:PATHB_REMUS_SSH_PASS) { $env:PATHB_REMUS_SSH_PASS } else { "12345" }), $monRocmFlag
+$wslTelDir = if ($Profile) {
+    "/mnt/" + ($TelDir -replace '^([A-Za-z]):\\', '$1/') -replace '\\', '/'
+    ($("/mnt/" + ($TelDir -replace '^([A-Za-z]):\\', '$1/') -replace '\\', '/').ToLower())
+} else { "" }
+
+$rp = if ($RemusPass) { $RemusPass } elseif ($env:PATHB_REMUS_SSH_PASS) { $env:PATHB_REMUS_SSH_PASS } else { "12345" }
+
+if ($Profile) {
+    Write-Phase "LOAD_START"
+    $monJobs = @()
+    $cpuMon = Join-Path $CollateralRoot "pathb-cpu-monitor-win.ps1"
+    $monJobs += Start-Job -FilePath $cpuMon -ArgumentList $TelDir, $monDur, 500, 0
+} else {
+    $monJob = Start-Job -ScriptBlock {
+        param($InvokeWsl, $WslGpuLog, $Dur, $Ip, $Pass, $Rocm)
+        & $InvokeWsl -BashCommand "chmod +x rpc-patch/scripts/pathb-gpu-monitor-win.sh; PATHB_MONITOR_REMUS_ROCM=$Rocm ./rpc-patch/scripts/pathb-gpu-monitor-win.sh '$WslGpuLog' $Dur" -RemusIp $Ip -RemusPass $Pass
+    } -ArgumentList $InvokeWsl, $wslGpuLog, $monDur, $RemusIp, $rp, $monRocmFlag
+}
+
+if ($SchedDebug) { $env:GGML_SCHED_DEBUG = "1" }
 
 $serverArgs = @(
     "--rpc", $RpcEndpoint,
@@ -177,6 +226,13 @@ function Get-ServerLogText {
     return ($parts -join "`n")
 }
 
+if ($Profile) {
+    $monJobs += Start-Job -ScriptBlock {
+        param($InvokeWsl, $WslTel, $Dur, $Ip, $Pass, $Rocm)
+        & $InvokeWsl -BashCommand "sed -i 's/\r$//' rpc-patch/scripts/pathb-profile-gpu-monitor.sh 2>/dev/null; chmod +x rpc-patch/scripts/pathb-profile-gpu-monitor.sh; PATHB_MONITOR_REMUS_ROCM=$Rocm ./rpc-patch/scripts/pathb-profile-gpu-monitor.sh '$WslTel' $Dur" -RemusIp $Ip -RemusPass $Pass
+    } -ArgumentList $InvokeWsl, $wslTelDir, $monDur, $RemusIp, $rp, $monRocmFlag
+}
+
 Log-Meta "starting llama-server: $serverExe $($serverArgs -join ' ')"
 $proc = Start-Process -FilePath $serverExe -ArgumentList $serverArgs -PassThru `
     -RedirectStandardOutput $ServerLog -RedirectStandardError $ServerLogErr `
@@ -189,6 +245,7 @@ for ($i = 0; $i -lt [math]::Ceiling($LoadTimeout / 5); $i++) {
     if ($logText -match "model loaded|server is listening") {
         $ready = $true
         Log-Meta "server ready at $($i * 5)s"
+        if ($Profile) { Write-Phase "LOAD_END" }
         break
     }
     if ($proc.HasExited) {
@@ -200,6 +257,7 @@ for ($i = 0; $i -lt [math]::Ceiling($LoadTimeout / 5); $i++) {
         if ($r.StatusCode -eq 200 -and $logText -match "llama_server") {
             $ready = $true
             Log-Meta "server ready at $($i * 5)s (health ok)"
+            if ($Profile) { Write-Phase "LOAD_END" }
             break
         }
     } catch { }
@@ -220,10 +278,11 @@ Select-String -Path @($ServerLogErr, $ServerLog) -Pattern 'MiB|load_tensors|offl
     Select-Object -Last 40 |
     ForEach-Object { Log-Meta $_ }
 
-Log-Meta "benchmark $Runs runs..."
+Log-Meta "benchmark $Runs runs x $GenTokens tokens..."
 Set-Content -Path $Result -Value ""
-$prompt = "The quick brown fox jumps over the lazy dog."
+$prompt = "The quick brown fox jumps over the lazy dog. Explain in detail the history of computing from Babbage to modern GPUs."
 for ($run = 1; $run -le $Runs; $run++) {
+    if ($Profile) { Write-Phase "GEN_RUN_$run" }
     $body = @{
         messages = @(@{ role = "user"; content = $prompt })
         max_tokens = $GenTokens
@@ -237,10 +296,34 @@ for ($run = 1; $run -le $Runs; $run++) {
     Add-Content -Path $Result -Value $line
 }
 
+if ($Profile) { Write-Phase "GEN_END" }
+
 Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 2
-Stop-Job $monJob -ErrorAction SilentlyContinue
-Remove-Job $monJob -Force -ErrorAction SilentlyContinue
+if ($Profile) {
+    # Let telemetry jobs flush GEN-window samples
+    Start-Sleep -Seconds 45
+} else {
+    Start-Sleep -Seconds 2
+}
+if ($Profile) {
+    foreach ($j in $monJobs) {
+        Stop-Job $j -ErrorAction SilentlyContinue
+        Remove-Job $j -Force -ErrorAction SilentlyContinue
+    }
+    $parse = Join-Path $CollateralRoot "pathb-profile-parse.ps1"
+    if (Test-Path $parse) { & $parse -ProfileDir $LogDir }
+    if ($Trace) {
+        $traceParse = Join-Path $CollateralRoot "pathb-rpc-trace-parse.ps1"
+        if (Test-Path $traceParse) { & $traceParse -TraceDir $TelDir }
+    }
+} elseif ($Trace) {
+    Start-Sleep -Seconds 2
+    $traceParse = Join-Path $CollateralRoot "pathb-rpc-trace-parse.ps1"
+    if (Test-Path $traceParse) { & $traceParse -TraceDir $TelDir }
+} else {
+    Stop-Job $monJob -ErrorAction SilentlyContinue
+    Remove-Job $monJob -Force -ErrorAction SilentlyContinue
+}
 
 nvidia-smi | Tee-Object -FilePath (Join-Path $LogDir "nvidia-smi-after.txt") | Out-Null
 Invoke-WslBench "./rpc-patch/scripts/pathb-remus-rpc.sh logs" | Out-File (Join-Path $LogDir "rpc-remus.log")

@@ -1,0 +1,24 @@
+﻿=== profile summary: trace-f-3gpu ===
+generated: 2026-06-27T06:47:55Z
+
+[throughput]
+  
+  run=1 P=15.4 G=28.1 preview=
+
+[win-5070] samples=25
+  power: min=24.3W max=48.7W avg=30.2W
+  duty_cycle_20pct_tdp=0%
+  peak_pct_tdp=16.2%
+  util_gpu: max=10% avg=2.9%
+
+[ram]
+  LOAD: min_avail=1266MB max_pages_sec=8448.4
+  GEN: min_avail=1340MB max_pages_sec=590.8
+
+[nic] peak_mbps=1542.11 (2.5G ceiling=2500)
+  nic_headroom_pct=38.3
+  nic_ok=False
+
+[verdict]
+  Primary classification requires scheduler trace + E-vs-F delta.
+  If all GPU duty_cycle < 20% during GEN and NIC/PCIe headroom > 99%: orchestration/RPC stall likely.

@@ -1,11 +1,11 @@
 # RPC Path A/B patch collateral
 
-Private fork work on **llama.cpp RPC cross-GPU performance**: batching and pipelining (Path A), then event-based pipeline parallelism (Path B). This folder lives **inside** the `atomic-llama-cpp-turboquant` git tree (branch `Path-B-Event-Support`, protocol v4.2.2) so docs, scripts, handover notes, and benchmark metadata are versioned with the feature branch.
+Private fork work on **llama.cpp RPC cross-GPU performance**: batching and pipelining (Path A), then event-based pipeline parallelism (Path B). This folder lives **inside** the `atomic-llama-cpp-turboquant` git tree (branch `Path-B-Event-Support-Pipeline-Plus`, protocol v4.3) so docs, scripts, handover notes, and benchmark metadata are versioned with the feature branch.
 
 **Git repo root:** parent of this folder (`atomic-llama-cpp-turboquant/`)  
 **This folder:** `rpc-patch/` (docs, scripts, handover, bench artifacts)  
 **Builds:** `../build-cuda-b-bin/`, `../build-rocm-docker/`  
-**Status (2026-06-26):** Path B on Config A-D; Config C 72B+ matrix phases 1-4 complete; Config D RX 6600 ROCm docker smoke PASS. See [patch/HANDOVER.md](patch/HANDOVER.md), [docs/rpc-remus-rx6600.md](docs/rpc-remus-rx6600.md), [patch/bench-results/72b-matrix/README.md](patch/bench-results/72b-matrix/README.md).
+**Status (2026-06-27):** Path B on Config A-D; **Path-B Plus** B+1 validated (G=42.8), Tier 1 client shipped on `Path-B-Event-Support-Pipeline-Plus`. See [docs/rpc-path-b-plus-plan.md](docs/rpc-path-b-plus-plan.md). Prior: Config C 72B+ matrix phases 1-4 complete; Config D RX 6600 ROCm docker smoke PASS. See [patch/HANDOVER.md](patch/HANDOVER.md), [docs/rpc-remus-rx6600.md](docs/rpc-remus-rx6600.md), [patch/bench-results/72b-matrix/README.md](patch/bench-results/72b-matrix/README.md).
 
 ---
 
@@ -30,7 +30,7 @@ Path B enables multi-backend **pipeline parallelism** (`sched copies = 4`) when 
 ## Repository layout
 
 ```
-atomic-llama-cpp-turboquant/            # git repo root (branch Path-B-Event-Support)
+atomic-llama-cpp-turboquant/            # git repo root (branch Path-B-Event-Support-Pipeline-Plus)
 ├── ggml/src/ggml-rpc/                  # RPC patch source code
 ├── build-cuda-b-bin/bin/rpc-server     # Linux Docker + Windows native (see below)
 ├── build-cuda-b-bin/portable/          # Windows portable bundle (CUDA DLLs included)
@@ -284,7 +284,7 @@ This is a **private fork patch**, not an upstream llama.cpp PR. If merging upstr
 
 ## Git remote
 
-Feature branch `Path-B-Event-Support` is pushed to the local Gitea instance:
+Feature branch `Path-B-Event-Support-Pipeline-Plus` is pushed to the local Gitea instance:
 
 `http://192.168.8.108:3005/hunter/atomic-llama-cpp-turboquant.git` (remote name: `gitea`)
 

@@ -23,6 +23,8 @@ struct socket_t {
 
     // Set after HELLO: server supports RPC_CMD_SET_TENSOR_BATCH when minor >= 1
     bool server_supports_batch = false;
+    // Set after HELLO: server supports RPC_CMD_COPY_TENSOR_PEER when minor >= 3
+    bool server_supports_peer_copy = false;
 
     static socket_ptr create_server(const char * host, int port);
     static socket_ptr connect(const char * host, int port);

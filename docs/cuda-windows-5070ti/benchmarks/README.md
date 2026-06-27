@@ -37,6 +37,16 @@ Matrix summary: `config-e-matrix-summary.txt`
 | `config-f-48b` | qwen3-coder-next-reap-48b | ~11 | 33 | 8 | same split |
 | `config-f-80b` | Qwen3-Next-80B-A3B-Instruct-IQ4_NL | **~4.8** | 28 | 8 | 28/49 layers GPU |
 
+### Profile runs (GPU underutilization investigation)
+
+| Run | G (t/s) | Notes |
+|-----|---------|-------|
+| `profile-f-36b-nl-base` | 37.0 | 3-device F, ts=30,12,58 |
+| `profile-e-36b-nl` | 42.4 | Config E, no 6600 |
+| `profile-f-36b-nl-no6600` | **48.9** | 2-device, ts=50,50 - fastest |
+
+See [PROFILING.md](../PROFILING.md) for bottleneck classification.
+
 Matrix summary: `config-f-matrix-summary.txt`
 
 Details and offload guidance: [../MULTI-NODE.md](../MULTI-NODE.md)

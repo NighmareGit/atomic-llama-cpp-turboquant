@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /build
 
 ARG GIT_URL=http://192.168.8.108:3005/hunter/atomic-llama-cpp-turboquant.git
-ARG GIT_BRANCH=Path-B-Event-Support
+ARG GIT_BRANCH=Path-B-Event-Support-Pipeline-Plus
 
 RUN git clone "${GIT_URL}" . && git checkout "${GIT_BRANCH}"
 

@@ -57,6 +57,8 @@ struct llama_context {
 
     void synchronize();
 
+    void synchronize_sampling();
+
     const llama_model   & get_model()   const;
     const llama_cparams & get_cparams() const;
 

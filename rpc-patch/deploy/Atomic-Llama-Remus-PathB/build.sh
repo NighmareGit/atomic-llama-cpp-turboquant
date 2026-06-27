@@ -4,7 +4,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 STAGING="${DIR}/staging"
 PROXY_IP="${PROXY_IP:-192.168.8.108}"
-GIT_BRANCH="${GIT_BRANCH:-Path-B-Event-Support}"
+GIT_BRANCH="${GIT_BRANCH:-Path-B-Event-Support-Pipeline-Plus}"
 GIT_URL="${GIT_URL:-http://192.168.8.108:3005/hunter/atomic-llama-cpp-turboquant.git}"
 MIN_GB="${MIN_ROOT_GB:-25}"
 
