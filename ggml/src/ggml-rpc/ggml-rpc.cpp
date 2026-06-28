@@ -218,8 +218,11 @@ struct rpc_pending_get_tensor {
 
 static thread_local std::vector<rpc_pending_get_tensor> tls_pending_get_tensor;
 
+static uint64_t fnv_hash(const uint8_t * data, size_t len);
+
 static void drain_pending_event_response(const socket_ptr & sock);
 static void drain_pending_copy_response(const socket_ptr & sock);
+static void flush_pending_get_tensor_for_socket(const socket_ptr & sock);
 static void flush_pending_get_tensor();
 static void flush_set_tensor_batch();
 
@@ -462,32 +465,40 @@ static bool rpc_same_host(const std::string & a, const std::string & b) {
     return rpc_endpoint_host(a) == rpc_endpoint_host(b);
 }
 
-static void flush_pending_get_tensor() {
-    if (tls_pending_event.pending && tls_pending_event.sock) {
-        drain_pending_event_response(tls_pending_event.sock);
-    }
-    if (tls_pending_get_tensor.empty()) {
-        return;
-    }
-    for (auto & pending : tls_pending_get_tensor) {
-        const auto t0 = std::chrono::steady_clock::now();
-        uint64_t out_size;
-        if (!pending.sock->recv_data(&out_size, sizeof(out_size))) {
-            GGML_LOG_ERROR("[%s] failed to read get_tensor response size\n", __func__);
+static void flush_pending_get_tensor_for_socket(const socket_ptr & sock) {
+    for (auto it = tls_pending_get_tensor.begin(); it != tls_pending_get_tensor.end(); ) {
+        if (it->sock != sock) {
+            ++it;
             continue;
         }
-        if (out_size != pending.size) {
-            GGML_LOG_ERROR("[%s] get_tensor response size mismatch: expected %zu, got %zu\n",
-                            __func__, pending.size, (size_t) out_size);
+        const auto t0 = std::chrono::steady_clock::now();
+        uint64_t out_size;
+        if (!it->sock->recv_data(&out_size, sizeof(out_size))) {
+            GGML_LOG_ERROR("[%s] failed to read get_tensor response size\n", __func__);
+            it = tls_pending_get_tensor.erase(it);
+            continue;
         }
-        if (!pending.sock->recv_data(pending.data, pending.size)) {
+        if (out_size != it->size) {
+            GGML_LOG_ERROR("[%s] get_tensor response size mismatch: expected %zu, got %zu\n",
+                            __func__, it->size, (size_t) out_size);
+        }
+        if (!it->sock->recv_data(it->data, it->size)) {
             GGML_LOG_ERROR("[%s] failed to read get_tensor response data\n", __func__);
         }
         const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - t0).count();
-        rpc_trace_emit(__func__, "flush_get", RPC_CMD_GET_TENSOR, pending.size, true, us);
+        rpc_trace_emit(__func__, "flush_get", RPC_CMD_GET_TENSOR, it->size, true, us);
+        it = tls_pending_get_tensor.erase(it);
     }
-    tls_pending_get_tensor.clear();
+}
+
+static void flush_pending_get_tensor() {
+    if (tls_pending_event.pending && tls_pending_event.sock) {
+        drain_pending_event_response(tls_pending_event.sock);
+    }
+    while (!tls_pending_get_tensor.empty()) {
+        flush_pending_get_tensor_for_socket(tls_pending_get_tensor.front().sock);
+    }
 }
 
 // RPC data structures
@@ -625,10 +636,10 @@ static bool send_rpc_cmd(socket_ptr sock, enum rpc_cmd cmd, const void * input, 
 // RPC response: | response_size (8 bytes) | response_data (response_size bytes) |
 static bool send_rpc_cmd(socket_ptr sock, enum rpc_cmd cmd, const void * input, size_t input_size, void * output, size_t output_size) {
     const auto t0 = std::chrono::steady_clock::now();
-    // Central drain: protect TCP framing when pipelined responses are pending
+    // Socket-scoped drain: protect TCP framing without stalling other RPC sockets
     drain_pending_copy_response(sock);
     drain_pending_event_response(sock);
-    flush_pending_get_tensor();
+    flush_pending_get_tensor_for_socket(sock);
     flush_set_tensor_batch();
     if (!send_rpc_cmd(sock, cmd, input, input_size)) {
         return false;
@@ -880,7 +891,7 @@ static void ggml_backend_rpc_buffer_get_tensor_async(ggml_backend_buffer_t buffe
     ggml_backend_rpc_buffer_context * ctx = (ggml_backend_rpc_buffer_context *)buffer->context;
     auto sock = ctx->sock;
     drain_pending_event_response(sock);
-    flush_pending_get_tensor();
+    flush_pending_get_tensor_for_socket(sock);
     flush_set_tensor_batch();
     rpc_msg_get_tensor_req request;
     request.tensor = serialize_tensor(tensor);
@@ -909,7 +920,7 @@ static void ggml_backend_rpc_buffer_get_tensor(ggml_backend_buffer_t buffer, con
     ggml_backend_rpc_buffer_context * ctx = (ggml_backend_rpc_buffer_context *)buffer->context;
     auto sock = ctx->sock;
     drain_pending_event_response(sock);
-    flush_pending_get_tensor();
+    flush_pending_get_tensor_for_socket(sock);
     flush_set_tensor_batch();
     rpc_msg_get_tensor_req request;
     request.tensor = serialize_tensor(tensor);
@@ -945,7 +956,7 @@ static bool rpc_issue_copy_tensor(const ggml_tensor * src, ggml_tensor * dst, bo
         drain_pending_copy_response(sock);
     }
     drain_pending_event_response(sock);
-    flush_pending_get_tensor();
+    flush_pending_get_tensor_for_socket(sock);
     flush_set_tensor_batch();
 
     if (peer_copy) {
@@ -1070,6 +1081,46 @@ static size_t ggml_backend_rpc_get_max_size(ggml_backend_buffer_type_t buft) {
     return buft_ctx->max_size;
 }
 
+// B+7: cache GET_ALLOC_SIZE responses (shape/op keyed; ignores pointers and strides)
+struct rpc_alloc_shape_key {
+    uint32_t type;
+    uint32_t ne[GGML_MAX_DIMS];
+    uint32_t op;
+    int32_t  op_params[GGML_MAX_OP_PARAMS / sizeof(int32_t)];
+    int32_t  flags;
+};
+
+static thread_local std::unordered_map<uint64_t, size_t> tls_alloc_size_cache;
+
+static rpc_alloc_shape_key rpc_alloc_shape_key_from_tensor(const ggml_tensor * tensor) {
+    rpc_alloc_shape_key key = {};
+    if (!tensor) {
+        return key;
+    }
+    key.type = tensor->type;
+    for (int i = 0; i < GGML_MAX_DIMS; i++) {
+        key.ne[i] = tensor->ne[i];
+    }
+    key.op = tensor->op;
+    memcpy(key.op_params, tensor->op_params, sizeof(key.op_params));
+    key.flags = tensor->flags;
+    return key;
+}
+
+static uint64_t rpc_hash_alloc_size_req(const std::string & endpoint,
+                                        uint32_t device,
+                                        const ggml_tensor * tensor) {
+    uint64_t hash = fnv_hash(reinterpret_cast<const uint8_t *>(endpoint.data()), endpoint.size());
+    hash ^= (uint64_t) device + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
+    const rpc_alloc_shape_key tkey = rpc_alloc_shape_key_from_tensor(tensor);
+    hash ^= fnv_hash(reinterpret_cast<const uint8_t *>(&tkey), sizeof(tkey)) + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
+    for (int i = 0; i < GGML_MAX_SRC; i++) {
+        const rpc_alloc_shape_key skey = rpc_alloc_shape_key_from_tensor(tensor->src[i]);
+        hash ^= fnv_hash(reinterpret_cast<const uint8_t *>(&skey), sizeof(skey)) + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
+    }
+    return hash;
+}
+
 static size_t ggml_backend_rpc_buffer_type_get_alloc_size(ggml_backend_buffer_type_t buft, const ggml_tensor * tensor) {
     // should we query the remote server for the actual size
     bool rpc_get = false;
@@ -1097,11 +1148,17 @@ static size_t ggml_backend_rpc_buffer_type_get_alloc_size(ggml_backend_buffer_ty
             request.srcs[i] = serialize_tensor(tensor->src[i]);
         }
 
-        // TODO: cache the alloc responses to avoid extra RPC calls?
+        const uint64_t cache_key = rpc_hash_alloc_size_req(buft_ctx->endpoint, buft_ctx->device, tensor);
+        auto cached = tls_alloc_size_cache.find(cache_key);
+        if (cached != tls_alloc_size_cache.end()) {
+            return cached->second;
+        }
+
         rpc_msg_get_alloc_size_rsp response;
         bool status = send_rpc_cmd(sock, RPC_CMD_GET_ALLOC_SIZE, &request, sizeof(request), &response, sizeof(response));
         RPC_STATUS_ASSERT(status);
 
+        tls_alloc_size_cache.emplace(cache_key, response.alloc_size);
         return response.alloc_size;
     }
 

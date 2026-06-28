@@ -133,11 +133,31 @@ Spike details: [rpc-path-b-plus-spikes.md](rpc-path-b-plus-spikes.md). Live stat
 
 ---
 
+## B+6 overlap gate milestones (active mission)
+
+Plan and step checklist: [b6-gate/PLAN.md](b6-gate/PLAN.md), [b6-gate/TRACKING.md](b6-gate/TRACKING.md) (update tracking after each step).
+
+| ID | overlap_pct | stall_ratio | Topology | Status |
+|----|-------------|-------------|----------|--------|
+| Baseline | 0.6% / 0.2% | 0.68 / 0.96 | 2-GPU F remus / 4-GPU G | **CURRENT** |
+| Post-B7 remus (2-GPU F) | 0.1% | 0.95 | romulus + remus 5060 | FAIL (2026-06-29) |
+| Spike triton (2-GPU F) | 0.3% | 0.92 | romulus + triton 3090 :50054 | FAIL; G=187 t/s |
+| Spike ref | remus vs triton delta recorded | - | 2-GPU F, same romulus client | DONE |
+| M1 | >= 1.0% | < 0.80 | 2-GPU F | PENDING |
+| M2 | >= 2.5% | < 0.60 | 2-GPU F | PENDING |
+| M3 (PASS) | **>= 5.0%** | < 0.50 | 2-GPU F | PENDING |
+
+Core diagnostic: remus 5060 (`:50051`) vs triton 3090 (`192.168.8.23:50054`) with client held constant.
+
+---
+
 ## Document index
 
 | Document | Purpose |
 |----------|---------|
 | **This file** | Project overview and navigation |
+| [b6-gate/PLAN.md](b6-gate/PLAN.md) | B+6 gate mission plan (Path-B-Plus, no Path C) |
+| [b6-gate/TRACKING.md](b6-gate/TRACKING.md) | B+6 step checklist -- living state |
 | [rpc-path-b-plus-plan.md](rpc-path-b-plus-plan.md) | Technical plan, tiers, success metrics |
 | [rpc-path-b-plus-tracking.md](rpc-path-b-plus-tracking.md) | Implementation log, benchmarks, issues, checklists |
 | [rpc-path-b-plus-spikes.md](rpc-path-b-plus-spikes.md) | Validation spikes S0-S5, commands |
@@ -161,6 +181,6 @@ Spike details: [rpc-path-b-plus-spikes.md](rpc-path-b-plus-spikes.md). Live stat
 
 ## What's next
 
-1. **Rebuild** client + remus + romulus rpc-server with B+4..B+6 (`ggml-rpc.cpp`).
-2. **Re-bench** `trace-f-2gpu-plus` and check `pathb-hotpath-summary.sh` assembly-line gap.
-3. **S0-lite** -- `pathb-72b-cluster-matrix.sh` with `WIN_RPC_IP` set.
+1. **B+6 gate mission** -- [b6-gate/TRACKING.md](b6-gate/TRACKING.md): remus vs triton RPC A/B, stall ledger, B+7 fixes.
+2. **Triton spike prep** -- `:50054` on `192.168.8.23` (3090 worker); sync `C:\projects\...` tree.
+3. **S0-lite** (deferred) -- `pathb-72b-cluster-matrix.sh` after M1.

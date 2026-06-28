@@ -2,8 +2,8 @@
 
 Trace-proven blocking sites for multi-RPC pipeline stalls. Static map: [`RPC-WAIT-MAP.md`](../../docs/cuda-windows-5070ti/RPC-WAIT-MAP.md). Parse tools: `rpc-patch/scripts/pathb-rpc-trace-parse.sh`, `pathb-hotpath-summary.sh`.
 
-**Last updated:** 2026-06-27  
-**Evidence bench:** `trace-f-2gpu-plus` (Windows 2-device F), `trace-f-3gpu-plus` (3-device), `trace-g-4gpu-primary-trace` (romulus 4-GPU stable)
+**Last updated:** 2026-06-28  
+**Evidence bench:** `b6-2gpu-f` (romulus 2-device F, 2026-06-28), `trace-f-2gpu-plus` (Windows), `trace-g-4gpu-primary-trace` / `profiler-4gpu-primary-romulus-trace-v2` (romulus 4-GPU)
 
 ---
 
@@ -35,6 +35,22 @@ Post–B+3 stalls visible in `pathb-hotpath-summary.sh` output. Not regressions;
 | **B+4** | `SET_TENSOR_HASH` client cache — skip redundant hash RTTs after first hit | 168 calls ~43s on 2gpu-plus load+gen window | **SHIPPED** | `ggml-rpc.cpp` `tls_hash_present` + `rpc_hash_cache_key` in `ggml_backend_rpc_buffer_set_tensor` |
 | **B+5** | Server async compute queue — recv next cmd while GPU computes | Server serial cmd loop blocked on sync `graph_compute` | **SHIPPED** | `ggml-rpc.cpp` `rpc_server::enqueue_graph_*`, `wait_compute_idle` on `RPC_CMD_EVENT_RECORD` |
 | **B+6** | Client assembly-line unlock — no proactive EVENT drain before GRAPH | Collapsed overlap window at `graph_compute` entry | **SHIPPED** | `ggml-rpc.cpp` removed `drain_pending_event_response` from `ggml_backend_rpc_graph_compute`; re-bench `overlap_pct` gate >5% |
+
+---
+
+## B+7 candidates (trace-proven 2026-06-28, `b6-2gpu-f`)
+
+Profiler label `b6-2gpu-f` (romulus 7900 + remus 5060, `ts=50,50`, q8_0 APEX, n=384). Verdict: **MIXED** — Plus improves G (75.6 vs 72.1 t/s) but **not** `overlap_pct` (0.2% both).
+
+| # | Blocker | Evidence (`diagnose.json`) | B+7 direction |
+|---|---------|------------------------------|---------------|
+| 7a | Central drain on blocking `send_rpc_cmd` | `drain_flush_ms=4514`, EVENT_RECORD avg 11.7 ms | **SHIPPED** B7-7a: `flush_pending_get_tensor_for_socket`; 2-GPU overlap unchanged (0.1%) |
+| 7b | 5060 RPC straggler | `straggler_ms_per_token=13.13` (~99% of split sum) | `-ts` sweep; triton 3090 A/B when online |
+| 7c | Serial `input_wait_copy` | `stall_ratio=0.95`, `input_wait_copy_ms` >> `graph_compute_async_ms` | Token pipe starved; overlaps 7a+7b |
+| 7d | Plus does not raise overlap | `b6-2gpu-f` vs `b6-2gpu-f-plus0` same 0.2% | B+7 drain/straggler, not P0/P1 barrier |
+| 7e | GET_ALLOC_SIZE RPC storm | 6528 calls, `blocking_rpc_count=2416` | **SHIPPED** B7-1b shape cache; `blocking_rpc_count=808`, overlap still 0.1% |
+
+Mission tracking: [b6-gate/TRACKING.md](b6-gate/TRACKING.md).
 
 ---
 

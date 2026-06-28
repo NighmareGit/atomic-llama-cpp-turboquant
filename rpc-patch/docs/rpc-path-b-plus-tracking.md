@@ -4,7 +4,7 @@ Overview: [rpc-path-b-plus-overview.md](rpc-path-b-plus-overview.md)
 
 **Overall:** B+1 **PRODUCTION READY** | B+4..B+6 **SHIPPED** (rebuild required) | Phase 7-8 tooling/cluster **SHIPPED**  
 **Build:** 9964+ client + remus/romulus **proto 4.3.2**  
-**Current Phase:** Phase 10 **4-GPU cluster primary** (Config G stable, no RX6600)
+**Current Phase:** **B+6 gate** ([b6-gate/TRACKING.md](b6-gate/TRACKING.md)) | Phase 10 4-GPU stable
 **Branch:** Path-B-Event-Support-Pipeline-Plus (private fork)
 
 ## Implementation log
