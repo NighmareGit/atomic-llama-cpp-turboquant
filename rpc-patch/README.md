@@ -5,7 +5,7 @@ Private fork work on **llama.cpp RPC cross-GPU performance**: batching and pipel
 **Git repo root:** parent of this folder (`atomic-llama-cpp-turboquant/`)  
 **This folder:** `rpc-patch/` (docs, scripts, handover, bench artifacts)  
 **Builds:** `../build-cuda-b-bin/`, `../build-rocm-docker/`  
-**Status (2026-06-27):** Path B on Config A-D; **Path-B Plus B+1 PRODUCTION READY** (Phase 5). **4-GPU Config G primary STABLE** (Phase 10): romulus 7900 + 3060 + 5060 + 5070, G ~40 t/s, no RX6600. Windows 2-device default: `ts=50,50`, G=**48.9 t/s**. Start: [docs/rpc-path-b-plus-overview.md](docs/rpc-path-b-plus-overview.md), [CLUSTER-4GPU-PRIMARY.md](../docs/cuda-windows-5070ti/CLUSTER-4GPU-PRIMARY.md). Tracking: [docs/rpc-path-b-plus-tracking.md](docs/rpc-path-b-plus-tracking.md). RX6600 4-GPU: slot-init hang (parked).
+**Status (2026-06-27):** Path B on Config A-D; **Path-B Plus B+1 PRODUCTION READY** (Phase 5). **4-GPU Config G primary STABLE** (Phase 10): romulus 7900 + 3060 + 5060 + 5070, G ~40 t/s, no RX6600. Windows 2-device default: `ts=50,50`, G=**48.9 t/s**. Start: [docs/rpc-path-b-plus-overview.md](docs/rpc-path-b-plus-overview.md), [CLUSTER-4GPU-PRIMARY.md](../docs/cuda-windows-5070ti/CLUSTER-4GPU-PRIMARY.md). Benchmarking: [BENCHMARKING.md](../BENCHMARKING.md), [benches/path-b-plus/](../benches/path-b-plus/). Tracking: [docs/rpc-path-b-plus-tracking.md](docs/rpc-path-b-plus-tracking.md). RX6600 4-GPU: slot-init hang (parked).
 
 ---
 
@@ -124,7 +124,7 @@ Multi-node benches (remus RPC from Windows): [docs/cuda-windows-5070ti/MULTI-NOD
 
 Windows bench results (2026-06-27): Config E through 27B; Config F through 80B MoE.  
 Romulus 4-GPU primary (2026-06-27): G 38-43 t/s, load ~85s. See `patch/bench-results/cluster-4gpu-primary/summary.md`.  
-**Handover:** `patch/HANDOVER-CLUSTER-4GPU-2026-06-27.md`
+**Handover:** `patch/HANDOVER-CLUSTER-4GPU-2026-06-28.md`
 Artifact index: [docs/cuda-windows-5070ti/benchmarks/README.md](../docs/cuda-windows-5070ti/benchmarks/README.md).
 
 Linux Docker deploy (`rpc-patch/deploy/`) is separate; do not edit those files for Windows builds.

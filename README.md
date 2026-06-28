@@ -19,6 +19,7 @@ LLM inference in C/C++
 
 - **Gemma 4 MTP speculative decoding: pair a `gemma4` target with the official `gemma4_assistant` head (loaded via `--mtp-head`) for ~+30-50 % short-prompt throughput. See [MTP.md](MTP.md) and the pre-built Q4 assistant GGUFs at the [AtomicChat/Gemma 4 Assistant GGUF collection](https://huggingface.co/collections/AtomicChat/gemma-4-assistant-gguf).**
 - **Qwen 3.6 NextN speculative decoding: point `--model-draft` at the same combined `*_MTP.gguf` and pass `--spec-type nextn` — the draft context reuses the target `llama_model` (no second mmap) and lands +24-36 % tps on Qwen 3.6 35B-A3B MoE, +5-7 % tps on Qwen 3.6 27B dense (MacBook Pro M4 Max, single-slot). See [NEXTN.md](NEXTN.md). Recommended pre-built combined `_MTP.gguf` quants live in the **[AtomicChat — Qwen 3.6 UDT](https://huggingface.co/collections/AtomicChat/qwen-36-udt-atomicchat-6a0481f5cc5a057c07759176)** collection ([27B](https://huggingface.co/AtomicChat/Qwen3.6-27B-UDT-MTP-GGUF) · [35B-A3B](https://huggingface.co/AtomicChat/Qwen3.6-35B-A3B-UDT-MTP-GGUF)) — built with the Unsloth public MTP-aware imatrix + fork masks that pin NextN/MTP tensors to `Q8_0` (preserves draft acceptance) and lift attention Q/K to `Q6_K` (pairs cleanly with TurboQuant3 KV); upstream sources also work: [`unsloth/Qwen3.6-35B-A3B-MTP-GGUF`](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF) / [`unsloth/Qwen3.6-27B-MTP-GGUF`](https://huggingface.co/unsloth/Qwen3.6-27B-MTP-GGUF).**
+- **Pipeline overlap (depth-2 + Path-B Plus):** stack server-side MTP draft overlap (`LLAMA_PIPELINE_DEPTH2`) with multi-GPU graph-split pipeline parallelism (`GGML_PIPELINE_PLUS`, RPC backend events, `sched copies = 4`). Composes with MTP/NextN and TurboQuant KV. See [PIPELINE.md](PIPELINE.md). Benchmark workflow: [BENCHMARKING.md](BENCHMARKING.md). Multi-node ops: [rpc-patch/README.md](rpc-patch/README.md).
 - **TurboQuant KV cache & weights: WHT-rotated low-bit quantization with backend-native kernels (Metal `TurboFlash`, CUDA, Vulkan, HIP). Use `-ctk turbo3 -ctv turbo3` for ~4.3× KV compression, or quantize weights to `TQ4_1S`/`TQ3_1S`. See [Compression below](#turboquant-kv-cache--weight-compression).**
 - **Hugging Face cache migration: models downloaded with `-hf` are now stored in the standard Hugging Face cache directory, enabling sharing with other HF tools.**
 - **[guide : using the new WebUI of llama.cpp](https://github.com/ggml-org/llama.cpp/discussions/16938)**
@@ -169,7 +170,9 @@ Median tps over 3 runs with Q4_K_M assistant heads. Dense scripts default to
 
 Full architecture (graph, KV-safety contract, async pipeline, server
 integration, trade-offs) and the longer benchmark history live in
-**[MTP.md](MTP.md)**. User-facing CLI flags are also documented in
+**[MTP.md](MTP.md)**. The unified depth-2 + multi-backend Path-B Plus
+reference (tracing, cluster examples, `GGML_PIPELINE_PLUS`) is in
+**[PIPELINE.md](PIPELINE.md)**. User-facing CLI flags are also documented in
 [docs/speculative.md](docs/speculative.md).
 
 ## Qwen 3.6 NextN — speculative decoding

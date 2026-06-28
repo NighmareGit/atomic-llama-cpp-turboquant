@@ -102,6 +102,8 @@ Why use the async pair?
   `llama_decode` appends only positions `> attn_pos`, so backbone cells read by
   MTP remain stable until `_wait` (append-only cache). Stale in-flight requests
   are drained in `common_speculative_begin` and on skip / param-mismatch paths.
+  Full pipeline architecture (depth-2 + multi-backend Path-B Plus), tracing, and
+  cluster examples: [PIPELINE.md](../PIPELINE.md).
 - **In-graph argmax**: the MTP graph publishes a `ggml_argmax` of the final
   logits (I32 [1]) via `llm_graph_result::get_argmax()`. Per draft step the host
   reads back 4 bytes (one token id) instead of the full F32 [n_vocab] logits

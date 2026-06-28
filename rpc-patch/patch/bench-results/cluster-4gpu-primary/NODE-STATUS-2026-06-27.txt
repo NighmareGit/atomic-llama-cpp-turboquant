@@ -32,4 +32,4 @@ rpc-patch/patch/bench-results/cluster-4gpu-primary/romulus-host/trace-g-4gpu-rom
 4. Power off nodes
 
 ## Resume
-See rpc-patch/patch/HANDOVER-CLUSTER-4GPU-2026-06-27.md
+See rpc-patch/patch/HANDOVER-CLUSTER-4GPU-2026-06-28.md
