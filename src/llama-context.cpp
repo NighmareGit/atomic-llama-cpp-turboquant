@@ -1,6 +1,7 @@
 #include "llama-context.h"
 
 #include "ggml.h"
+#include "ggml-backend.h"
 #include "llama-arch.h"
 #include "llama-graph.h"
 #include "llama-impl.h"
@@ -1795,6 +1796,10 @@ int llama_context::decode(const llama_batch & batch_inp) {
     if (t_compute_start_us == 0) {
         t_compute_start_us = ggml_time_us();
     }
+
+    pipeline_decode_id++;
+    ggml_pipeline_trace_set_decode_id(pipeline_decode_id);
+
     n_queued_tokens += n_tokens_all;
 
     // TODO: this clear of the buffer can easily be forgotten - need something better
@@ -3237,6 +3242,8 @@ void llama_context::perf_reset() {
     t_eval_us   = n_eval = 0;
     t_p_eval_us = n_p_eval = 0;
     n_reused    = 0;
+    pipeline_decode_id = 0;
+    ggml_pipeline_trace_set_decode_id(-1);
 }
 
 llama_memory_breakdown llama_context::memory_breakdown() const {

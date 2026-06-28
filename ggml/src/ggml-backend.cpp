@@ -32,6 +32,60 @@ static int sched_trace_lvl() {
     return v;
 }
 
+static thread_local int32_t g_pipeline_decode_id = -1;
+
+static int pipeline_trace_lvl() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_PIPELINE_TRACE");
+        v = e ? atoi(e) : 0;
+    }
+    return v;
+}
+
+static FILE * pipeline_trace_file() {
+    static FILE * trace_f = nullptr;
+    static bool trace_f_init = false;
+    if (!trace_f_init) {
+        trace_f_init = true;
+        const char * path = getenv("GGML_PIPELINE_TRACE_FILE");
+        if (path && path[0]) {
+            trace_f = fopen(path, "a");
+        }
+    }
+    return trace_f;
+}
+
+static void pipeline_trace_emit(const char * event, int copy_from, int copy_to, int n_copies, int64_t elapsed_us) {
+    if (!pipeline_trace_lvl()) {
+        return;
+    }
+    FILE * out = pipeline_trace_file();
+    if (!out) {
+        out = stderr;
+    }
+    const auto ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (g_pipeline_decode_id >= 0) {
+        fprintf(out,
+            "{\"ts_us\":%lld,\"event\":\"%s\",\"decode_id\":%d,\"copy_from\":%d,\"copy_to\":%d,\"n_copies\":%d,\"elapsed_us\":%lld}\n",
+            (long long) ts_us, event, g_pipeline_decode_id, copy_from, copy_to, n_copies, (long long) elapsed_us);
+    } else {
+        fprintf(out,
+            "{\"ts_us\":%lld,\"event\":\"%s\",\"copy_from\":%d,\"copy_to\":%d,\"n_copies\":%d,\"elapsed_us\":%lld}\n",
+            (long long) ts_us, event, copy_from, copy_to, n_copies, (long long) elapsed_us);
+    }
+    fflush(out);
+}
+
+void ggml_pipeline_trace_set_decode_id(int32_t decode_id) {
+    g_pipeline_decode_id = decode_id;
+}
+
+int32_t ggml_pipeline_trace_get_decode_id(void) {
+    return g_pipeline_decode_id;
+}
+
 static void sched_trace_emit(int split_id, int backend_id, int copy_id, const char * phase, int64_t elapsed_us) {
     if (!sched_trace_lvl()) {
         return;
@@ -48,9 +102,15 @@ static void sched_trace_emit(int split_id, int backend_id, int copy_id, const ch
     FILE * out = trace_f ? trace_f : stderr;
     const auto ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
-    fprintf(out,
-        "{\"ts_us\":%lld,\"split\":%d,\"backend\":%d,\"copy\":%d,\"phase\":\"%s\",\"elapsed_us\":%lld}\n",
-        (long long) ts_us, split_id, backend_id, copy_id, phase, (long long) elapsed_us);
+    if (pipeline_trace_lvl() && g_pipeline_decode_id >= 0) {
+        fprintf(out,
+            "{\"ts_us\":%lld,\"decode_id\":%d,\"split\":%d,\"backend\":%d,\"copy\":%d,\"phase\":\"%s\",\"elapsed_us\":%lld}\n",
+            (long long) ts_us, g_pipeline_decode_id, split_id, backend_id, copy_id, phase, (long long) elapsed_us);
+    } else {
+        fprintf(out,
+            "{\"ts_us\":%lld,\"split\":%d,\"backend\":%d,\"copy\":%d,\"phase\":\"%s\",\"elapsed_us\":%lld}\n",
+            (long long) ts_us, split_id, backend_id, copy_id, phase, (long long) elapsed_us);
+    }
     fflush(out);
 }
 
@@ -1971,8 +2031,12 @@ void ggml_backend_sched_synchronize(ggml_backend_sched_t sched) {
 
 void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
     GGML_ASSERT(sched);
+    const auto t0 = std::chrono::steady_clock::now();
     if (sched->n_copies <= 1 || !sched->is_alloc) {
         ggml_backend_sched_synchronize(sched);
+        const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - t0).count();
+        pipeline_trace_emit("pipeline_barrier_sync", sched->cur_copy, sched->cur_copy, sched->n_copies, us);
         return;
     }
 
@@ -1982,6 +2046,10 @@ void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
             ggml_backend_event_synchronize(sched->events[i][new_copy]);
         }
     }
+
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    pipeline_trace_emit("pipeline_barrier", sched->cur_copy, new_copy, sched->n_copies, us);
 
     sched->cur_copy  = new_copy;
     sched->next_copy = (new_copy + 1) % sched->n_copies;

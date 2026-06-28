@@ -388,4 +388,5 @@ private:
     mutable int32_t n_eval   = 0; // number of eval calls
 
     mutable int32_t n_reused = 0; // number of times the previous graph was reused
+    int32_t pipeline_decode_id = 0; // monotonic decode counter for GGML_PIPELINE_TRACE
 };

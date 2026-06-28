@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "trace_dir": "C:\\Users\\nightmare\\.grok\\worktrees\\atomic-llama-cpp-5070ti-atomic-llama-cpp-turboquant\\path-b-plus-5070ti-triton\\docs\\cuda-windows-5070ti\\benchmarks\\trace-f-3gpu-plus\\telemetry",
+  "gen_only": true,
+  "gen_tokens_est": 130,
+  "G_tps": null,
+  "overlap_efficiency": null,
+  "drain_flush_ms": 2599.23,
+  "blocking_ms": 31143.76,
+  "gate_s5": "PASS",
+  "gate_b6": "FAIL",
+  "assembly_overlap_count": 289,
+  "overlap_pct": 0.3,
+  "overlap_target_pct": 5.0,
+  "split_ms_per_token": 28.491,
+  "stall_ratio": 0.7546,
+  "stall_ms": 2795.04,
+  "compute_ms": 893.97,
+  "backends_ms_per_token": {
+    "3": 0.077,
+    "0": 0.193,
+    "1": 10.017,
+    "2": 18.203
+  },
+  "straggler_backend": "2",
+  "straggler_ms_per_token": 18.203,
+  "topology_class": "client_split",
+  "rpc_rtt_per_token": 18.7,
+  "graph_submit_count": 520,
+  "blocking_rpc_count": 2431,
+  "fire_and_forget_count": 2690,
+  "gpu_smell_flags": [],
+  "path_c_reserved": {
+    "cross_endpoint_copy_count": null,
+    "server_local_copy_count": null
+  }
+}

@@ -346,6 +346,10 @@ extern "C" {
     // Path-B+: rotate pipeline copy slot and wait on per-slot events (graph reuse path).
     GGML_API void                 ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched);
 
+    // Pipeline profiler: correlate sched/rpc splits with decode tokens (GGML_PIPELINE_TRACE).
+    GGML_API void                 ggml_pipeline_trace_set_decode_id(int32_t decode_id);
+    GGML_API int32_t              ggml_pipeline_trace_get_decode_id(void);
+
     // Reset all assignments and allocators - must be called before changing the node backends or allocating a new graph.
     // This in effect deallocates all tensors that were previously allocated and leaves them with dangling pointers.
     // The correct way to use this API is to discard the deallocated tensors and create new ones.

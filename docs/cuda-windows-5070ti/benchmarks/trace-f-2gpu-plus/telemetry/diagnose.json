@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "trace_dir": "docs\\cuda-windows-5070ti\\benchmarks\\trace-f-2gpu-plus\\telemetry",
+  "gen_only": true,
+  "gen_tokens_est": 130,
+  "G_tps": null,
+  "overlap_efficiency": null,
+  "drain_flush_ms": 1755.29,
+  "blocking_ms": 30683.7,
+  "gate_s5": "PASS",
+  "gate_b6": "FAIL",
+  "assembly_overlap_count": 297,
+  "overlap_pct": 0.6,
+  "overlap_target_pct": 5.0,
+  "split_ms_per_token": 20.892,
+  "stall_ratio": 0.6774,
+  "stall_ms": 1839.8,
+  "compute_ms": 864.05,
+  "backends_ms_per_token": {
+    "0": 0.229,
+    "1": 20.412,
+    "2": 0.251
+  },
+  "straggler_backend": "1",
+  "straggler_ms_per_token": 20.412,
+  "topology_class": "client_split",
+  "rpc_rtt_per_token": 19.09,
+  "graph_submit_count": 260,
+  "blocking_rpc_count": 2482,
+  "fire_and_forget_count": 2611,
+  "gpu_smell_flags": [],
+  "path_c_reserved": {
+    "cross_endpoint_copy_count": null,
+    "server_local_copy_count": null
+  }
+}

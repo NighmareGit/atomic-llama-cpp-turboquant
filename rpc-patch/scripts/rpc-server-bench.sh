@@ -321,8 +321,10 @@ if [[ "$VARIANT" == "pathb" && "$LLAMA_NATIVE" == "1" ]]; then
         export GGML_PIPELINE_PLUS="${GGML_PIPELINE_PLUS:-1}"
         export GGML_RPC_TRACE=1
         export GGML_SCHED_TRACE=1
+        export GGML_PIPELINE_TRACE=1
         export GGML_RPC_TRACE_FILE="${TELEMETRY_DIR}/rpc-trace.jsonl"
         export GGML_SCHED_TRACE_FILE="${TELEMETRY_DIR}/sched-trace.jsonl"
+        export GGML_PIPELINE_TRACE_FILE="${TELEMETRY_DIR}/pipeline-trace.jsonl"
     fi
     "${ROCM_BIN_HOST}/llama-server" \
         --rpc "${RPC_ENDPOINT}" -m "${MODEL}" -ngl "${NGL}" -c "${CTX}" \
@@ -339,8 +341,10 @@ elif [[ "$VARIANT" == "pathb" ]]; then
             -e "GGML_PIPELINE_PLUS=${GGML_PIPELINE_PLUS:-1}"
             -e GGML_RPC_TRACE=1
             -e GGML_SCHED_TRACE=1
+            -e GGML_PIPELINE_TRACE=1
             -e GGML_RPC_TRACE_FILE=/telemetry/rpc-trace.jsonl
             -e GGML_SCHED_TRACE_FILE=/telemetry/sched-trace.jsonl
+            -e GGML_PIPELINE_TRACE_FILE=/telemetry/pipeline-trace.jsonl
         )
     fi
     docker run -d --name "$LLAMA_NAME" --entrypoint bash \
