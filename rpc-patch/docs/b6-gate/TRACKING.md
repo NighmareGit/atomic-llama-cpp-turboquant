@@ -45,10 +45,10 @@ Plan: [PLAN.md](PLAN.md)
 | A4 `docs/cuda-windows-triton/` host stub | DONE | `docs/cuda-windows-triton/README.md` |
 | A5 `scripts/cuda-windows-triton/pathb-rpc-server.ps1` :50054 | DONE | `scripts/cuda-windows-triton/pathb-rpc-server.ps1` |
 | A6 Audit triton `C:\projects\...` tree | DONE | SSH OK; 3090+3070; `C:\backup\lcuda` legacy |
-| A7 Sync triton tree to branch + rebuild portable | DONE | JUPITER `pathb-portable` scp -> `C:\backup\pathb-portable` (proto 4.3) |
+| A7 Sync triton tree to branch + rebuild portable | DONE | git `948c6a534`; JUPITER build -> `C:\backup\pathb-portable` + repo `build-cuda-b-bin/portable` |
 | A8 Triton :50054 RPC smoke | DONE | `PathB-Triton-RPC-50054` schtask; HELLO proto 4.3 peer_copy=yes |
 | A9 R5 preflight romulus -> 192.168.8.23:50054 | DONE | validate-rpc OK |
-| A10 Git commit/push (user-approved) | IN PROGRESS | staging B6 collateral |
+| A10 Git commit/push (user-approved) | DONE | `948c6a534` on gitea |
 
 ---
 
@@ -134,3 +134,5 @@ Plan: [PLAN.md](PLAN.md)
 | 2026-06-29 | A6 | Staged `b6-gate-triton-sshd-firewall.ps1` + Startup hook on triton | needs one local run or re-login |
 | 2026-06-29 | A7-A9 | Triton SSH + pathb-portable :50054 + schtask | proto 4.3 peer_copy=yes |
 | 2026-06-29 | P0 | `b6-2gpu-f-triton` spike | G=186.6, overlap=0.3%, straggler=6.95ms/tok |
+| 2026-06-29 | A10 | Commit/push B6 collateral to gitea | `948c6a534` |
+| 2026-06-29 | A7 | Triton git sync + JUPITER rebuild deploy | `948c6a534`, `C:\backup\pathb-portable` |

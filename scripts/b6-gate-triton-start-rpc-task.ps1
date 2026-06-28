@@ -1,9 +1,18 @@
 # Register a local scheduled task so rpc-server survives SSH disconnect.
 $ErrorActionPreference = "Stop"
-$RpcDir = "C:\backup\pathb-portable"
-if (-not (Test-Path (Join-Path $RpcDir "rpc-server.exe"))) {
-    $RpcDir = "C:\backup\lcuda"
+$Repo = "C:\projects\atomic-llama-cpp-turboquant\Path-B-Event-Support-Pipeline-Plus"
+$RpcDir = $null
+foreach ($candidate in @(
+    "C:\backup\pathb-portable",
+    (Join-Path $Repo "build-cuda-b-bin\portable"),
+    "C:\backup\lcuda"
+)) {
+    if (Test-Path (Join-Path $candidate "rpc-server.exe")) {
+        $RpcDir = $candidate
+        break
+    }
 }
+if (-not $RpcDir) { throw "rpc-server.exe not found under backup, repo portable, or lcuda" }
 $RpcExe = Join-Path $RpcDir "rpc-server.exe"
 if (-not (Test-Path $RpcExe)) { throw "missing $RpcExe" }
 
