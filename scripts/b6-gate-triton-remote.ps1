@@ -1,7 +1,7 @@
 # Run cmd/git on triton over SSH. Use wsl -e sshpass + cmd.exe (not nested bash -lc).
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("sync", "status", "rpc", "audit")]
+    [ValidateSet("sync", "status", "rpc", "stop", "audit")]
     [string]$Action = "status",
     [string]$TritonHost = "192.168.8.23",
     [string]$TritonUser = "nightmare",
@@ -31,6 +31,12 @@ switch ($Action) {
         & wsl -e sshpass -p $TritonPass ssh -o StrictHostKeyChecking=no "${TritonUser}@${TritonHost}" `
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$RemoteRepo/scripts/b6-gate-triton-start-rpc-task.ps1"
         if ($LASTEXITCODE -ne 0) { throw "triton rpc restart failed (exit $LASTEXITCODE)" }
+    }
+    "stop" {
+        Write-Host "=== triton RPC stop (schtask) ==="
+        & wsl -e sshpass -p $TritonPass ssh -o StrictHostKeyChecking=no "${TritonUser}@${TritonHost}" `
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$RemoteRepo/scripts/b6-gate-triton-stop-rpc-task.ps1"
+        if ($LASTEXITCODE -ne 0) { throw "triton rpc stop failed (exit $LASTEXITCODE)" }
     }
     "audit" {
         Write-Host "=== triton audit (cmd) ==="

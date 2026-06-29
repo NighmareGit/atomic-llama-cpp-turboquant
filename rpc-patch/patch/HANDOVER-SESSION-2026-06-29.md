@@ -7,7 +7,7 @@
 | Location | Git | Notes |
 |----------|-----|-------|
 | **Primary scratchpad (Windows)** | `D:\projects\atomic-llama-cpp-5070ti\atomic-llama-cpp-turboquant` | edit/commit/push here |
-| Gitea | `gitea/Path-B-Event-Support-Pipeline-Plus` @ `b49904ba9`+ | source of truth remote |
+| Gitea | `gitea/Path-B-Event-Support-Pipeline-Plus` | source of truth remote |
 | Grok worktree | `C:\Users\nightmare\.grok\worktrees\...` | ephemeral; do not use as primary |
 | romulus client | sync after push | `git fetch gitea && git reset --hard gitea/Path-B-Event-Support-Pipeline-Plus` |
 
@@ -106,7 +106,9 @@ Push scripts to romulus when local tree ahead of remote:
 | `b6-gate-diagnose-runs.sh` | Post-run matrix + verdict TSV |
 | `b6-gate-push-and-run.ps1` | scp + run label on romulus |
 | `b6-gate-jupiter-start-rpc-task.ps1` | JUPITER :50053 schtask |
-| `b6-gate-triton-remote.ps1` | triton sync/status/rpc |
+| `b6-gate-triton-remote.ps1` | triton sync/status/rpc/stop |
+| `b6-gate-triton-stop-rpc-task.ps1` | stop triton :50054/:50055 schtasks |
+| `b6-gate-cluster-shutdown.ps1` | stop remus + romulus + triton (not JUPITER) |
 
 ---
 
@@ -116,4 +118,27 @@ Push scripts to romulus when local tree ahead of remote:
 - [pathb-sync-site-audit.md](../docs/pathb-sync-site-audit.md)
 - [HANDOVER-CLUSTER-4GPU-2026-06-28.md](HANDOVER-CLUSTER-4GPU-2026-06-28.md) (prior cluster handover)
 
-**Session end:** cluster RPC workers may be left running (JUPITER + triton schtasks). Stop before power-off if desired. Profiler artifacts on romulus only (not in git).
+## Cluster shutdown (2026-06-29 session end)
+
+**Status:** **STOPPED** (except JUPITER -- user shuts down workstation locally).
+
+| Node | Service | Shutdown action | Verified |
+|------|---------|-----------------|----------|
+| remus | `pathb-rpc-remus` docker :50051 | `pathb-cluster-up.sh stop` | :50051 refused |
+| romulus | `pathb-rpc-romulus` docker :50051 | `pathb-cluster-up.sh stop` | :50051 refused |
+| romulus | profiler | `pkill llama-pipeline-profiler` | no hung profiler |
+| triton | `PathB-Triton-RPC-50054/50055` | taskkill + schtasks delete | no rpc-server |
+| **JUPITER** | `PathB-Jupiter-RPC-50053` | **not stopped** | user workstation shutdown |
+
+One-command shutdown (next time):
+
+```powershell
+.\scripts\b6-gate-cluster-shutdown.ps1
+# triton only: .\scripts\b6-gate-triton-remote.ps1 -Action stop
+```
+
+Startup (next session): see [Startup checklist](#startup-checklist) above; start JUPITER locally first.
+
+Profiler artifacts remain on romulus only (`benches/path-b-plus/`); not in git.
+
+**Git tip at shutdown:** `f7f6571af`+ (see gitea after final push this session).
