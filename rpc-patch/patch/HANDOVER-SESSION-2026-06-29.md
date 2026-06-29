@@ -6,9 +6,10 @@
 
 | Location | Git | Notes |
 |----------|-----|-------|
-| Gitea (push target) | `gitea/Path-B-Event-Support-Pipeline-Plus` | commit at session end |
-| Windows worktree | this tree | scripts + docs committed this session |
-| romulus client | `3efe5b3d8` (may lag gitea) | profiler runs via scp'd scripts; env override OK |
+| **Primary scratchpad (Windows)** | `D:\projects\atomic-llama-cpp-5070ti\atomic-llama-cpp-turboquant` | edit/commit/push here |
+| Gitea | `gitea/Path-B-Event-Support-Pipeline-Plus` @ `b49904ba9`+ | source of truth remote |
+| Grok worktree | `C:\Users\nightmare\.grok\worktrees\...` | ephemeral; do not use as primary |
+| romulus client | sync after push | `git fetch gitea && git reset --hard gitea/Path-B-Event-Support-Pipeline-Plus` |
 
 ---
 

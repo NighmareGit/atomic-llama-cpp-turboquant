@@ -2,7 +2,9 @@
 
 Entry point for the **Path-B-Event-Support-Pipeline-Plus** branch. Path-B Plus finishes the assembly-line pipeline that Path B started for multi-RPC llama.cpp clusters.
 
-**Status (2026-06-27):** B+1 **production ready** on 2-device Config F. Phase 5 complete.  
+**Primary repo (Windows):** `D:\projects\atomic-llama-cpp-5070ti\atomic-llama-cpp-turboquant` -- edit, commit, and push here (not Grok worktrees).
+
+**Status (2026-06-29):** B+6 gate in progress; B+1 production ready on 2-device F.
 **Protocol:** RPC v4.3.2 (`COPY_TENSOR_PEER`, `peer_copy` HELLO cap)  
 **Frozen base:** `Path-B-Event-Support` @ `26a9353`
 
