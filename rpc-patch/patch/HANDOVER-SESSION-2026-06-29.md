@@ -141,4 +141,4 @@ Startup (next session): see [Startup checklist](#startup-checklist) above; start
 
 Profiler artifacts remain on romulus only (`benches/path-b-plus/`); not in git.
 
-**Git tip at shutdown:** `16680f9d3` on `Path-B-Event-Support-Pipeline-Plus`.
+**Git tip at shutdown:** `git log -1 --oneline` on `Path-B-Event-Support-Pipeline-Plus` (gitea); cluster stopped 2026-06-29.
