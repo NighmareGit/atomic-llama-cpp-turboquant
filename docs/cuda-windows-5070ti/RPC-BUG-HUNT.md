@@ -147,9 +147,34 @@ Load-phase `SET_TENSOR_HASH` completes on all variants. Failure is **first slot 
 | SET_TENSOR_HASH | 6.5s / 280 calls (load) |
 | assembly_overlap | 1075 (B+1 pass) |
 
+## 5070 Ti rpc-server abort (2026-06-29)
+
+JUPITER Config G worker (`192.168.8.21:50053`) can exit with a native Windows **`abort()`** dialog during 4-GPU prefill. This is **not** a firewall issue.
+
+| Observation | Detail |
+|-------------|--------|
+| Dialog | `abort() was called` (Ignore / Exit / Continue) from `rpc-server.exe` |
+| Client | romulus `recv failed`, `rpc_finish_event_response`, dead socket on `:50053` |
+| Server assert | `ggml-rpc.cpp` `GGML_ASSERT(status == GGML_STATUS_SUCCESS)` after `ggml_backend_graph_compute` |
+| Trigger | CUDA kernel failure on 5070 Ti when `ggml-cuda.dll` lacks `120a-real` |
+
+**Cause:** Portable deployed with **Triton profile** (`CMAKE_CUDA_ARCHITECTURES=86-real` only). Ampere kernels are insufficient for RTX 5070 Ti (Blackwell sm_120). HELLO / memory probes still pass.
+
+**Fix (JUPITER):**
+```powershell
+.\scripts\cuda-windows-5070ti\build.ps1 -Profile all -Reconfigure
+scripts\b6-gate-jupiter-rebuild-rpc.cmd
+.\scripts\b6-gate-jupiter-start-rpc-task.ps1
+```
+
+**Prevention:** Build JUPITER with `-Profile all`. Copy Triton portable only to `192.168.8.23`. See [BUILD.md](BUILD.md#5070-ti-cuda-arch).
+
+**Tensor split (related):** Legacy 4-GPU `-ts 36,24,24,16` mis-sized 3060 vs 5070 shares; current gate preset `25,12,25,38` matches RPC-first VRAM order. See [CLUSTER-4GPU-PRIMARY.md](CLUSTER-4GPU-PRIMARY.md).
+
 ## Next steps (fixes -- separate from diagnosis)
 
 1. **Ops:** 2-device F for Windows-client 36B NL (`ts=50,50`, drop `:50052`). **4-GPU romulus:** use primary topology (no 6600).
-2. **RX6600 debug:** dedicated session for ROCm docker slot-init hang (not blocking primary cluster).
-3. **Path A3 / RPC copy:** cross-endpoint `cpy_tensor_async` to cut COPY_TENSOR bucket on gen path.
-4. **Optional:** Split-level overlap in scheduler (large change).
+2. **JUPITER:** always `120a-real` in portable; use `b6-gate-jupiter-start-rpc-task.ps1` + `--validate-rpc` before long profilers.
+3. **RX6600 debug:** dedicated session for ROCm docker slot-init hang (not blocking primary cluster).
+4. **Path A3 / RPC copy:** cross-endpoint `cpy_tensor_async` to cut COPY_TENSOR bucket on gen path.
+5. **Optional:** Split-level overlap in scheduler (large change).

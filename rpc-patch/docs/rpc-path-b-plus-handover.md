@@ -1,6 +1,8 @@
 # Path-B Plus Handover
 
-**Status:** B+1 production-ready on 2-device Config F (2026-06-27).
+**Status:** B+1 production-ready on 2-device F; B+4..B+6 shipped; **B+6 gate IN PROGRESS** (M1 not reached, 2026-06-29).
+
+**Resume here:** [HANDOVER-SESSION-2026-06-29.md](../patch/HANDOVER-SESSION-2026-06-29.md) (latest session end).
 
 ## What changed
 
@@ -18,6 +20,15 @@ Path-B Plus completes Path B assembly-line scheduling for multi-RPC clusters.
 - **B+2:** `cpy_tensor_async` + deferred COPY drain (client).
 - **B+3:** `COPY_TENSOR_PEER` proto v4.3 (client+server). Peer copy applies to RPC<->RPC hops; 2-device F uses CUDA<->RPC hash path.
 
+### B+6 gate (active, 2026-06-29)
+
+- Profiler presets: `b6-2gpu-f`, `b6-2gpu-f-triton`, `b6-4gpu-g`, `b6-4gpu-g-triton`
+- ts sweep: `scripts/b6-gate-ts-sweep-4gpu.sh`
+- Diagnosis: `scripts/b6-gate-diagnose-runs.sh`, [b6-gate/TRACKING.md](b6-gate/TRACKING.md)
+
+**4-GPU canonical gate (n=384):** overlap 0.1%, drain 50.4s, straggler 5070 @ 11.6 ms/tok.  
+**4-GPU triton swap:** overlap 0.1%, drain 5.9s. **Next:** B+7 multi-socket drain bisect.
+
 ## Production default (36B NL MoE, Config F)
 
 | Setting | Value |
@@ -30,9 +41,18 @@ Path-B Plus completes Path B assembly-line scheduling for multi-RPC clusters.
 | KV | `-ctk q4_0 -ctv q4_0` |
 | Env | `GGML_PIPELINE_PLUS=1` |
 
-Expected throughput: **~49 t/s** (`trace-f-2gpu-plus` measured 48.9).
+Expected throughput: **~49 t/s** (`trace-f-2gpu-plus` measured 48.9). Triton 3090 spike: **~187 t/s** (`b6-2gpu-f-triton`).
 
-Do **not** attach `:50052` for this model unless VRAM requires it; 3-device adds ~10 ms/tok serial hop (~38-43 t/s).
+## 4-GPU Config G (romulus client)
+
+| Setting | Value |
+|---------|-------|
+| `-rpc` | `192.168.8.176:50051,127.0.0.1:50051,192.168.8.21:50053` |
+| `-ts` | `25,12,25,38` (RPC-first: 5060, 3060, 5070, 7900) |
+| JUPITER ops | `scripts/b6-gate-jupiter-start-rpc-task.ps1` |
+| Profiler | `bash scripts/b6-gate-run-remote.sh b6-4gpu-g` |
+
+See [docs/cuda-windows-5070ti/CLUSTER-4GPU-PRIMARY.md](../../docs/cuda-windows-5070ti/CLUSTER-4GPU-PRIMARY.md).
 
 ## Env vars
 
@@ -48,13 +68,7 @@ Do **not** attach `:50052` for this model unless VRAM requires it; 3-device adds
 2. `trace-summary.txt`: `assembly_overlap_count > 0` during GEN
 3. G(t/s) vs baseline: **48.9 t/s** on 2-device F (was 38.0 on 3-device pre-Plus)
 4. S4 smoke: 4B + 36B both PASS (no crash, coherent generation)
-
-Quick check:
-
-```powershell
-.\scripts\cuda-windows-5070ti\pathb-trace-runbook.ps1 -Runs trace-f-2gpu-plus
-.\scripts\cuda-windows-5070ti\pathb-rpc-trace-parse.ps1 -TraceDir docs\cuda-windows-5070ti\benchmarks\trace-f-2gpu-plus\telemetry
-```
+5. B+6: `llama-pipeline-profiler --validate-rpc` all endpoints proto 4.3 `peer_copy=yes`
 
 ## Remus deploy
 
@@ -70,5 +84,7 @@ Confirm `[hello] version: 4.3.2` and client trace `"minor":3,"peer_copy":true`.
 
 ## What's next
 
-- **Path C:** single remus rpc-server spanning 5060+6600 (removes client-side split between remus GPUs).
-- **5-endpoint spike (S0):** deferred until 72B+ cluster bench.
+- **B+7:** 4-RPC socket drain bisect (`ggml-rpc.cpp`) -- priority from [pathb-sync-site-audit.md](pathb-sync-site-audit.md) 7a.
+- **Ops:** triton `:50054` as RPC2 eval; G4 `-ts` `30,14,16,40` for overlap peek.
+- **5-endpoint spike (S0):** deferred until M1 or scale need.
+- **Path C:** out of scope for B+6 gate.

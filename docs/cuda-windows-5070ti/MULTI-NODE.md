@@ -4,7 +4,7 @@
 
 **Config F:** Config E + remus RX 6600 RPC (`:50052`) -- **gen straggler** on 3-GPU; **slot-init hang** on 4-GPU with 6600.
 
-**Config G primary (4-GPU stable):** romulus 7900 client + 3060 + 5060 + Windows 5070 (`:50053`). **No RX6600.** G ~40 t/s. See [CLUSTER-4GPU-PRIMARY.md](CLUSTER-4GPU-PRIMARY.md).
+**Config G primary (4-GPU stable):** romulus 7900 client + 3060 + 5060 + JUPITER 5070 (`:50053`). **No RX6600.** G ~40 t/s. `-ts 25,12,25,38` (RPC-first order). See [CLUSTER-4GPU-PRIMARY.md](CLUSTER-4GPU-PRIMARY.md). JUPITER portable must include `120a-real` CUDA arch ([BUILD.md](BUILD.md)).
 
 **Path-B Plus production default (Windows client, 36B NL MoE):** Config F as **2-device** -- single `:50051`, `-ts 50,50`. G=**48.9 t/s** (`trace-f-2gpu-plus`).
 
@@ -27,7 +27,8 @@ Models on `D:\models` only. RPC worker does not mount GGUFs.
 
 ## Prerequisites
 
-- Portable build: `scripts/cuda-windows-5070ti/build.ps1`
+- Portable build: `scripts/cuda-windows-5070ti/build.ps1` (`-Profile all` on JUPITER; `-Profile triton` for triton only)
+- Config G worker: `scripts/b6-gate-jupiter-start-rpc-task.ps1` or `pathb-rpc-server.ps1` on `:50053`
 - WSL with `sshpass`, `python3`, `nc`
 - remus: `~/docker/Atomic-Llama-Remus-PathB/` image `atomic-llama-remus-pathb-rpc:latest`
 - **Port 50051:** stop `rx6600-rpc` before PathB (both default to 50051)
@@ -48,7 +49,9 @@ Models on `D:\models` only. RPC worker does not mount GGUFs.
 | `rpc-server-bench.ps1` | Single hybrid bench run |
 | `pathb-config-e-matrix.ps1` | Config E preset loop (9b / 27b / 31b) |
 | `pathb-config-f-matrix.ps1` | Config F preset loop (9b through 80b) |
-| `pathb-rpc-server.ps1` | Windows 5070 as RPC worker `:50053` (Config G) |
+| `pathb-rpc-server.ps1` | Windows 5070 as RPC worker `:50053` (Config G, foreground) |
+| `b6-gate-jupiter-start-rpc-task.ps1` | JUPITER `:50053` schtask + firewall (B+6 gate) |
+| `b6-gate-jupiter-rebuild-rpc.cmd` | rpc-server + ggml-cuda.dll -> portable (arch fix) |
 | `pathb-romulus-4gpu-bench.sh` | romulus 4-GPU primary launcher (WSL + sshpass) |
 | `pathb-romulus-3gpu-bench.sh` | romulus 3-GPU subset launcher |
 

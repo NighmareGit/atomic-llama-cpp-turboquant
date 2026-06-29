@@ -353,3 +353,19 @@ Commit before pushing to gitea or syncing another machine.
 - [cluster-4gpu-primary/summary.md](bench-results/cluster-4gpu-primary/summary.md)
 
 **Session end (2026-06-28):** cluster was left running during doc work. Stop Windows `rpc-server` and optional docker before power-off. Pull `trace-g-4gpu-primary-resume` artifacts if preserving smoke numbers in git.
+
+---
+
+## 16. Continuation (2026-06-29 session end)
+
+**Superseded ops detail:** [HANDOVER-SESSION-2026-06-29.md](HANDOVER-SESSION-2026-06-29.md)
+
+| Item | Status |
+|------|--------|
+| JUPITER :50053 schtask + 120a-real rebuild | DONE |
+| triton :50054 A/B (`b6-4gpu-g-triton`) | DONE |
+| ts sweep + diagnosis (D3+D1) | DONE |
+| B+6 M1/M3 | FAIL |
+| Next | B+7 4-socket drain in `ggml-rpc.cpp` |
+
+`-ts` default for gate profiling is **`25,12,25,38`** (not legacy `36,24,24,16`). Legacy G2 row peaked 0.7% overlap @ n=128 only.

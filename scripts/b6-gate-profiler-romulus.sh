@@ -10,7 +10,9 @@ if [[ -z "$LABEL" || "$LABEL" == "-h" || "$LABEL" == "--help" ]]; then
     echo "labels:"
     echo "  b6-2gpu-f          remus 5060 RPC (gate baseline)"
     echo "  b6-2gpu-f-triton   triton 3090 RPC (spike, same client)"
-    echo "  b6-4gpu-g          4-GPU primary"
+    echo "  b6-4gpu-g          4-GPU primary (JUPITER 5070 :50053)"
+    echo "  b6-4gpu-g-triton   4-GPU triton 3090 swap (:50054 replaces JUPITER)"
+    echo "  b6-5gpu-g          5-GPU primary + triton 3070 :50055 (local PCIe hop)"
     echo "  b6-2gpu-f-plus0    2-GPU remus, GGML_PIPELINE_PLUS=0"
     exit 0
 fi
@@ -40,7 +42,22 @@ case "$LABEL" in
         ;;
     b6-4gpu-g)
         export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051,127.0.0.1:50051,192.168.8.21:50053}"
-        export BENCH_TS="${BENCH_TS:-36,24,24,16}"
+        # ts order: RPC0 remus 5060, RPC1 3060, RPC2 JUPITER 5070, ROCm0 7900 (VRAM ~25/12/25/38)
+        export BENCH_TS="${BENCH_TS:-25,12,25,38}"
+        export GGML_PIPELINE_PLUS="${GGML_PIPELINE_PLUS:-1}"
+        export PROFILER_OUT_DIR="${PROFILER_OUT_DIR:-${ROOT}/benches/path-b-plus/${LABEL}}"
+        ;;
+    b6-4gpu-g-triton)
+        export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051,127.0.0.1:50051,192.168.8.23:50054}"
+        # ts order: RPC0 5060, RPC1 3060, RPC2 triton 3090, ROCm0 7900 (VRAM ~22/11/34/33)
+        export BENCH_TS="${BENCH_TS:-22,11,34,33}"
+        export GGML_PIPELINE_PLUS="${GGML_PIPELINE_PLUS:-1}"
+        export PROFILER_OUT_DIR="${PROFILER_OUT_DIR:-${ROOT}/benches/path-b-plus/${LABEL}}"
+        ;;
+    b6-5gpu-g)
+        export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051,127.0.0.1:50051,192.168.8.21:50053,192.168.8.23:50055}"
+        # ts order: RPC0 5060, RPC1 3060, RPC2 5070, RPC3 triton 3070, ROCm0 7900 (VRAM ~22/11/22/11/34)
+        export BENCH_TS="${BENCH_TS:-22,11,22,11,34}"
         export GGML_PIPELINE_PLUS="${GGML_PIPELINE_PLUS:-1}"
         export PROFILER_OUT_DIR="${PROFILER_OUT_DIR:-${ROOT}/benches/path-b-plus/${LABEL}}"
         ;;

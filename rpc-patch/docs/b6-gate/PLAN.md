@@ -91,11 +91,15 @@ One fix per bisect in `ggml-rpc.cpp`; priority from Phase 1 verdict. Re-run trit
 
 ### Phase 3 -- `-ts` sweep
 
-If `STRAGGLER_DOMINANT`: 4-GPU G and 2-GPU F grid.
+If `STRAGGLER_DOMINANT`: 4-GPU G and 2-GPU F grid. **DONE 2026-06-29:** 5-row grid n=128 + G2/G4 confirm n=384; best grid G2 0.7% (M1 not reached @ n=384).
 
 ### Phase 4 -- Gate close
 
 M3 on 2-GPU F; sync overview, GATES, PIPELINE SS9 if needed.
+
+### Phase 5-6 -- Diagnosis + mission routing
+
+After profiler matrix and ts sweep: run `b6-gate-diagnose-runs.sh`, refresh [pathb-sync-site-audit.md](../pathb-sync-site-audit.md), record verdict in [TRACKING.md](TRACKING.md). **2026-06-29 verdict:** D3 drain-bound (canonical 50s vs triton 5.9s) + D1 worker swap partial; next B+7 4-socket bisect.
 
 ---
 

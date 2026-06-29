@@ -14,6 +14,9 @@ $WslRepo = "/mnt/c/Users/nightmare/.grok/worktrees/atomic-llama-cpp-5070ti-atomi
 $files = @(
     "scripts/b6-gate-run-remote.sh",
     "scripts/b6-gate-profiler-romulus.sh",
+    "scripts/b6-gate-ts-sweep-4gpu.sh",
+    "scripts/b6-gate-diagnose-runs.sh",
+    "scripts/llama-pipeline-profiler-cluster.sh",
     "benches/path-b-plus/prompts/profiler-reasoning-long.txt"
 )
 

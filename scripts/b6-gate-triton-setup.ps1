@@ -9,47 +9,14 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$Remote = Join-Path $PSScriptRoot "b6-gate-triton-remote.ps1"
 
-function Invoke-TritonCmd {
-    param([string]$ScriptBlock)
-    $sec = ConvertTo-SecureString $TritonPass -AsPlainText -Force
-    $cred = New-Object System.Management.Automation.PSCredential($TritonUser, $sec)
-    Invoke-Command -ComputerName $TritonHost -Credential $cred -ScriptBlock ([scriptblock]::Create($ScriptBlock))
-}
-
-Write-Host "=== triton audit ($TritonHost) ==="
-try {
-    $gpus = Invoke-TritonCmd "nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader"
-    Write-Host "GPUs:"
-    $gpus | ForEach-Object { Write-Host "  $_" }
-
-    $repoOk = Invoke-TritonCmd "Test-Path '$RemoteRepo'"
-    Write-Host "Repo exists: $repoOk"
-    if ($repoOk) {
-        $sha = Invoke-TritonCmd "cd '$RemoteRepo'; git rev-parse --short HEAD 2>`$null; if (-not `$?) { 'no-git' }"
-        $portable = Invoke-TritonCmd "Test-Path '$RemoteRepo\build-cuda-b-bin\portable\rpc-server.exe'"
-        Write-Host "git_sha: $sha"
-        Write-Host "portable rpc-server: $portable"
-    }
-} catch {
-    Write-Host "WinRM failed: $_"
-    Write-Host "Fallback: run audit manually on triton or enable WinRM."
-    exit 1
-}
+Write-Host "=== triton ($TritonHost) via SSH+cmd ==="
+& $Remote -Action audit -TritonHost $TritonHost -TritonUser $TritonUser -TritonPass $TritonPass
 
 if ($AuditOnly) { exit 0 }
 
 if ($StartRpc) {
-    Invoke-TritonCmd @"
-Set-Location '$RemoteRepo'
-if (Test-Path '.\scripts\cuda-windows-triton\pathb-rpc-server.ps1') {
-    .\scripts\cuda-windows-triton\pathb-rpc-server.ps1 -Restart
-} elseif (Test-Path '.\scripts\cuda-windows-5070ti\pathb-rpc-server.ps1') {
-    .\scripts\cuda-windows-5070ti\pathb-rpc-server.ps1 -Port 50054 -Restart
-} else {
-    throw 'pathb-rpc-server.ps1 not found on triton repo'
-}
-"@
+    & $Remote -Action rpc -TritonHost $TritonHost -TritonUser $TritonUser -TritonPass $TritonPass
     Write-Host "RPC start requested on triton :50054"
 }

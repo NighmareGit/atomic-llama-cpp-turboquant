@@ -1,7 +1,7 @@
 #include "pipeline-rpc-validate.h"
 
 #include "common.h"
-#include "ggml-rpc.h"
+#include "ggml-backend.h"
 
 #include <cstdio>
 #include <vector>
@@ -77,7 +77,16 @@ bool pipeline_rpc_validate(
                 ggml_backend_register(reg);
                 size_t mem_free = 0;
                 size_t mem_total = 0;
-                ggml_backend_rpc_get_device_memory(endpoint.c_str(), 0, &mem_free, &mem_total);
+                const size_t n_devs = ggml_backend_reg_dev_count(reg);
+                if (n_devs == 0) {
+                    row["ok"]    = false;
+                    row["error"] = "no devices on RPC reg";
+                    all_ok       = false;
+                    rows.push_back(row);
+                    continue;
+                }
+                ggml_backend_dev_t dev = ggml_backend_reg_dev_get(reg, 0);
+                ggml_backend_dev_memory(dev, &mem_free, &mem_total);
                 const bool reachable = mem_total > 0;
                 row["ok"]           = reachable;
                 row["mem_free_mb"]  = (int) (mem_free / (1024 * 1024));

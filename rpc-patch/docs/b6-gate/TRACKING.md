@@ -2,7 +2,7 @@
 
 Plan: [PLAN.md](PLAN.md)
 
-**Overall:** IN PROGRESS (triton spike done; B+6 still FAIL; M1 not reached)  
+**Overall:** IN PROGRESS (4-GPU triton A/B + ts sweep done; B+6 still FAIL; M1 not reached)  
 **Branch:** Path-B-Event-Support-Pipeline-Plus  
 **Last updated:** 2026-06-29
 
@@ -25,13 +25,15 @@ Plan: [PLAN.md](PLAN.md)
 
 | Field | Value |
 |-------|-------|
-| Verdict | MIXED (straggler drives G; overlap ceiling ~0.3%) |
-| remus `straggler_ms_per_token` | 12.40 (backend1 5060, post-B7) |
-| triton `straggler_ms_per_token` | 6.95 (backend1 3090) |
-| remus `drain_flush_ms` | 16993 (post-B7) |
-| triton `drain_flush_ms` | 2293 |
-| remus `overlap_pct` / G | 0.1% / ~85 t/s |
-| triton `overlap_pct` / G | 0.3% / 187 t/s |
+| Verdict | **MIXED** (4-GPU: drain topology-bound; overlap ceiling ~0.2-0.7%) |
+| 2-GPU remus `straggler_ms_per_token` | 12.40 (backend1 5060, post-B7) |
+| 2-GPU triton `straggler_ms_per_token` | 6.95 (backend1 3090) |
+| 2-GPU remus `drain_flush_ms` | 16993 (post-B7) |
+| 2-GPU triton `drain_flush_ms` | 2293 |
+| **4-GPU canonical** `b6-4gpu-g` n=384 ts=25,12,25,38 | overlap 0.1%, drain **50400**, straggler backend3 5070 @ 11.6 ms/tok, G=77.2 |
+| **4-GPU triton** `b6-4gpu-g-triton` n=384 ts=22,11,34,33 | overlap 0.1%, drain **5924**, straggler backend3 3090 @ 9.0 ms/tok, G=63.1 |
+| ts sweep best n=128 | G2 legacy `36,24,24,16` overlap **0.7%**, drain 2312, straggler backend1 5060 |
+| ts confirm best n=384 | G4 `30,14,16,40` overlap **0.2%**, drain 4837, G=75.8 |
 
 ---
 
@@ -58,9 +60,10 @@ Plan: [PLAN.md](PLAN.md)
 |-------|--------|---|-------------|-------------|---------|----------|
 | `b6-2gpu-f` (remus) | DONE | 75.56 | 0.2% | 0.949 | FAIL | `benches/path-b-plus/b6-2gpu-f/` |
 | `b6-2gpu-f-triton` | DONE | 186.61 | 0.3% | 0.919 | FAIL | `benches/path-b-plus/b6-2gpu-f-triton/` |
-| `b6-4gpu-g` | BLOCKED | 53.2* | 0.2%* | 0.96* | FAIL* | romulus->:50053 timeout; use `profiler-4gpu-primary-romulus-trace-v2` |
+| `b6-4gpu-g` | DONE | 77.2 wall / 37.0 diag | 0.1% | 0.929 | FAIL | `benches/path-b-plus/b6-4gpu-g/` n=384, ts=25,12,25,38, JUPITER OK |
+| `b6-4gpu-g-triton` | DONE | 63.1 | 0.1% | 0.958 | FAIL | `benches/path-b-plus/b6-4gpu-g-triton/` n=384, ts=22,11,34,33 |
 | `b6-2gpu-f-plus0` | DONE | 72.15 | 0.2% | 0.955 | FAIL | romulus `b6-2gpu-f-plus0/` |
-| regression.jsonl append | PENDING | - | - | - | - | - |
+| regression.jsonl append | DONE | - | - | - | - | triton + ts sweep rows on romulus |
 
 ---
 
@@ -90,8 +93,25 @@ Plan: [PLAN.md](PLAN.md)
 
 | Step | Status | Evidence |
 |------|--------|----------|
-| P3-1 4-GPU G `-ts` grid (if STRAGGLER/MIXED) | PENDING | - |
-| P3-2 Best `-ts` row in regression | PENDING | - |
+| P3-1 4-GPU G `-ts` grid (5 rows n=128) | DONE | `benches/path-b-plus/b6-4gpu-ts-sweep/` G0-G4 |
+| P3-2 Confirm top 2 n=384 | DONE | G2-confirm 0.2%, G4-confirm 0.2% (ranked G2, G4 from grid) |
+| P3-3 Best grid overlap | DONE | G2 `36,24,24,16` **0.7%** @ n=128 (M1 not reached @ n=384) |
+
+## Phase 5-6 -- Diagnosis + mission routing
+
+| Step | Status | Evidence |
+|------|--------|----------|
+| P5-1 Diagnosis matrix | DONE | `benches/path-b-plus/b6-diagnosis-matrix.tsv` on romulus |
+| P5-2 Drain post-mortem | DONE | canonical ts=25,12,25,38 drain 50s vs triton 5.9s vs G4-confirm 4.8s |
+| P6-1 Mission verdict | DONE | **D3 + D1** (see below) |
+
+**Phase 6 verdict (primary D3 + secondary D1):**
+
+- **D3 DRAIN-bound on JUPITER canonical split:** `b6-4gpu-g` ts=25,12,25,38 n=384 drain **50.4s** vs same-topology ts rows at n=128 drain **1.5-2.3s** vs G4-confirm n=384 drain **4.8s**. Drain is highly `-ts` and token-count sensitive on 3-RPC JUPITER topology; B+7 multi-socket flush bisect is the next code track.
+- **D1 Worker-class (partial):** triton 4-GPU swap cuts drain **50.4s -> 5.9s** with same overlap (0.1%); straggler improves 11.6 -> 9.0 ms/tok. Overlap does not move -> not sufficient alone for M1.
+- **D5 Stop-rule note:** No row reaches M1 (1%) at n=384 confirm; best grid peek G2 **0.7%** @ n=128 only.
+
+**Next scheduled mission item:** B+7 bisect for 4-RPC socket drain on canonical `25,12,25,38` (reproduce 50s vs 5s delta); parallel ops eval of triton `:50054` as RPC2 or G4 `-ts` for production G.
 
 ---
 
@@ -136,3 +156,10 @@ Plan: [PLAN.md](PLAN.md)
 | 2026-06-29 | P0 | `b6-2gpu-f-triton` spike | G=186.6, overlap=0.3%, straggler=6.95ms/tok |
 | 2026-06-29 | A10 | Commit/push B6 collateral to gitea | `948c6a534` |
 | 2026-06-29 | A7 | Triton git sync + JUPITER rebuild deploy | `948c6a534`, `C:\backup\pathb-portable` |
+| 2026-06-29 | JUPITER | abort() root cause: portable built `86-real` only; `GGML_ASSERT` on failed graph_compute | rebuild `ggml-cuda.dll` with `120a-real`; `b6-gate-jupiter-rebuild-rpc.cmd` |
+| 2026-06-29 | P3 | `-ts` rework: RPC-first VRAM split 4-GPU `25,12,25,38`, 5-GPU `22,11,22,11,34` | `b6-gate-profiler-romulus.sh`, validate-rpc OK all endpoints |
+| 2026-06-29 | P0 | `b6-4gpu-g` smoke n=16 with JUPITER :50053 alive | G=42, overlap=2%, straggler backend3 (5070) 57ms/tok |
+| 2026-06-29 | P0 | `b6-4gpu-g` full n=384 canonical 4-GPU + JUPITER | G=77.2, overlap=0.1%, drain=50.4s, straggler backend3 11.6ms/tok, gate_b6 FAIL |
+| 2026-06-29 | P0 | `b6-4gpu-g-triton` n=384 A/B | G=63.1, overlap=0.1%, drain=5.9s, straggler backend3 3090 9.0ms/tok |
+| 2026-06-29 | P3 | ts grid G0-G4 n=128 + G2/G4 confirm n=384 | best grid G2 0.7%; confirm G4 0.2% drain=4.8s |
+| 2026-06-29 | P6 | Mission routing D3+D1 | diagnosis matrix; M1 not reached |

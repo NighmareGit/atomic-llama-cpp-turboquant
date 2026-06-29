@@ -2,8 +2,8 @@
 
 Trace-proven blocking sites for multi-RPC pipeline stalls. Static map: [`RPC-WAIT-MAP.md`](../../docs/cuda-windows-5070ti/RPC-WAIT-MAP.md). Parse tools: `rpc-patch/scripts/pathb-rpc-trace-parse.sh`, `pathb-hotpath-summary.sh`.
 
-**Last updated:** 2026-06-28  
-**Evidence bench:** `b6-2gpu-f` (romulus 2-device F, 2026-06-28), `trace-f-2gpu-plus` (Windows), `trace-g-4gpu-primary-trace` / `profiler-4gpu-primary-romulus-trace-v2` (romulus 4-GPU)
+**Last updated:** 2026-06-29  
+**Evidence bench:** `b6-2gpu-f`, `b6-4gpu-g`, `b6-4gpu-g-triton`, `b6-4gpu-ts-sweep` (romulus 4-GPU, 2026-06-29), `trace-f-2gpu-plus` (Windows), `profiler-4gpu-primary-romulus-trace-v2`
 
 ---
 
@@ -44,11 +44,11 @@ Profiler label `b6-2gpu-f` (romulus 7900 + remus 5060, `ts=50,50`, q8_0 APEX, n=
 
 | # | Blocker | Evidence (`diagnose.json`) | B+7 direction |
 |---|---------|------------------------------|---------------|
-| 7a | Central drain on blocking `send_rpc_cmd` | `drain_flush_ms=4514`, EVENT_RECORD avg 11.7 ms | **SHIPPED** B7-7a: `flush_pending_get_tensor_for_socket`; 2-GPU overlap unchanged (0.1%) |
-| 7b | 5060 RPC straggler | `straggler_ms_per_token=13.13` (~99% of split sum) | `-ts` sweep; triton 3090 A/B when online |
-| 7c | Serial `input_wait_copy` | `stall_ratio=0.95`, `input_wait_copy_ms` >> `graph_compute_async_ms` | Token pipe starved; overlaps 7a+7b |
-| 7d | Plus does not raise overlap | `b6-2gpu-f` vs `b6-2gpu-f-plus0` same 0.2% | B+7 drain/straggler, not P0/P1 barrier |
-| 7e | GET_ALLOC_SIZE RPC storm | 6528 calls, `blocking_rpc_count=2416` | **SHIPPED** B7-1b shape cache; `blocking_rpc_count=808`, overlap still 0.1% |
+| 7a | Central drain on blocking `send_rpc_cmd` | 2-GPU: `drain_flush_ms=4514`; **4-GPU canonical** `b6-4gpu-g` n=384 ts=25,12,25,38 **drain=50400**; triton swap **5924**; G4-confirm **4837** | **SHIPPED** B7-7a on 2-GPU; **4-GPU canonical split still drain-bound** -- next bisect: per-socket flush across 3 RPC HELLO peers |
+| 7b | RPC straggler (topology-dependent) | 2-GPU remus backend1 5060 @ 12.4 ms/tok; **4-GPU JUPITER** backend3 5070 @ 11.6; **triton** backend3 3090 @ 9.0; ts grid n=128 straggler **backend1 5060** on G0-G4 | triton swap helps ms/tok but not overlap; `-ts` shifts straggler identity |
+| 7c | Serial `input_wait_copy` | `stall_ratio=0.92-0.96` on 4-GPU runs; `input_wait_copy_ms` >> `graph_compute_async_ms` | Token pipe starved; overlaps 7a+7b |
+| 7d | Plus does not raise overlap | All 4-GPU gate rows 0.1-0.7% overlap | B+7 drain/straggler, not P0/P1 barrier |
+| 7e | GET_ALLOC_SIZE RPC storm | 4-GPU `blocking_rpc_count=2392-2404` (post B7-1b) | Cache shipped; blocking count still high on 4-GPU -- investigate GET_TENSOR / SET_TENSOR_HASH share |
 
 Mission tracking: [b6-gate/TRACKING.md](b6-gate/TRACKING.md).
 
@@ -77,5 +77,6 @@ Mission tracking: [b6-gate/TRACKING.md](b6-gate/TRACKING.md).
 |------|--------|
 | 2026-06-27 | Initial audit: 6 proven blockers + B+4/B+5/B+6; linked bash parse/summary scripts |
 | 2026-06-27 | B+4/B+5/B+6 shipped in `ggml-rpc.cpp`; Linux trace tooling + Config G cluster scripts |
+| 2026-06-29 | 4-GPU triton A/B + ts sweep: drain 50s vs 5s topology split; overlap ceiling 0.7% @ n=128; M1 not reached @ n=384 |
 
 When a blocker ships or a trace disproves a site, update the table and bump **Last updated**.

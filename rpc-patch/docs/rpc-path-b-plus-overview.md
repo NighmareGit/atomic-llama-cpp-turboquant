@@ -142,8 +142,11 @@ Plan and step checklist: [b6-gate/PLAN.md](b6-gate/PLAN.md), [b6-gate/TRACKING.m
 | Baseline | 0.6% / 0.2% | 0.68 / 0.96 | 2-GPU F remus / 4-GPU G | **CURRENT** |
 | Post-B7 remus (2-GPU F) | 0.1% | 0.95 | romulus + remus 5060 | FAIL (2026-06-29) |
 | Spike triton (2-GPU F) | 0.3% | 0.92 | romulus + triton 3090 :50054 | FAIL; G=187 t/s |
-| Spike ref | remus vs triton delta recorded | - | 2-GPU F, same romulus client | DONE |
-| M1 | >= 1.0% | < 0.80 | 2-GPU F | PENDING |
+| 4-GPU canonical `b6-4gpu-g` n=384 | 0.1% | 0.93 | JUPITER :50053, ts=25,12,25,38 | FAIL; drain 50s |
+| 4-GPU triton `b6-4gpu-g-triton` n=384 | 0.1% | 0.96 | triton :50054, ts=22,11,34,33 | FAIL; drain 5.9s |
+| ts sweep best (G2 n=128) | 0.7% | - | legacy ts=36,24,24,16 | FAIL @ n=384 confirm |
+| Spike ref | remus vs triton delta recorded | - | 2-GPU + 4-GPU A/B | DONE |
+| M1 | >= 1.0% | < 0.80 | 2-GPU F / 4-GPU G | **PENDING** |
 | M2 | >= 2.5% | < 0.60 | 2-GPU F | PENDING |
 | M3 (PASS) | **>= 5.0%** | < 0.50 | 2-GPU F | PENDING |
 
@@ -162,6 +165,7 @@ Core diagnostic: remus 5060 (`:50051`) vs triton 3090 (`192.168.8.23:50054`) wit
 | [rpc-path-b-plus-tracking.md](rpc-path-b-plus-tracking.md) | Implementation log, benchmarks, issues, checklists |
 | [rpc-path-b-plus-spikes.md](rpc-path-b-plus-spikes.md) | Validation spikes S0-S5, commands |
 | [rpc-path-b-plus-handover.md](rpc-path-b-plus-handover.md) | Production ops, verify, fallback |
+| [HANDOVER-SESSION-2026-06-29.md](../patch/HANDOVER-SESSION-2026-06-29.md) | **Latest session end** -- resume B+6 here |
 | [RPC-BUG-HUNT.md](../../docs/cuda-windows-5070ti/RPC-BUG-HUNT.md) | Trace-led root cause (pre-Plus) |
 | [benchmarks/README.md](../../docs/cuda-windows-5070ti/benchmarks/README.md) | Bench artifact index |
 | [rpc-path-c-plan.md](rpc-path-c-plan.md) | Path C / Phase 6 implementation plan |

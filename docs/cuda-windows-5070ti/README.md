@@ -30,6 +30,9 @@ atomic-llama-cpp-turboquant/
 │   ├── pathb-vram-calc.ps1        # VRAM/ts planner
 │   ├── pathb-config-e-matrix.ps1  # Config E preset loop
 │   └── pathb-config-f-matrix.ps1  # Config F preset loop (through 80b)
+├── scripts/                       # B+6 gate (JUPITER ops)
+│   ├── b6-gate-jupiter-start-rpc-task.ps1
+│   └── b6-gate-jupiter-rebuild-rpc.cmd
 └── rpc-patch/                     # Path B source docs, Linux bench harnesses
 ```
 
@@ -41,7 +44,8 @@ atomic-llama-cpp-turboquant/
 | OS | Windows 11 Pro x64 |
 | CUDA Toolkit | 12.8 (`CUDA_PATH`) |
 | Driver | Game Ready / Studio (nvidia-smi for monitoring) |
-| Portable arch | `86-real` (3070/3090 Ampere) + `120a-real` (5070 Ti Blackwell) |
+| Portable arch | `86-real;120a-real` on JUPITER (`-Profile all`); Triton uses `86-real` only |
+| RPC worker | JUPITER `192.168.8.21:50053` (Config G RPC2) |
 
 ## Quick start
 
@@ -53,6 +57,16 @@ From repo root (any cwd; scripts resolve paths automatically):
 ```
 
 Build details: [BUILD.md](BUILD.md)
+
+**Config G RPC worker (romulus 4-GPU client):**
+```powershell
+.\scripts\b6-gate-jupiter-start-rpc-task.ps1   # schtask PathB-Jupiter-RPC-50053
+# or foreground: .\scripts\cuda-windows-5070ti\pathb-rpc-server.ps1
+```
+
+4-GPU `-ts` on romulus: `25,12,25,38` (RPC0 5060 / RPC1 3060 / RPC2 5070 / ROCm0 7900). See [CLUSTER-4GPU-PRIMARY.md](CLUSTER-4GPU-PRIMARY.md).
+
+If `rpc-server.exe` shows a Windows **abort()** dialog during load/gen, rebuild with `120a-real` arch ([RPC-BUG-HUNT.md](RPC-BUG-HUNT.md#5070-ti-rpc-server-abort-2026-06-29)).
 
 ## Phase 1 scope
 

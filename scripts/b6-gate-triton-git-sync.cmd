@@ -1,6 +1,6 @@
 @echo off
 setlocal
-cd /d C:\projects\atomic-llama-cpp-turboquant\Path-B-Event-Support-Pipeline-Plus
+cd /d C:/projects/atomic-llama-cpp-turboquant/Path-B-Event-Support-Pipeline-Plus
 git stash push -u -m b6-gate-triton-sync 2>nul
 git remote get-url gitea 2>nul
 if errorlevel 1 git remote add gitea http://192.168.8.108:3005/hunter/atomic-llama-cpp-turboquant.git

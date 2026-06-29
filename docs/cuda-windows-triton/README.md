@@ -45,6 +45,28 @@ nc -zv 192.168.8.23 50054
 
 Primary clone on triton: `C:\projects\atomic-llama-cpp-turboquant\Path-B-Event-Support-Pipeline-Plus`
 
+## Remote ops (from JUPITER / worktree)
+
+Triton is Windows. Use **cmd + git** on triton, not nested PowerShell/bash over SSH (quoting breaks easily).
+
+On triton (local cmd):
+
+```cmd
+cd /d C:\projects\atomic-llama-cpp-turboquant\Path-B-Event-Support-Pipeline-Plus
+scripts\b6-gate-triton-git-sync.cmd
+```
+
+From orchestrator (JUPITER):
+
+```powershell
+.\scripts\b6-gate-triton-remote.ps1 sync
+.\scripts\b6-gate-triton-remote.ps1 status
+.\scripts\b6-gate-triton-remote.ps1 rpc
+.\scripts\b6-gate-triton-remote.ps1 audit
+```
+
+Portable deploy (no VS on triton): build on JUPITER, copy to `\\192.168.8.23\C$\backup\pathb-portable`, then `b6-gate-triton-remote.ps1 rpc`.
+
 ## Related
 
 - [cuda-windows-5070ti](../cuda-windows-5070ti/README.md) -- 5070 Ti `:50053`

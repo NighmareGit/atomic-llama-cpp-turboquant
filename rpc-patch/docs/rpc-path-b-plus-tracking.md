@@ -4,7 +4,7 @@ Overview: [rpc-path-b-plus-overview.md](rpc-path-b-plus-overview.md)
 
 **Overall:** B+1 **PRODUCTION READY** | B+4..B+6 **SHIPPED** (rebuild required) | Phase 7-8 tooling/cluster **SHIPPED**  
 **Build:** 9964+ client + remus/romulus **proto 4.3.2**  
-**Current Phase:** **B+6 gate** ([b6-gate/TRACKING.md](b6-gate/TRACKING.md)) | Phase 10 4-GPU stable
+**Current Phase:** **B+6 gate** ([b6-gate/TRACKING.md](b6-gate/TRACKING.md)) -- triton A/B + ts sweep done; next B+7 drain bisect | Phase 10 4-GPU stable
 **Branch:** Path-B-Event-Support-Pipeline-Plus (private fork)
 
 ## Implementation log
@@ -31,6 +31,8 @@ Overview: [rpc-path-b-plus-overview.md](rpc-path-b-plus-overview.md)
 | 2026-06-27 | Phase 8 | Romulus PathB deploy + cluster-up + Windows :50053 script + config-g |
 | 2026-06-27 | Phase 10 | **4-GPU primary stable:** 7900+3060+5060+5070; RX6600 slot-init hang bisected |
 | 2026-06-27 | Phase 10 | `pathb-romulus-{3,4}gpu-bench.sh`, gdb-repro presets, cluster summary docs |
+| 2026-06-29 | B+6 | JUPITER abort fix (120a-real); canonical b6-4gpu-g n=384; triton A/B; ts sweep; diagnosis D3+D1 |
+| 2026-06-29 | B+6 | Scripts: b6-4gpu-g-triton, b6-gate-ts-sweep-4gpu.sh, b6-gate-diagnose-runs.sh |
 
 ## Issues
 
