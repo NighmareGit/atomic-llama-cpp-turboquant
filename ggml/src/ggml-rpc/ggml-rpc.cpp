@@ -266,6 +266,20 @@ static void rpc_register_socket(const socket_ptr & sock) {
     g_rpc_socket_registry.push_back(sock);
 }
 
+static thread_local struct {
+    socket_ptr sock;
+    bool pending;
+} tls_pending_copy = {nullptr, false};
+
+struct rpc_event_t;
+
+// Path B: pending EVENT_RECORD response (one per thread)
+static thread_local struct {
+    socket_ptr sock;
+    bool pending;
+    rpc_event_t * ev;
+} tls_pending_event = {nullptr, false, nullptr};
+
 static void rpc_drain_all_endpoints_pending() {
     if (tls_pending_copy.pending && tls_pending_copy.sock) {
         drain_pending_copy_response(tls_pending_copy.sock);
@@ -303,20 +317,6 @@ static void rpc_drain_all_endpoints_pending() {
         }
     }
 }
-
-static thread_local struct {
-    socket_ptr sock;
-    bool pending;
-} tls_pending_copy = {nullptr, false};
-
-struct rpc_event_t;
-
-// Path B: pending EVENT_RECORD response (one per thread)
-static thread_local struct {
-    socket_ptr sock;
-    bool pending;
-    rpc_event_t * ev;
-} tls_pending_event = {nullptr, false, nullptr};
 
 // B+4: skip redundant SET_TENSOR_HASH RTTs when server already confirmed hash
 static thread_local std::unordered_map<uint64_t, bool> tls_hash_present;
