@@ -119,6 +119,17 @@ def main() -> None:
                 f"  blocking_events={len(blocking)} blocking_ms={round_ms(sum(bus))}"
             )
 
+            # extend for per-split / RPC RTT histogram when Plus=1 (plan 1.1)
+            rtts = [int(row.get("elapsed_us", 0)) for row in rpc_rows if row.get("phase") == "send_recv"]
+            if rtts:
+                lines.append(f"  rpc_rtt_count={len(rtts)} rpc_rtt_ms={round_ms(sum(rtts))}")
+                bins = {}
+                for us in rtts:
+                    b = us // 1000  # ms bins
+                    bins[b] = bins.get(b, 0) + 1
+                h = " ".join(f"{k}ms:{v}" for k, v in sorted(bins.items())[:5])
+                lines.append(f"  rpc_rtt_hist={h}")
+
             drain = [
                 row
                 for row in rpc_rows

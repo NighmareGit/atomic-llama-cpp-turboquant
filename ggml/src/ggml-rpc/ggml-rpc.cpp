@@ -717,14 +717,14 @@ static bool parse_endpoint(const std::string & endpoint, std::string & host, int
 static bool send_rpc_cmd(socket_ptr sock, enum rpc_cmd cmd, const void * input, size_t input_size) {
     const auto t0 = std::chrono::steady_clock::now();
     flush_set_tensor_batch();
-    uint8_t cmd_byte = cmd;
-    if (!sock->send_data(&cmd_byte, sizeof(cmd_byte))) {
-        return false;
+    // send header + data in one go to avoid TCP buffering issues on small packets
+    std::vector<uint8_t> buf(1 + sizeof(uint64_t) + input_size);
+    buf[0] = (uint8_t)cmd;
+    memcpy(buf.data() + 1, &input_size, sizeof(input_size));
+    if (input_size > 0 && input) {
+        memcpy(buf.data() + 1 + sizeof(input_size), input, input_size);
     }
-    if (!sock->send_data(&input_size, sizeof(input_size))) {
-        return false;
-    }
-    if (!sock->send_data(input, input_size)) {
+    if (!sock->send_data(buf.data(), buf.size())) {
         return false;
     }
     const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -739,12 +739,14 @@ static bool send_rpc_cmd(socket_ptr sock, enum rpc_cmd cmd, const void * input, 
     const auto t0 = std::chrono::steady_clock::now();
     // Socket-scoped drain: protect TCP framing without stalling other RPC sockets.
     // B+9: defer EVENT recv until pipeline_barrier when GGML_RPC_EVENT_DEFER_BARRIER=1.
-    drain_pending_copy_response(sock);
-    if (!rpc_event_defer_barrier()) {
-        drain_pending_event_response(sock);
+    if (cmd != RPC_CMD_HELLO && cmd != RPC_CMD_DEVICE_COUNT) {
+        drain_pending_copy_response(sock);
+        if (!rpc_event_defer_barrier()) {
+            drain_pending_event_response(sock);
+        }
+        flush_pending_get_tensor_for_socket(sock);
+        flush_set_tensor_batch();
     }
-    flush_pending_get_tensor_for_socket(sock);
-    flush_set_tensor_batch();
     if (!send_rpc_cmd(sock, cmd, input, input_size)) {
         return false;
     }
@@ -792,6 +794,9 @@ static bool negotiate_hello(const std::shared_ptr<socket_t> & sock, const char *
         GGML_LOG_INFO("RPC %s: proto %d.%d peer_copy=%s\n", endpoint, response.major, response.minor,
                       sock->server_supports_peer_copy ? "yes" : "no");
     }
+    // reset B+ pending state after fresh hello to avoid stale drain on subsequent cmds
+    tls_pending_event = {nullptr, false, nullptr};
+    tls_pending_copy = {nullptr, false};
     return true;
 }
 

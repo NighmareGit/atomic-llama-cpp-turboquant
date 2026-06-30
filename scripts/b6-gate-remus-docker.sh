@@ -28,13 +28,23 @@ export PROFILER_LOCAL=1
 export LD_LIBRARY_PATH="/src/build-cuda-b-bin/bin"
 export BENCH_MODEL="/models/$(basename "${BENCH_MODEL}")"
 
-docker run --rm --gpus=all \
+docker run --rm --network=host --gpus=all --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
     -v "${ROOT}:/src" \
     -v "${MODELS_DIR}:/models:ro" \
     -w /src \
     -e LD_LIBRARY_PATH="${LD_LIBRARY_PATH}" \
+    -e PROFILER_BIN="${PROFILER_BIN}" \
+    -e PROFILER_LOCAL="${PROFILER_LOCAL}" \
+    -e PROFILER_SKIP_VALIDATE="${PROFILER_SKIP_VALIDATE:-0}" \
+    -e PROFILER_OUT_DIR="${PROFILER_OUT_DIR:-}" \
+    -e BENCH_MODEL="${BENCH_MODEL}" \
+    -e BENCH_GEN_TOKENS="${BENCH_GEN_TOKENS:-}" \
+    -e BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-}" \
+    -e BENCH_TS="${BENCH_TS:-}" \
     -e GGML_PIPELINE_PLUS="${GGML_PIPELINE_PLUS:-1}" \
     -e GGML_PIPELINE_TRACE="${GGML_PIPELINE_TRACE:-1}" \
+    -e GGML_RPC_TRACE="${GGML_RPC_TRACE:-0}" \
+    -e GGML_SCHED_TRACE="${GGML_SCHED_TRACE:-0}" \
     "${CUDA_IMAGE}" \
     bash -c 'apt-get update -qq && apt-get install -y -qq libgomp1 libopenblas0 >/dev/null && \
         exec bash scripts/b6-gate-profiler-romulus.sh "$@"' _ "${LABEL}" "$@"

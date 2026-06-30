@@ -1,8 +1,8 @@
 # TRACKING — rpc-multi-backend-pipeline-plus
 
 **Branch:** `Path-B-Event-Support-Pipeline-Plus`  
-**Date:** 2026-06-30  
-**Status:** Phase 1 (Instrumentation) + Phase 1b (B+6 gate) — in progress
+**Date:** 2026-07-01  
+**Status:** Phase 1 (Instrumentation) + Phase 1b (B+6 gate) — in progress (triton n=128/384 runs completed; B+9 bisect started; instrumentation enhancements begun)
 
 Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs/b6-gate/TRACKING.md)
 
@@ -24,6 +24,8 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 | Label | Topology | Plus | G (t/s) | overlap_pct | Notes | Status |
 |-------|----------|------|---------|-------------|-------|--------|
 | `trace-f-2gpu-plus` | 5070 + 5060 `ts=50,50` | 1 | **48.9** | 0.6% | **Production default** 36B NL MoE | Shipped |
+| `b6-2gpu-f-triton-guard-n128` | romulus + triton 3090 (guard) | 1 | 116.0 | 0.9% | n=128 guard run; stall improved vs baseline | Gate data (MIXED) |
+| `b6-2gpu-f-triton-n384` | romulus + triton 3090 | 1 | 128.8 | 0.2% | canonical n=384 Plus=1; straggler dominant | Gate data (STRAGGLER_DOMINANT) |
 | `b6-2gpu-f-triton` | romulus + triton 3090 | 1 | 186.6 | 0.3% | Fast worker; overlap still FAIL | Gate ref |
 | `b6-2gpu-f` | romulus + remus 5060 | 1 | 75.6 | 0.2% | Post-B7 partial | Gate FAIL |
 | `b6-4gpu-g` | 4-GPU JUPITER canonical n=384 | 1 | 77.2 | 0.1% | drain 50.4s | Gate FAIL |
@@ -54,19 +56,25 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 
 ## Recently Completed
 
+- n=128 triton guard + n=384 canonical Plus=1 runs on triton (2026-07-01); data collected (0.9% and 0.2% overlap)
+- B+9 (DEFER=0) bisect on n=384 triton launched
+- RPC send combined-buffer improvement + early-cmd drain skip + post-hello pending reset (helped runs complete)
+- Per-split / basic RPC RTT histogram starter in pathb-rpc-trace-parse.sh (plan 1.1)
 - `rpc-multi-backend-pipeline-plus/` doc root incorporated into repo (2026-06-30)
 - Reconciled with B+6 gate, b6-gate/TRACKING, grilling lateral ladder (B+8–B+13)
 - Formalized [Path-B-Plus-MultiBackend-RPC-Orchestration-Audit.md](ANALYSIS/Path-B-Plus-MultiBackend-RPC-Orchestration-Audit.md)
 
 ## Next 7 Days
 
-- [x] B+8–B+10, B+7a′, B+13 code landed (2026-06-30, **untested** — see [IMPLEMENTATION.md](IMPLEMENTATION.md))
-- [ ] Rebuild client + remus/romulus deploy
-- [ ] `b6-2gpu-f` n=384 re-bench (Q5 contract)
+- [x] B+8–B+10, B+7a′, B+13 code landed (2026-06-30, **untested** — see [IMPLEMENTATION.md](IMPLEMENTATION.md)); 2-GPU triton n=128/384 data collected
+- [x] n=384 triton Plus=1 + initial B+9 bisect launched (2026-07-01)
+- [ ] Complete B+ bisects (B+8/B+9/B+10) + n=384 re-bench on triton (Q5 contract); compare DEFER=0 vs Plus=1
 - [ ] B+7a′ validate on `b6-4gpu-g` n=384 (after 2-GPU pass/partial)
-- [ ] Phase 1.1: per-split timing in scheduler trace / profiler output
+- [ ] Phase 1.1: full per-split timing + RPC RTT histogram in scheduler trace / profiler output + parsers (starter added)
+- [ ] Fix `--validate-rpc` hang (still using --skip; handshake debug in progress)
 - [ ] Topology guard in `pathb-vram-calc.ps1` / Config F scripts
 - [ ] Publish `BENCHMARKS/2026-07-comparison-matrix.md` after instrumentation refresh
+- [ ] Triton ops (full git sync, start/stop scripts); rebuilds; push session work + handover
 
 ## Metrics Dashboard
 

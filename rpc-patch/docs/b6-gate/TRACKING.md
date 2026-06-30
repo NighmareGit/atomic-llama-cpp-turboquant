@@ -60,6 +60,8 @@ Plan: [PLAN.md](PLAN.md)
 | Label | Status | G | overlap_pct | stall_ratio | gate_b6 | Artifact |
 |-------|--------|---|-------------|-------------|---------|----------|
 | `b6-2gpu-f` (remus) | DONE | 75.56 | 0.2% | 0.949 | FAIL | `benches/path-b-plus/b6-2gpu-f/` |
+| `b6-2gpu-f-triton-guard-n128` | DONE | 116.0 | 0.9% | 0.6357 | FAIL | guard run (MIXED); stall improved |
+| `b6-2gpu-f-triton-n384` | DONE | 128.8 | 0.2% | 0.867 | FAIL | canonical (STRAGGLER_DOMINANT) |
 | `b6-2gpu-f-triton` | DONE | 186.61 | 0.3% | 0.919 | FAIL | `benches/path-b-plus/b6-2gpu-f-triton/` |
 | `b6-4gpu-g` | DONE | 77.2 wall / 37.0 diag | 0.1% | 0.929 | FAIL | `benches/path-b-plus/b6-4gpu-g/` n=384, ts=25,12,25,38, JUPITER OK |
 | `b6-4gpu-g-triton` | DONE | 63.1 | 0.1% | 0.958 | FAIL | `benches/path-b-plus/b6-4gpu-g-triton/` n=384, ts=22,11,34,33 |

@@ -1,0 +1,2 @@
+label	overlap_pct	drain_flush_ms	blocking_rpc	stall_ratio	straggler	straggler_ms	assembly_overlap	G_tps	backend_ms_tok	path	verdict
+b6-2gpu-f-triton-n384-no-defer	0.2	1776.34	790	0.8695	1	8.186	877	128.834	NA	/home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-n384-no-defer	STRAGGLER_DOMINANT
