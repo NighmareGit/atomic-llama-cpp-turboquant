@@ -14,12 +14,14 @@ if [[ -z "$LABEL" || "$LABEL" == "-h" || "$LABEL" == "--help" ]]; then
     echo "  b6-4gpu-g-triton   4-GPU triton 3090 swap (:50054 replaces JUPITER)"
     echo "  b6-5gpu-g          5-GPU primary + triton 3070 :50055 (local PCIe hop)"
     echo "  b6-2gpu-f-plus0    2-GPU remus, GGML_PIPELINE_PLUS=0"
+    echo "  b6-2gpu-jupiter    2-GPU remus CUDA + JUPITER 5070 :50053"
+    echo "  b6-2gpu-jupiter-plus0  same, GGML_PIPELINE_PLUS=0"
     exit 0
 fi
 
 export PATHB_ROMULUS_SSH_PASS="${PATHB_ROMULUS_SSH_PASS:-12345}"
 export PROFILER_BIN="${PROFILER_BIN:-${ROOT}/build-rocm-docker/bin/llama-pipeline-profiler}"
-export LD_LIBRARY_PATH="${ROOT}/build-rocm-docker/bin:/opt/rocm/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-${ROOT}/build-rocm-docker/bin:/opt/rocm/lib}"
 export BENCH_MODEL="${BENCH_MODEL:-/mnt/models/Qwen3.6-35B-A3B-APEX-I-Quality.gguf}"
 export BENCH_GEN_TOKENS="${BENCH_GEN_TOKENS:-384}"
 export BENCH_PROMPT_FILE="${BENCH_PROMPT_FILE:-${ROOT}/benches/path-b-plus/prompts/profiler-reasoning-long.txt}"
@@ -63,6 +65,18 @@ case "$LABEL" in
         ;;
     b6-2gpu-f-plus0)
         export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051}"
+        export BENCH_TS="${BENCH_TS:-50,50}"
+        export GGML_PIPELINE_PLUS=0
+        export PROFILER_OUT_DIR="${PROFILER_OUT_DIR:-${ROOT}/benches/path-b-plus/${LABEL}}"
+        ;;
+    b6-2gpu-jupiter)
+        export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.21:50053}"
+        export BENCH_TS="${BENCH_TS:-50,50}"
+        export GGML_PIPELINE_PLUS="${GGML_PIPELINE_PLUS:-1}"
+        export PROFILER_OUT_DIR="${PROFILER_OUT_DIR:-${ROOT}/benches/path-b-plus/${LABEL}}"
+        ;;
+    b6-2gpu-jupiter-plus0)
+        export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.21:50053}"
         export BENCH_TS="${BENCH_TS:-50,50}"
         export GGML_PIPELINE_PLUS=0
         export PROFILER_OUT_DIR="${PROFILER_OUT_DIR:-${ROOT}/benches/path-b-plus/${LABEL}}"
