@@ -228,6 +228,9 @@ static void flush_set_tensor_batch();
 static void rpc_register_socket(const socket_ptr & sock);
 static void rpc_drain_all_endpoints_pending();
 
+int ggml_backend_rpc_server_count(void);
+bool ggml_backend_rpc_event_defer_barrier(void);
+
 static bool rpc_pipeline_plus_enabled() {
     static int v = -1;
     if (v < 0) {
@@ -237,13 +240,29 @@ static bool rpc_pipeline_plus_enabled() {
     return v != 0;
 }
 
-static bool rpc_event_defer_barrier() {
+static int rpc_event_defer_min_servers() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_RPC_EVENT_DEFER_MIN_SERVERS");
+        v = e ? atoi(e) : 2;
+        if (v < 1) {
+            v = 1;
+        }
+    }
+    return v;
+}
+
+static int rpc_event_defer_env_enabled() {
     static int v = -1;
     if (v < 0) {
         const char * e = getenv("GGML_RPC_EVENT_DEFER_BARRIER");
         v = e ? atoi(e) : (rpc_pipeline_plus_enabled() ? 1 : 0);
     }
-    return v != 0 && rpc_pipeline_plus_enabled();
+    return v;
+}
+
+static bool rpc_event_defer_barrier() {
+    return ggml_backend_rpc_event_defer_barrier();
 }
 
 static bool rpc_multi_socket_flush() {
@@ -257,6 +276,10 @@ static bool rpc_multi_socket_flush() {
 
 static std::mutex g_rpc_socket_registry_mutex;
 static std::vector<std::weak_ptr<socket_t>> g_rpc_socket_registry;
+
+static std::mutex g_rpc_reg_map_mutex;
+static std::unordered_map<std::string, ggml_backend_reg_t> g_rpc_reg_map;
+static uint32_t g_rpc_dev_id = 0;
 
 static void rpc_register_socket(const socket_ptr & sock) {
     if (!sock) {
@@ -1281,6 +1304,18 @@ static void ggml_backend_rpc_synchronize(ggml_backend_t backend) {
 
 void ggml_backend_rpc_drain_all_endpoints(void) {
     rpc_drain_all_endpoints_pending();
+}
+
+int ggml_backend_rpc_server_count(void) {
+    std::lock_guard<std::mutex> lock(g_rpc_reg_map_mutex);
+    return (int) g_rpc_reg_map.size();
+}
+
+bool ggml_backend_rpc_event_defer_barrier(void) {
+    if (!rpc_pipeline_plus_enabled() || rpc_event_defer_env_enabled() == 0) {
+        return false;
+    }
+    return ggml_backend_rpc_server_count() >= rpc_event_defer_min_servers();
 }
 
 static void rpc_backend_event_record(ggml_backend_t backend, ggml_backend_event_t event) {
@@ -2835,12 +2870,9 @@ static const ggml_backend_reg_i ggml_backend_rpc_reg_interface = {
 };
 
 ggml_backend_reg_t ggml_backend_rpc_add_server(const char * endpoint) {
-    static std::unordered_map<std::string, ggml_backend_reg_t> reg_map;
-    static std::mutex mutex;
-    static uint32_t dev_id = 0;
-    std::lock_guard<std::mutex> lock(mutex);
-    if (reg_map.find(endpoint) != reg_map.end()) {
-        return reg_map[endpoint];
+    std::lock_guard<std::mutex> lock(g_rpc_reg_map_mutex);
+    if (g_rpc_reg_map.find(endpoint) != g_rpc_reg_map.end()) {
+        return g_rpc_reg_map[endpoint];
     }
     uint32_t dev_count = ggml_backend_rpc_get_device_count(endpoint);
     if (dev_count == 0) {
@@ -2849,7 +2881,7 @@ ggml_backend_reg_t ggml_backend_rpc_add_server(const char * endpoint) {
     ggml_backend_rpc_reg_context * ctx = new ggml_backend_rpc_reg_context;
     ctx->name = "RPC[" + std::string(endpoint) + "]";
     for (uint32_t ind = 0; ind < dev_count; ind++) {
-        std::string dev_name = "RPC" + std::to_string(dev_id);
+        std::string dev_name = "RPC" + std::to_string(g_rpc_dev_id);
         std::string dev_desc = std::string(endpoint);
         ggml_backend_rpc_device_context * dev_ctx = new ggml_backend_rpc_device_context {
             /* .endpoint    = */    endpoint,
@@ -2865,14 +2897,14 @@ ggml_backend_reg_t ggml_backend_rpc_add_server(const char * endpoint) {
             /* .context = */ dev_ctx,
         };
         ctx->devices.push_back(dev);
-        dev_id++;
+        g_rpc_dev_id++;
     }
     ggml_backend_reg_t reg = new ggml_backend_reg {
         /* .api_version = */ GGML_BACKEND_API_VERSION,
         /* .iface       = */ ggml_backend_rpc_reg_interface,
         /* .context     = */ ctx
     };
-    reg_map[endpoint] = reg;
+    g_rpc_reg_map[endpoint] = reg;
     return reg;
 }
 

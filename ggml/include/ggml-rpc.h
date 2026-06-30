@@ -35,6 +35,12 @@ GGML_BACKEND_API ggml_backend_reg_t ggml_backend_rpc_add_server(const char * end
 // B+7a'/B+9: drain deferred EVENT/GET/COPY across all RPC sockets (pipeline_barrier hook).
 GGML_BACKEND_API void ggml_backend_rpc_drain_all_endpoints(void);
 
+// B+9: unique RPC server endpoints registered (host:port strings).
+GGML_BACKEND_API int ggml_backend_rpc_server_count(void);
+
+// B+9: defer EVENT recv to pipeline_barrier (off for single-server 2-GPU unless forced).
+GGML_BACKEND_API bool ggml_backend_rpc_event_defer_barrier(void);
+
 #ifdef  __cplusplus
 }
 #endif

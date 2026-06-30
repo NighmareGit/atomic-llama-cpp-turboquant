@@ -12,6 +12,7 @@
 #include "ggml-backend-impl.h"
 #include "ggml-alloc.h"
 #include "ggml-impl.h"
+#include "ggml-rpc.h"
 
 #include <assert.h>
 #include <limits.h>
@@ -63,12 +64,7 @@ static bool ggml_sched_barrier_partial_enabled() {
 }
 
 static bool ggml_sched_rpc_event_defer_barrier() {
-    static int v = -1;
-    if (v < 0) {
-        const char * e = getenv("GGML_RPC_EVENT_DEFER_BARRIER");
-        v = e ? atoi(e) : (ggml_sched_pipeline_plus_enabled() ? 1 : 0);
-    }
-    return v != 0 && ggml_sched_pipeline_plus_enabled();
+    return ggml_backend_rpc_event_defer_barrier();
 }
 
 static bool ggml_sched_moe_async_copy_enabled() {
