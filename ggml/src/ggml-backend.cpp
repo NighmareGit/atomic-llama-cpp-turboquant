@@ -43,6 +43,51 @@ static int pipeline_trace_lvl() {
     return v;
 }
 
+// Path-B+ mitigation flags (B+8..B+10). Default on when GGML_PIPELINE_PLUS=1.
+static bool ggml_sched_pipeline_plus_enabled() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_PIPELINE_PLUS");
+        v = e ? (atoi(e) != 0) : 1;
+    }
+    return v != 0;
+}
+
+static bool ggml_sched_barrier_partial_enabled() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_PIPELINE_BARRIER_PARTIAL");
+        v = e ? atoi(e) : (ggml_sched_pipeline_plus_enabled() ? 1 : 0);
+    }
+    return v != 0 && ggml_sched_pipeline_plus_enabled();
+}
+
+static bool ggml_sched_rpc_event_defer_barrier() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_RPC_EVENT_DEFER_BARRIER");
+        v = e ? atoi(e) : (ggml_sched_pipeline_plus_enabled() ? 1 : 0);
+    }
+    return v != 0 && ggml_sched_pipeline_plus_enabled();
+}
+
+static bool ggml_sched_moe_async_copy_enabled() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_SCHED_MOE_ASYNC_COPY");
+        v = e ? atoi(e) : (ggml_sched_pipeline_plus_enabled() ? 1 : 0);
+    }
+    return v != 0 && ggml_sched_pipeline_plus_enabled();
+}
+
+static bool ggml_backend_is_rpc_backend(ggml_backend_t backend) {
+    if (!backend || !backend->iface.get_name) {
+        return false;
+    }
+    const char * name = backend->iface.get_name(backend);
+    return name && strstr(name, "RPC") != nullptr;
+}
+
 static FILE * pipeline_trace_file() {
     static FILE * trace_f = nullptr;
     static bool trace_f_init = false;
@@ -917,6 +962,9 @@ struct ggml_backend_sched {
     int debug_realloc;
     int debug_graph_size;
     int debug_prev_graph_size;
+
+    // B+8 F2: backends that are cross-backend copy sources (bit i set)
+    uint32_t barrier_copy_src_mask;
 };
 
 #define hash_id(tensor) ggml_hash_find_or_insert(&sched->hash_set, tensor)
@@ -1630,6 +1678,31 @@ static bool ggml_backend_sched_alloc_splits(ggml_backend_sched_t sched) {
     return true;
 }
 
+// B+8 F2: recompute which backends must quiesce copy slot at pipeline_barrier.
+static void ggml_backend_sched_update_barrier_src_mask(ggml_backend_sched_t sched) {
+    sched->barrier_copy_src_mask = 0;
+    for (int split_id = 0; split_id < sched->n_splits; split_id++) {
+        struct ggml_backend_sched_split * split = &sched->splits[split_id];
+        const int split_backend_id = split->backend_id;
+        for (int input_id = 0; input_id < split->n_inputs; input_id++) {
+            ggml_backend_t input_backend = ggml_backend_sched_get_tensor_backend(sched, split->inputs[input_id]);
+            if (!input_backend) {
+                continue;
+            }
+            const int input_backend_id = ggml_backend_sched_backend_id(sched, input_backend);
+            if (input_backend_id >= 0 && input_backend_id != split_backend_id) {
+                sched->barrier_copy_src_mask |= (1u << input_backend_id);
+            }
+        }
+    }
+    // Also wait split backends that recorded events (producers with n_inputs > 0).
+    for (int split_id = 0; split_id < sched->n_splits; split_id++) {
+        if (sched->splits[split_id].n_inputs > 0) {
+            sched->barrier_copy_src_mask |= (1u << sched->splits[split_id].backend_id);
+        }
+    }
+}
+
 static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t sched) {
     GGML_ASSERT(sched);
     struct ggml_backend_sched_split * splits = sched->splits;
@@ -1679,7 +1752,16 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     const int64_t n_expert   = node->op == GGML_OP_MUL_MAT_ID ? input->ne[2] : input->ne[1];
                     const size_t expert_size = node->op == GGML_OP_MUL_MAT_ID ? input->nb[2] : input->nb[1];
 
-                    ggml_backend_synchronize(input_backend);
+                    // B+10: narrow MoE weight-path wait to copy-slot event when possible.
+                    {
+                        const int input_bid = ggml_backend_sched_backend_id(sched, input_backend);
+                        if (ggml_sched_moe_async_copy_enabled() && input_bid >= 0 &&
+                            sched->events[input_bid][sched->cur_copy] != NULL) {
+                            ggml_backend_event_synchronize(sched->events[input_bid][sched->cur_copy]);
+                        } else {
+                            ggml_backend_synchronize(input_backend);
+                        }
+                    }
 
                     // get the ids
                     ggml_tensor * ids_tensor = node->src[2];
@@ -1698,7 +1780,15 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     if (ids_tensor != prev_ids_tensor) {
                         ids.resize(ggml_nbytes(ids_tensor) / sizeof(int32_t));
                         ggml_backend_tensor_get_async(ids_backend, ids_tensor, ids.data(), 0, ggml_nbytes(ids_tensor));
-                        ggml_backend_synchronize(ids_backend);
+                        {
+                            const int ids_bid = ggml_backend_sched_backend_id(sched, ids_backend);
+                            if (ggml_sched_moe_async_copy_enabled() && ids_bid >= 0 &&
+                                sched->events[ids_bid][sched->cur_copy] != NULL) {
+                                ggml_backend_event_synchronize(sched->events[ids_bid][sched->cur_copy]);
+                            } else {
+                                ggml_backend_synchronize(ids_backend);
+                            }
+                        }
 
                         // find the used experts
                         used_ids.clear();
@@ -1753,9 +1843,15 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     }
                     copy_experts(first_id, last_id);
                 } else {
-                    // try async copy, but if not possible, we can still use a sync copy without synchronizing the dst backend, since we handle the synchronization here with multiple copies and events
-                    // TODO: add public function to facilitate this, since applications do not have direct access to the backend interface
-                    if (!split_backend->iface.cpy_tensor_async || !split_backend->iface.cpy_tensor_async(input_backend, split_backend, input, input_cpy)) {
+                    // B+13: try async copy on dst then src backend before sync fallback.
+                    bool copied_async = false;
+                    if (split_backend->iface.cpy_tensor_async) {
+                        copied_async = split_backend->iface.cpy_tensor_async(input_backend, split_backend, input, input_cpy);
+                    }
+                    if (!copied_async && input_backend->iface.cpy_tensor_async) {
+                        copied_async = input_backend->iface.cpy_tensor_async(input_backend, split_backend, input, input_cpy);
+                    }
+                    if (!copied_async) {
                         ggml_backend_synchronize(input_backend);
                         if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
                             ggml_backend_event_synchronize(sched->events[split_backend_id][sched->cur_copy]);
@@ -1991,6 +2087,7 @@ bool ggml_backend_sched_alloc_graph(ggml_backend_sched_t sched, struct ggml_cgra
     }
 
     sched->is_alloc = true;
+    ggml_backend_sched_update_barrier_src_mask(sched);
 
     return true;
 }
@@ -2041,9 +2138,22 @@ void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
     }
 
     const int new_copy = sched->next_copy;
+    uint32_t wait_mask = (1u << sched->n_backends) - 1;
+    if (ggml_sched_barrier_partial_enabled() && sched->barrier_copy_src_mask != 0) {
+        wait_mask = sched->barrier_copy_src_mask;
+    }
     for (int i = 0; i < sched->n_backends; i++) {
-        if (sched->events[i][new_copy] != NULL) {
+        if ((wait_mask & (1u << i)) && sched->events[i][new_copy] != NULL) {
             ggml_backend_event_synchronize(sched->events[i][new_copy]);
+        }
+    }
+
+    // B+9: batch-defer RPC EVENT recv until barrier (drain via backend synchronize).
+    if (ggml_sched_rpc_event_defer_barrier()) {
+        for (int i = 0; i < sched->n_backends; i++) {
+            if (ggml_backend_is_rpc_backend(sched->backends[i])) {
+                ggml_backend_synchronize(sched->backends[i]);
+            }
         }
     }
 
