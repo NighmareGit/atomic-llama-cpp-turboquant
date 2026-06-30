@@ -1,6 +1,6 @@
 # B+6 overlap gate plan (Path-B-Plus)
 
-Navigation: [TRACKING.md](TRACKING.md) | [rpc-path-b-plus-overview.md](../rpc-path-b-plus-overview.md) | [pathb-sync-site-audit.md](../pathb-sync-site-audit.md)
+Navigation: [TRACKING.md](TRACKING.md) | [rpc-multi-backend-pipeline-plus/](../../../docs/rpc-multi-backend-pipeline-plus/) | [rpc-path-b-plus-overview.md](../rpc-path-b-plus-overview.md) | [pathb-sync-site-audit.md](../pathb-sync-site-audit.md)
 
 **Branch:** Path-B-Event-Support-Pipeline-Plus  
 **Goal:** Pass B+6 (`overlap_pct >= 5%`) on 2-GPU F without Path C.  

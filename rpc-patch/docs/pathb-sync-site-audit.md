@@ -2,7 +2,8 @@
 
 Trace-proven blocking sites for multi-RPC pipeline stalls. Static map: [`RPC-WAIT-MAP.md`](../../docs/cuda-windows-5070ti/RPC-WAIT-MAP.md). Parse tools: `rpc-patch/scripts/pathb-rpc-trace-parse.sh`, `pathb-hotpath-summary.sh`.
 
-**Last updated:** 2026-06-29  
+**Last updated:** 2026-06-30  
+**Mission plan:** [docs/rpc-multi-backend-pipeline-plus/PLAN.md](../../docs/rpc-multi-backend-pipeline-plus/PLAN.md) Phase 2
 **Evidence bench:** `b6-2gpu-f`, `b6-4gpu-g`, `b6-4gpu-g-triton`, `b6-4gpu-ts-sweep` (romulus 4-GPU, 2026-06-29), `trace-f-2gpu-plus` (Windows), `profiler-4gpu-primary-romulus-trace-v2`
 
 ---
@@ -52,6 +53,20 @@ Profiler label `b6-2gpu-f` (romulus 7900 + remus 5060, `ts=50,50`, q8_0 APEX, n=
 
 Mission tracking: [b6-gate/TRACKING.md](b6-gate/TRACKING.md).
 
+### B+8–B+13 ladder (2026-06-30, profiler-led, Path-B+ only)
+
+| ID | Blocker | Direction | Priority |
+|----|---------|-----------|----------|
+| B+8 | Full-backend `pipeline_barrier` quiesce | Partial dependency-frontier wait | **1** |
+| B+9 | EVENT recv on blocking path | Defer recv to barrier boundary | 2 |
+| B+10 | MoE `input_wait_copy` sync (~1682) | De-sync expert copy path | 3 |
+| B+7a′ | 4-GPU drain 50s vs 5s | Per-socket flush across 3 RPC peers | 4 (4-GPU) |
+| B+11 | Single TCP HOL blocking | Dual-socket per endpoint (proto 4.4?) | 5 |
+| B+12 | GET_TENSOR blocking storm | Path A2-style deferral | 6 |
+| B+13 | `cpy_tensor_async` sync fallback | Verify CUDA→RPC async path taken | 7 |
+
+Implement order: B+8 → B+9 → B+10 → B+7a′. Bench gate: `b6-2gpu-f` n=384 (overlap); `b6-4gpu-g` n=384 (drain).
+
 ---
 
 ## Trace checklist (per run)
@@ -78,5 +93,6 @@ Mission tracking: [b6-gate/TRACKING.md](b6-gate/TRACKING.md).
 | 2026-06-27 | Initial audit: 6 proven blockers + B+4/B+5/B+6; linked bash parse/summary scripts |
 | 2026-06-27 | B+4/B+5/B+6 shipped in `ggml-rpc.cpp`; Linux trace tooling + Config G cluster scripts |
 | 2026-06-29 | 4-GPU triton A/B + ts sweep: drain 50s vs 5s topology split; overlap ceiling 0.7% @ n=128; M1 not reached @ n=384 |
+| 2026-06-30 | B+8–B+13 ladder added; linked to `docs/rpc-multi-backend-pipeline-plus/` mission plan |
 
 When a blocker ships or a trace disproves a site, update the table and bump **Last updated**.

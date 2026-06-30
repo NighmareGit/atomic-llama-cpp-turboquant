@@ -5,7 +5,7 @@ Private fork work on **llama.cpp RPC cross-GPU performance**: batching and pipel
 **Git repo root:** parent of this folder (`atomic-llama-cpp-turboquant/`)  
 **This folder:** `rpc-patch/` (docs, scripts, handover, bench artifacts)  
 **Builds:** `../build-cuda-b-bin/`, `../build-rocm-docker/`  
-**Status (2026-06-27):** Path B on Config A-D; **Path-B Plus B+1 PRODUCTION READY** (Phase 5). **4-GPU Config G primary STABLE** (Phase 10): romulus 7900 + 3060 + 5060 + 5070, G ~40 t/s, no RX6600. Windows 2-device default: `ts=50,50`, G=**48.9 t/s**. Start: [docs/rpc-path-b-plus-overview.md](docs/rpc-path-b-plus-overview.md), [CLUSTER-4GPU-PRIMARY.md](../docs/cuda-windows-5070ti/CLUSTER-4GPU-PRIMARY.md). Benchmarking: [BENCHMARKING.md](../BENCHMARKING.md), [benches/path-b-plus/](../benches/path-b-plus/). Tracking: [docs/rpc-path-b-plus-tracking.md](docs/rpc-path-b-plus-tracking.md). RX6600 4-GPU: slot-init hang (parked).
+**Status (2026-06-30):** Path B on Config A-D; **Path-B Plus B+1 PRODUCTION READY** (Phase 5). **B+6 overlap gate IN PROGRESS** (M3 not reached). **4-GPU Config G primary STABLE** (Phase 10): romulus 7900 + 3060 + 5060 + 5070, G ~40 t/s, no RX6600. Windows 2-device default: `ts=50,50`, G=**48.9 t/s**. Start: [docs/rpc-multi-backend-pipeline-plus/](../docs/rpc-multi-backend-pipeline-plus/) (mission/plan), [docs/rpc-path-b-plus-overview.md](docs/rpc-path-b-plus-overview.md), [docs/b6-gate/TRACKING.md](docs/b6-gate/TRACKING.md). Benchmarking: [BENCHMARKING.md](../BENCHMARKING.md), [benches/path-b-plus/](../benches/path-b-plus/). RX6600 4-GPU: slot-init hang (parked).
 
 ---
 

@@ -6,6 +6,7 @@ Published results for **pipeline layer** benchmarks on branch
 
 Methodology and run contracts: [BENCHMARKING.md](../../BENCHMARKING.md).
 Architecture: [PIPELINE.md](../../PIPELINE.md).
+Mission / gate plan: [docs/rpc-multi-backend-pipeline-plus/](../../docs/rpc-multi-backend-pipeline-plus/).
 Native profiler: [docs/llama-pipeline-profiler/OVERVIEW.md](../../docs/llama-pipeline-profiler/OVERVIEW.md).
 
 ## Layout

@@ -78,6 +78,8 @@ Latest PASS: `benchmarks/20260627-042947/` - `gemma-4-E4B.i1-Q4_K_M.gguf`.
 
 ## Path B / RPC context
 
+**Mission doc root (multi-backend orchestration):** [docs/rpc-multi-backend-pipeline-plus/](../rpc-multi-backend-pipeline-plus/) — MISSION, PLAN, TRACKING, orchestration audit.
+
 For protocol changes, tensor-split presets, and Linux matrix benches see:
 
 - [rpc-patch/patch/HANDOVER.md](../../rpc-patch/patch/HANDOVER.md)

@@ -4,7 +4,7 @@ Entry point for the **Path-B-Event-Support-Pipeline-Plus** branch. Path-B Plus f
 
 **Primary repo (Windows):** `D:\projects\atomic-llama-cpp-5070ti\atomic-llama-cpp-turboquant` -- edit, commit, and push here (not Grok worktrees).
 
-**Status (2026-06-29):** B+6 gate in progress; B+1 production ready on 2-device F.
+**Status (2026-06-30):** B+6 gate in progress (M3 hard criterion); B+1 production ready on 2-device F. Mission root: [docs/rpc-multi-backend-pipeline-plus/](../../docs/rpc-multi-backend-pipeline-plus/).
 **Protocol:** RPC v4.3.2 (`COPY_TENSOR_PEER`, `peer_copy` HELLO cap)  
 **Frozen base:** `Path-B-Event-Support` @ `26a9353`
 
@@ -161,6 +161,7 @@ Core diagnostic: remus 5060 (`:50051`) vs triton 3090 (`192.168.8.23:50054`) wit
 | Document | Purpose |
 |----------|---------|
 | **This file** | Project overview and navigation |
+| [rpc-multi-backend-pipeline-plus/](../../docs/rpc-multi-backend-pipeline-plus/) | **Mission doc root** — MISSION, PLAN, TRACKING, orchestration audit |
 | [b6-gate/PLAN.md](b6-gate/PLAN.md) | B+6 gate mission plan (Path-B-Plus, no Path C) |
 | [b6-gate/TRACKING.md](b6-gate/TRACKING.md) | B+6 step checklist -- living state |
 | [rpc-path-b-plus-plan.md](rpc-path-b-plus-plan.md) | Technical plan, tiers, success metrics |
@@ -187,6 +188,7 @@ Core diagnostic: remus 5060 (`:50051`) vs triton 3090 (`192.168.8.23:50054`) wit
 
 ## What's next
 
-1. **B+6 gate mission** -- [b6-gate/TRACKING.md](b6-gate/TRACKING.md): remus vs triton RPC A/B, stall ledger, B+7 fixes.
-2. **Triton spike prep** -- `:50054` on `192.168.8.23` (3090 worker); sync `C:\projects\...` tree.
-3. **S0-lite** (deferred) -- `pathb-72b-cluster-matrix.sh` after M1.
+1. **Mission plan** -- [rpc-multi-backend-pipeline-plus/PLAN.md](../../docs/rpc-multi-backend-pipeline-plus/PLAN.md): B+8→B+9→B+10 bisects, then B+7a′ 4-GPU drain.
+2. **B+6 gate** -- [b6-gate/TRACKING.md](b6-gate/TRACKING.md): living checklist; M3 (`overlap_pct >= 5%`) is hard complete criterion.
+3. **Phase 1.1** -- per-split / RPC timing visibility (parallel with bisects).
+4. **Path C** -- deferred until mitigation ladder exhausted ([rpc-multi-backend-pipeline-plus/PLAN.md](../../docs/rpc-multi-backend-pipeline-plus/PLAN.md) Phase 3 entry criteria).

@@ -1,8 +1,10 @@
 # Path-B Plus Handover
 
-**Status:** B+1 production-ready on 2-device F; B+4..B+6 shipped; **B+6 gate IN PROGRESS** (M1 not reached, 2026-06-29).
+**Status:** B+1 production-ready on 2-device F; B+4..B+6 shipped; **B+6 gate IN PROGRESS** (M3 not reached, 2026-06-30).
 
-**Resume here:** [HANDOVER-SESSION-2026-06-29.md](../patch/HANDOVER-SESSION-2026-06-29.md) (latest session end).
+**Mission doc root:** [docs/rpc-multi-backend-pipeline-plus/](../../docs/rpc-multi-backend-pipeline-plus/) (MISSION, PLAN, TRACKING, audit).
+
+**Resume here:** [HANDOVER-SESSION-2026-06-29.md](../patch/HANDOVER-SESSION-2026-06-29.md) (cluster session) + [rpc-multi-backend-pipeline-plus/TRACKING.md](../../docs/rpc-multi-backend-pipeline-plus/TRACKING.md) (mission state).
 
 ## What changed
 
@@ -84,7 +86,11 @@ Confirm `[hello] version: 4.3.2` and client trace `"minor":3,"peer_copy":true`.
 
 ## What's next
 
-- **B+7:** 4-RPC socket drain bisect (`ggml-rpc.cpp`) -- priority from [pathb-sync-site-audit.md](pathb-sync-site-audit.md) 7a.
-- **Ops:** triton `:50054` as RPC2 eval; G4 `-ts` `30,14,16,40` for overlap peek.
-- **5-endpoint spike (S0):** deferred until M1 or scale need.
-- **Path C:** out of scope for B+6 gate.
+See [docs/rpc-multi-backend-pipeline-plus/PLAN.md](../../docs/rpc-multi-backend-pipeline-plus/PLAN.md) Phase 2 (mitigation ladder).
+
+- **B+8:** Partial `pipeline_barrier` wait (`ggml-backend.cpp`) — profiler-led, first bisect.
+- **B+9:** EVENT defer-to-barrier (`ggml-rpc.cpp`).
+- **B+10:** MoE `input_wait_copy` de-sync (`ggml-backend.cpp`).
+- **B+7a′:** 4-RPC socket drain on canonical 4-GPU (`ggml-rpc.cpp`).
+- **Ops:** triton `:50054` as RPC2 eval; G4 `-ts` `30,14,16,40` (throughput, not overlap gate).
+- **Path C:** deferred until B+8–B+13 ladder exhausted.

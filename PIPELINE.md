@@ -88,6 +88,7 @@ flowchart TB
 | RPC protocol | `ggml/include/ggml-rpc.h` (`RPC_CMD_EVENT_RECORD`, proto 4.2.2+) |
 | Scheduler / RPC trace emit | `ggml-backend.cpp`, `ggml-rpc.cpp` |
 | Cluster benches / hotpath parse | `rpc-patch/scripts/pathb-*.sh`, `pathb-hotpath-summary.sh` |
+| Path B/Plus mission | `docs/rpc-multi-backend-pipeline-plus/` (MISSION, PLAN, TRACKING) |
 | Path B/Plus planning | `rpc-patch/docs/rpc-path-b-plus-overview.md` |
 
 ---

@@ -2,6 +2,7 @@
 
 **Purpose:** Resume Path-B-Plus B+6 overlap gate after triton A/B, ts sweep, and diagnosis.  
 **Branch:** `Path-B-Event-Support-Pipeline-Plus`  
+**Mission doc root (2026-06-30):** [docs/rpc-multi-backend-pipeline-plus/](../../docs/rpc-multi-backend-pipeline-plus/) — supersedes fragmented notes; see TRACKING + PLAN Phase 2 (B+8–B+13).  
 **Session transcript:** `C:\Users\nightmare\.grok\sessions\C%3A%5CUsers%5Cnightmare%5C.grok%5Cworktrees%5Catomic-llama-cpp-5070ti-atomic-llama-cpp-turboquant%5Cpath-b-plus-5070ti-triton\019f0f97-e000-7f70-9c1d-4eb3c4a41e2b\updates.jsonl`
 
 | Location | Git | Notes |
@@ -65,10 +66,14 @@ Diagnosis matrix (romulus): `benches/path-b-plus/b6-diagnosis-matrix.tsv`
 
 ## Next session (priority order)
 
-1. **B+7 bisect** -- 4-RPC socket drain on canonical `25,12,25,38` (reproduce 50s vs 5s delta in `ggml-rpc.cpp`).
-2. **Ops eval** -- triton `:50054` as production RPC2 vs tuned G4 `-ts` on JUPITER.
-3. **Romulus sync** -- `git fetch gitea && git reset --hard gitea/Path-B-Event-Support-Pipeline-Plus` after push.
-4. **Optional** -- re-run single `b6-4gpu-g` n=384 after drain fix to refresh canonical baseline artifact.
+See [docs/rpc-multi-backend-pipeline-plus/PLAN.md](../../docs/rpc-multi-backend-pipeline-plus/PLAN.md) Phase 2 (updated 2026-06-30).
+
+1. **B+8 bisect** -- partial `pipeline_barrier` in `ggml-backend.cpp`; re-bench `b6-2gpu-f` n=384.
+2. **B+9** -- EVENT defer-to-barrier in `ggml-rpc.cpp`.
+3. **B+10** -- MoE `input_wait_copy` de-sync (`ggml-backend.cpp` ~1682).
+4. **B+7a′** -- 4-RPC socket drain on canonical `25,12,25,38` (`b6-4gpu-g` n=384).
+5. **Ops eval** (parallel) -- triton `:50054` vs G4 `-ts` (throughput only).
+6. **Romulus sync** after push.
 
 ---
 

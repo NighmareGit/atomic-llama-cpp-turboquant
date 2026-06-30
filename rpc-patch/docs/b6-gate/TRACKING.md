@@ -4,7 +4,8 @@ Plan: [PLAN.md](PLAN.md)
 
 **Overall:** IN PROGRESS (4-GPU triton A/B + ts sweep done; B+6 still FAIL; M1 not reached)  
 **Branch:** Path-B-Event-Support-Pipeline-Plus  
-**Last updated:** 2026-06-29
+**Last updated:** 2026-06-30  
+**Mission root:** [docs/rpc-multi-backend-pipeline-plus/](../../../docs/rpc-multi-backend-pipeline-plus/)
 
 > Update this file after **each** completed plan step: set Status, Evidence (path or label), and bump **Last updated**. Mirror milestones in [rpc-path-b-plus-overview.md](../rpc-path-b-plus-overview.md).
 
@@ -111,7 +112,7 @@ Plan: [PLAN.md](PLAN.md)
 - **D1 Worker-class (partial):** triton 4-GPU swap cuts drain **50.4s -> 5.9s** with same overlap (0.1%); straggler improves 11.6 -> 9.0 ms/tok. Overlap does not move -> not sufficient alone for M1.
 - **D5 Stop-rule note:** No row reaches M1 (1%) at n=384 confirm; best grid peek G2 **0.7%** @ n=128 only.
 
-**Next scheduled mission item:** B+7 bisect for 4-RPC socket drain on canonical `25,12,25,38` (reproduce 50s vs 5s delta); parallel ops eval of triton `:50054` as RPC2 or G4 `-ts` for production G.
+**Next scheduled mission items:** B+8 partial `pipeline_barrier` → B+9 EVENT defer → B+10 MoE copy-wait ([PLAN.md](../../../docs/rpc-multi-backend-pipeline-plus/PLAN.md) Phase 2); then B+7a′ 4-GPU drain. Ops eval of triton `:50054` parallel only.
 
 ---
 
@@ -163,3 +164,4 @@ Plan: [PLAN.md](PLAN.md)
 | 2026-06-29 | P0 | `b6-4gpu-g-triton` n=384 A/B | G=63.1, overlap=0.1%, drain=5.9s, straggler backend3 3090 9.0ms/tok |
 | 2026-06-29 | P3 | ts grid G0-G4 n=128 + G2/G4 confirm n=384 | best grid G2 0.7%; confirm G4 0.2% drain=4.8s |
 | 2026-06-29 | P6 | Mission routing D3+D1 | diagnosis matrix; M1 not reached |
+| 2026-06-30 | Docs | `rpc-multi-backend-pipeline-plus/` mission root incorporated | PLAN Phase 2 B+8–B+13 ladder; M3 hard criterion |

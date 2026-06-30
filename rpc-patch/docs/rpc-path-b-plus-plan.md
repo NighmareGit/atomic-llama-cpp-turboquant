@@ -2,6 +2,8 @@
 
 Fork-local successor to shipped Path B. Completes the assembly-line Path B started: unblock pipeline sync, fix proven blockers, unlock cross-token overlap.
 
+**Mission doc root:** [docs/rpc-multi-backend-pipeline-plus/](../../docs/rpc-multi-backend-pipeline-plus/) — phased plan, tracking, orchestration audit.
+
 **Predecessor:** [rpc-path-b-plan.md](rpc-path-b-plan.md) | **Baseline:** [../../docs/cuda-windows-5070ti/RPC-BUG-HUNT.md](../../docs/cuda-windows-5070ti/RPC-BUG-HUNT.md)
 
 ## Goal
@@ -67,9 +69,25 @@ WIN_RPC_IP=<lan_ip> ./rpc-patch/scripts/pathb-72b-cluster-matrix.sh qwen72b code
 
 Pass: MoE **>=25 t/s**, `overlap_pct` **>5%**, positive worker scaling vs 2-device.
 
+## Phase 10 — B+6 gate + mitigation ladder (active)
+
+See [docs/rpc-multi-backend-pipeline-plus/PLAN.md](../../docs/rpc-multi-backend-pipeline-plus/PLAN.md) Phase 1b–2 and [b6-gate/TRACKING.md](b6-gate/TRACKING.md).
+
+| ID | Work | Status |
+|----|------|--------|
+| B+7-7a / B7-1b | Socket flush + GET_ALLOC_SIZE cache | SHIPPED |
+| B+8 | Partial `pipeline_barrier` | **NEXT** |
+| B+9 | EVENT defer-to-barrier | PENDING |
+| B+10 | MoE `input_wait_copy` de-sync | PENDING |
+| B+7a′ | 4-GPU multi-socket drain | PENDING |
+
+Pass: `overlap_pct >= 5%` (M3) on `b6-2gpu-f` or agreed gate topology. Path C deferred.
+
 ## Doc map
 
+- [rpc-multi-backend-pipeline-plus/](../../docs/rpc-multi-backend-pipeline-plus/)
 - [rpc-path-b-plus-overview.md](rpc-path-b-plus-overview.md)
 - [rpc-path-b-plus-tracking.md](rpc-path-b-plus-tracking.md)
 - [pathb-sync-site-audit.md](pathb-sync-site-audit.md)
+- [b6-gate/](b6-gate/)
 - [rpc-multi-node-remus.md](rpc-multi-node-remus.md)
