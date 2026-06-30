@@ -2,7 +2,7 @@
 
 **Branch:** `Path-B-Event-Support-Pipeline-Plus`  
 **Date:** 2026-07-01  
-**Status:** Phase 1 (Instrumentation) + Phase 1b (B+6 gate) — in progress (triton n=128/384 runs completed; B+9 bisect started; instrumentation enhancements begun)
+**Status:** Phase 1 (Instrumentation) + Phase 1b (B+6 gate) — in progress (triton n=128/384 runs completed; B+9 bisect started; instrumentation enhancements begun). Creds/tokens synced from romulus, pushes enabled.
 
 Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs/b6-gate/TRACKING.md)
 
@@ -58,6 +58,7 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 
 - n=128 triton guard + n=384 canonical Plus=1 runs on triton (2026-07-01); data collected (0.9% and 0.2% overlap)
 - B+9 (DEFER=0) bisect on n=384 triton launched
+- Tokens read from romulus ~/tokens (gitea 8ca5... PAT etc); .git-credentials + insteadOf + local token mirrors updated on remus+triton; git ls-remote OK for origin/gitea (2026-07-01)
 - RPC send combined-buffer improvement + early-cmd drain skip + post-hello pending reset (helped runs complete)
 - Per-split / basic RPC RTT histogram starter in pathb-rpc-trace-parse.sh (plan 1.1)
 - `rpc-multi-backend-pipeline-plus/` doc root incorporated into repo (2026-06-30)

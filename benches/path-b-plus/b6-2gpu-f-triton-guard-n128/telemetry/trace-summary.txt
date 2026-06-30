@@ -1,0 +1,47 @@
+=== trace summary ===
+dir=/src/benches/path-b-plus/b6-2gpu-f-triton-guard-n128/telemetry
+
+[rpc] events=891
+  ALLOC_BUFFER count=8 total_ms=112.24 avg_us=14030
+  GET_ALIGNMENT count=2 total_ms=0.52 avg_us=261
+  GET_MAX_SIZE count=2 total_ms=0.47 avg_us=233
+  BUFFER_GET_BASE count=8 total_ms=1.69 avg_us=211
+  FREE_BUFFER count=8 total_ms=6.04 avg_us=755
+  BUFFER_CLEAR count=4 total_ms=1.37 avg_us=343
+  SET_TENSOR_HASH count=162 total_ms=64.98 avg_us=401
+  GET_TENSOR count=258 total_ms=75.81 avg_us=294
+  GRAPH_COMPUTE count=6 total_ms=6.79 avg_us=1131
+  GET_DEVICE_MEMORY count=6 total_ms=98.27 avg_us=16378
+  GET_ALLOC_SIZE count=10 total_ms=4.1 avg_us=410
+  HELLO count=34 total_ms=7.32 avg_us=215
+  DEVICE_COUNT count=2 total_ms=0.47 avg_us=236
+  GRAPH_RECOMPUTE count=252 total_ms=4.72 avg_us=19
+  EVENT_RECORD count=129 total_ms=788.12 avg_us=6109
+  blocking_events=375 blocking_ms=1151.06
+  drain_flush_ms=788.12
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
+
+[sched] events=1548
+  split_total_count=387
+  split_total_ms_sum=1818.04 avg_us=4698
+    backend2 splits=129 ms=15.49
+    backend0 splits=129 ms=53.88
+    backend1 splits=129 ms=1748.67
+  input_wait_copy_ms=1154.32
+  graph_compute_async_ms=647.74
+  event_record_ms=1.37
+  assembly_overlap_count=459 pairs=49923 overlap_pct=0.9
+    copy0 splits=99
+    copy1 splits=96
+    copy2 splits=96
+    copy3 splits=96

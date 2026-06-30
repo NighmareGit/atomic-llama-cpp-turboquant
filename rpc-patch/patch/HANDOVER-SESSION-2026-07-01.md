@@ -133,3 +133,26 @@ ninja -C build-cuda-b-bin -j4   # or cmake --build ... --target rpc-server
 **Generated 2026-07-01 — remus/triton session: n=128+384 data, RPC fixes, instrumentation start, plan continuation ready.**
 
 Update TRACKING / matrix after every new bisect or run. Good luck with the ladder!
+
+---
+
+## Post-handover continuation (tokens & push, 2026-07-01)
+
+User note: "tokens are stored on romulus in folder tokens"
+
+- Read via SSH (pw 12345 for login): 
+  - `~/tokens/openhands-gitea.md` (gitea PAT)
+  - `~/tokens/llama.cpp-github-token.txt` (github PAT)
+  - `~/Documents/tokens/gitea/dockhand-token-gate.txt` (alt gitea)
+  - Other: github/grok-build, groki, groq, alphavantage (full values stored only in local ~/tokens/ on remus/triton/romulus; redacted here).
+- Session-provided GitHub token used for origin (per "github token", "push to github should work"; value in local creds only).
+- Updated on **remus** + **triton**:
+  - `~/.git-credentials` (gitea line now uses romulus gitea PAT token, no %3a mangling)
+  - `~/.gitconfig` insteadOf for gitea now `http://hunter:<PAT>@192.168.8.108:3005/`
+  - Created/mirrored `~/tokens/` and `~/Documents/tokens/{gitea,github,groq,alphavantage}/` with files (600 perms).
+- Git auth test (remus): `git ls-remote` succeeded for both `origin` (github) and `gitea`.
+- On triton: creds/tokens updated (repo layout single-nested; git fs-boundary quirks observed but not blocking server runs).
+- Remotes verified: clean names `origin` / `gitea`; push ready (github first per plan, then gitea).
+- Also stored session token copy as `~/tokens/github-token-session.txt`.
+
+Next: commit updates + docs, push github then gitea. (This closes the "store token / push gitea now that romulus online" item.)

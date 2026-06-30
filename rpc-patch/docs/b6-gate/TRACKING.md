@@ -4,7 +4,7 @@ Plan: [PLAN.md](PLAN.md)
 
 **Overall:** IN PROGRESS (4-GPU triton A/B + ts sweep done; B+6 still FAIL; M1 not reached)  
 **Branch:** Path-B-Event-Support-Pipeline-Plus  
-**Last updated:** 2026-06-30  
+**Last updated:** 2026-07-01 (tokens from romulus used for gitea creds; push prep)  
 **Mission root:** [docs/rpc-multi-backend-pipeline-plus/](../../../docs/rpc-multi-backend-pipeline-plus/)
 
 > Update this file after **each** completed plan step: set Status, Evidence (path or label), and bump **Last updated**. Mirror milestones in [rpc-path-b-plus-overview.md](../rpc-path-b-plus-overview.md).
@@ -52,6 +52,7 @@ Plan: [PLAN.md](PLAN.md)
 | A8 Triton :50054 RPC smoke | DONE | `PathB-Triton-RPC-50054` schtask; HELLO proto 4.3 peer_copy=yes |
 | A9 R5 preflight romulus -> 192.168.8.23:50054 | DONE | validate-rpc OK |
 | A10 Git commit/push (user-approved) | DONE | `948c6a534` on gitea |
+| A11 Creds/token sync from romulus + gitea PAT (8ca5) on remus/triton | DONE 2026-07-01 | .git-credentials/insteadOf + ~/tokens mirrors; ls-remote verified |
 
 ---
 
