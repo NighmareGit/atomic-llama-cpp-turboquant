@@ -225,6 +225,84 @@ static void drain_pending_copy_response(const socket_ptr & sock);
 static void flush_pending_get_tensor_for_socket(const socket_ptr & sock);
 static void flush_pending_get_tensor();
 static void flush_set_tensor_batch();
+static void rpc_register_socket(const socket_ptr & sock);
+static void rpc_drain_all_endpoints_pending();
+
+static bool rpc_pipeline_plus_enabled() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_PIPELINE_PLUS");
+        v = e ? (atoi(e) != 0) : 1;
+    }
+    return v != 0;
+}
+
+static bool rpc_event_defer_barrier() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_RPC_EVENT_DEFER_BARRIER");
+        v = e ? atoi(e) : (rpc_pipeline_plus_enabled() ? 1 : 0);
+    }
+    return v != 0 && rpc_pipeline_plus_enabled();
+}
+
+static bool rpc_multi_socket_flush() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_RPC_MULTI_SOCKET_FLUSH");
+        v = e ? atoi(e) : (rpc_pipeline_plus_enabled() ? 1 : 0);
+    }
+    return v != 0 && rpc_pipeline_plus_enabled();
+}
+
+static std::mutex g_rpc_socket_registry_mutex;
+static std::vector<std::weak_ptr<socket_t>> g_rpc_socket_registry;
+
+static void rpc_register_socket(const socket_ptr & sock) {
+    if (!sock) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(g_rpc_socket_registry_mutex);
+    g_rpc_socket_registry.push_back(sock);
+}
+
+static void rpc_drain_all_endpoints_pending() {
+    if (tls_pending_copy.pending && tls_pending_copy.sock) {
+        drain_pending_copy_response(tls_pending_copy.sock);
+    }
+    if (tls_pending_event.pending && tls_pending_event.sock) {
+        drain_pending_event_response(tls_pending_event.sock);
+    }
+    flush_pending_get_tensor();
+    flush_set_tensor_batch();
+
+    if (!rpc_multi_socket_flush()) {
+        return;
+    }
+
+    std::vector<socket_ptr> live;
+    {
+        std::lock_guard<std::mutex> lock(g_rpc_socket_registry_mutex);
+        auto it = g_rpc_socket_registry.begin();
+        while (it != g_rpc_socket_registry.end()) {
+            if (auto sock = it->lock()) {
+                live.push_back(sock);
+                ++it;
+            } else {
+                it = g_rpc_socket_registry.erase(it);
+            }
+        }
+    }
+    for (const auto & sock : live) {
+        flush_pending_get_tensor_for_socket(sock);
+        if (tls_pending_event.pending && tls_pending_event.sock == sock) {
+            drain_pending_event_response(sock);
+        }
+        if (tls_pending_copy.pending && tls_pending_copy.sock == sock) {
+            drain_pending_copy_response(sock);
+        }
+    }
+}
 
 static thread_local struct {
     socket_ptr sock;
@@ -636,9 +714,12 @@ static bool send_rpc_cmd(socket_ptr sock, enum rpc_cmd cmd, const void * input, 
 // RPC response: | response_size (8 bytes) | response_data (response_size bytes) |
 static bool send_rpc_cmd(socket_ptr sock, enum rpc_cmd cmd, const void * input, size_t input_size, void * output, size_t output_size) {
     const auto t0 = std::chrono::steady_clock::now();
-    // Socket-scoped drain: protect TCP framing without stalling other RPC sockets
+    // Socket-scoped drain: protect TCP framing without stalling other RPC sockets.
+    // B+9: defer EVENT recv until pipeline_barrier when GGML_RPC_EVENT_DEFER_BARRIER=1.
     drain_pending_copy_response(sock);
-    drain_pending_event_response(sock);
+    if (!rpc_event_defer_barrier()) {
+        drain_pending_event_response(sock);
+    }
     flush_pending_get_tensor_for_socket(sock);
     flush_set_tensor_batch();
     if (!send_rpc_cmd(sock, cmd, input, input_size)) {
@@ -754,6 +835,7 @@ static std::shared_ptr<socket_t> get_socket(const std::string & endpoint) {
     }
     LOG_DBG("[%s] connected to %s\n", __func__, endpoint.c_str());
     sockets[endpoint] = sock;
+    rpc_register_socket(sock);
     return sock;
 }
 
@@ -890,7 +972,9 @@ static void ggml_backend_rpc_buffer_get_tensor_async(ggml_backend_buffer_t buffe
                                                      void * data, size_t offset, size_t size) {
     ggml_backend_rpc_buffer_context * ctx = (ggml_backend_rpc_buffer_context *)buffer->context;
     auto sock = ctx->sock;
-    drain_pending_event_response(sock);
+    if (!rpc_event_defer_barrier()) {
+        drain_pending_event_response(sock);
+    }
     flush_pending_get_tensor_for_socket(sock);
     flush_set_tensor_batch();
     rpc_msg_get_tensor_req request;
@@ -919,7 +1003,9 @@ static void ggml_backend_rpc_get_tensor_async(ggml_backend_t backend, const ggml
 static void ggml_backend_rpc_buffer_get_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * tensor, void * data, size_t offset, size_t size) {
     ggml_backend_rpc_buffer_context * ctx = (ggml_backend_rpc_buffer_context *)buffer->context;
     auto sock = ctx->sock;
-    drain_pending_event_response(sock);
+    if (!rpc_event_defer_barrier()) {
+        drain_pending_event_response(sock);
+    }
     flush_pending_get_tensor_for_socket(sock);
     flush_set_tensor_batch();
     rpc_msg_get_tensor_req request;
@@ -955,7 +1041,9 @@ static bool rpc_issue_copy_tensor(const ggml_tensor * src, ggml_tensor * dst, bo
     if (!defer_response) {
         drain_pending_copy_response(sock);
     }
-    drain_pending_event_response(sock);
+    if (!rpc_event_defer_barrier()) {
+        drain_pending_event_response(sock);
+    }
     flush_pending_get_tensor_for_socket(sock);
     flush_set_tensor_batch();
 
@@ -1188,14 +1276,11 @@ static void ggml_backend_rpc_free(ggml_backend_t backend) {
 
 static void ggml_backend_rpc_synchronize(ggml_backend_t backend) {
     GGML_UNUSED(backend);
-    if (tls_pending_copy.pending && tls_pending_copy.sock) {
-        drain_pending_copy_response(tls_pending_copy.sock);
-    }
-    if (tls_pending_event.pending && tls_pending_event.sock) {
-        drain_pending_event_response(tls_pending_event.sock);
-    }
-    flush_pending_get_tensor();
-    flush_set_tensor_batch();
+    rpc_drain_all_endpoints_pending();
+}
+
+void ggml_backend_rpc_drain_all_endpoints(void) {
+    rpc_drain_all_endpoints_pending();
 }
 
 static void rpc_backend_event_record(ggml_backend_t backend, ggml_backend_event_t event) {

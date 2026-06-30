@@ -32,6 +32,9 @@ GGML_BACKEND_API void ggml_backend_rpc_start_server(const char * endpoint, const
 GGML_BACKEND_API ggml_backend_reg_t ggml_backend_rpc_reg(void);
 GGML_BACKEND_API ggml_backend_reg_t ggml_backend_rpc_add_server(const char * endpoint);
 
+// B+7a'/B+9: drain deferred EVENT/GET/COPY across all RPC sockets (pipeline_barrier hook).
+GGML_BACKEND_API void ggml_backend_rpc_drain_all_endpoints(void);
+
 #ifdef  __cplusplus
 }
 #endif
