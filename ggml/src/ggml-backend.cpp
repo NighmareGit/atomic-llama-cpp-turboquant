@@ -63,6 +63,16 @@ static bool ggml_sched_barrier_partial_enabled() {
     return v != 0 && ggml_sched_pipeline_plus_enabled();
 }
 
+// B+8b: intersect F2 src mask with per-slot event pending (skip idle backends).
+static bool ggml_sched_barrier_partial_strict_enabled() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_PIPELINE_BARRIER_PARTIAL_STRICT");
+        v = e ? atoi(e) : (ggml_sched_pipeline_plus_enabled() ? 1 : 0);
+    }
+    return v != 0 && ggml_sched_barrier_partial_enabled();
+}
+
 static bool ggml_sched_rpc_event_defer_barrier() {
     return ggml_backend_rpc_event_defer_barrier();
 }
@@ -961,6 +971,8 @@ struct ggml_backend_sched {
 
     // B+8 F2: backends that are cross-backend copy sources (bit i set)
     uint32_t barrier_copy_src_mask;
+    // B+8b: backends that recorded events per copy slot this pipeline cycle
+    uint32_t barrier_slot_pending[GGML_SCHED_MAX_COPIES];
 };
 
 #define hash_id(tensor) ggml_hash_find_or_insert(&sched->hash_set, tensor)
@@ -1691,12 +1703,6 @@ static void ggml_backend_sched_update_barrier_src_mask(ggml_backend_sched_t sche
             }
         }
     }
-    // Also wait split backends that recorded events (producers with n_inputs > 0).
-    for (int split_id = 0; split_id < sched->n_splits; split_id++) {
-        if (sched->splits[split_id].n_inputs > 0) {
-            sched->barrier_copy_src_mask |= (1u << sched->splits[split_id].backend_id);
-        }
-    }
 }
 
 static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t sched) {
@@ -1916,6 +1922,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
         if (split->n_inputs > 0) {
             if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
                 ggml_backend_event_record(sched->events[split_backend_id][sched->cur_copy], split_backend);
+                sched->barrier_slot_pending[sched->cur_copy] |= (1u << split_backend_id);
             }
         }
         {
@@ -2035,6 +2042,7 @@ void ggml_backend_sched_reset(ggml_backend_sched_t sched) {
         sched->is_reset = true;
     }
     sched->is_alloc = false;
+    memset(sched->barrier_slot_pending, 0, sizeof(sched->barrier_slot_pending));
 }
 
 void ggml_backend_sched_reserve_size(ggml_backend_sched_t sched, struct ggml_cgraph * measure_graph, size_t * sizes) {
@@ -2134,15 +2142,20 @@ void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
     }
 
     const int new_copy = sched->next_copy;
+    const uint32_t pending_mask = sched->barrier_slot_pending[new_copy];
     uint32_t wait_mask = (1u << sched->n_backends) - 1;
     if (ggml_sched_barrier_partial_enabled() && sched->barrier_copy_src_mask != 0) {
         wait_mask = sched->barrier_copy_src_mask;
+        if (ggml_sched_barrier_partial_strict_enabled() && pending_mask != 0) {
+            wait_mask &= pending_mask;
+        }
     }
     for (int i = 0; i < sched->n_backends; i++) {
         if ((wait_mask & (1u << i)) && sched->events[i][new_copy] != NULL) {
             ggml_backend_event_synchronize(sched->events[i][new_copy]);
         }
     }
+    sched->barrier_slot_pending[new_copy] = 0;
 
     // B+9: batch-defer RPC EVENT recv until barrier (drain via backend synchronize).
     if (ggml_sched_rpc_event_defer_barrier()) {
@@ -2162,8 +2175,8 @@ void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
             out = stderr;
         }
         fprintf(out,
-            "{\"event\":\"pipeline_barrier_mask\",\"copy_to\":%d,\"wait_mask\":%u,\"src_mask\":%u}\n",
-            new_copy, wait_mask, sched->barrier_copy_src_mask);
+            "{\"event\":\"pipeline_barrier_mask\",\"copy_to\":%d,\"wait_mask\":%u,\"src_mask\":%u,\"pending_mask\":%u}\n",
+            new_copy, wait_mask, sched->barrier_copy_src_mask, pending_mask);
         fflush(out);
     }
 
