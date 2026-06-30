@@ -2160,6 +2160,16 @@ void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
     const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - t0).count();
     pipeline_trace_emit("pipeline_barrier", sched->cur_copy, new_copy, sched->n_copies, us);
+    if (pipeline_trace_lvl()) {
+        FILE * out = pipeline_trace_file();
+        if (!out) {
+            out = stderr;
+        }
+        fprintf(out,
+            "{\"event\":\"pipeline_barrier_mask\",\"copy_to\":%d,\"wait_mask\":%u,\"src_mask\":%u}\n",
+            new_copy, wait_mask, sched->barrier_copy_src_mask);
+        fflush(out);
+    }
 
     sched->cur_copy  = new_copy;
     sched->next_copy = (new_copy + 1) % sched->n_copies;

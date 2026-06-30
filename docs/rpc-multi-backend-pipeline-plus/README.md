@@ -11,6 +11,7 @@ This is the canonical home for analysis, planning, tracking, and artifacts relat
 - [MISSION.md](MISSION.md) — Goals, success criteria, and problem statement
 - [PLAN.md](PLAN.md) — Phased execution plan (Path-B+ → overlap gate → Path-C bridge)
 - [TRACKING.md](TRACKING.md) — Current status, open items, decisions
+- [IMPLEMENTATION.md](IMPLEMENTATION.md) — B+8..B+13 env flags, code map, bench procedure
 - [ANALYSIS/Path-B-Plus-MultiBackend-RPC-Orchestration-Audit.md](ANALYSIS/Path-B-Plus-MultiBackend-RPC-Orchestration-Audit.md) — Core technical audit of serial workflow and sync blockers
 - [BENCHMARKS/](BENCHMARKS/) — Reference runs, matrix summaries, profile artifacts
 - Related mission docs (same branch):

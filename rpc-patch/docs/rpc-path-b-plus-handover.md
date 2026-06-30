@@ -61,8 +61,14 @@ See [docs/cuda-windows-5070ti/CLUSTER-4GPU-PRIMARY.md](../../docs/cuda-windows-5
 | Var | Default | Effect |
 |-----|---------|--------|
 | `GGML_PIPELINE_PLUS` | `1` | Enable P0/P1 narrow sync. `0` = legacy Path B behavior |
+| `GGML_PIPELINE_BARRIER_PARTIAL` | `1` | B+8 F2 partial barrier (default with Plus) |
+| `GGML_RPC_EVENT_DEFER_BARRIER` | `1` | B+9 defer EVENT recv to barrier |
+| `GGML_RPC_MULTI_SOCKET_FLUSH` | `1` | B+7a′ multi-socket drain at RPC sync |
+| `GGML_SCHED_MOE_ASYNC_COPY` | `1` | B+10 MoE copy-slot event wait |
 | `GGML_SCHED_TRACE` | `0` | Per-split trace jsonl |
 | `GGML_RPC_TRACE` | `0` | RPC client trace jsonl |
+
+Details: [docs/rpc-multi-backend-pipeline-plus/IMPLEMENTATION.md](../../docs/rpc-multi-backend-pipeline-plus/IMPLEMENTATION.md)
 
 ## Verify
 

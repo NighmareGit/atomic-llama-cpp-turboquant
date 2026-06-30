@@ -60,10 +60,11 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 
 ## Next 7 Days
 
-- [ ] B+8: partial `pipeline_barrier` bisect + `b6-2gpu-f` n=384 re-bench
-- [ ] B+9: EVENT defer-to-barrier bisect + re-bench
+- [x] B+8–B+10, B+7a′, B+13 code landed (2026-06-30, **untested** — see [IMPLEMENTATION.md](IMPLEMENTATION.md))
+- [ ] Rebuild client + remus/romulus deploy
+- [ ] `b6-2gpu-f` n=384 re-bench (Q5 contract)
+- [ ] B+7a′ validate on `b6-4gpu-g` n=384 (after 2-GPU pass/partial)
 - [ ] Phase 1.1: per-split timing in scheduler trace / profiler output
-- [ ] B+7a′: 4-GPU canonical drain bisect (`b6-4gpu-g` n=384)
 - [ ] Topology guard in `pathb-vram-calc.ps1` / Config F scripts
 - [ ] Publish `BENCHMARKS/2026-07-comparison-matrix.md` after instrumentation refresh
 

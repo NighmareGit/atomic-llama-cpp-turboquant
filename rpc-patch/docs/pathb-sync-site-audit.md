@@ -55,17 +55,17 @@ Mission tracking: [b6-gate/TRACKING.md](b6-gate/TRACKING.md).
 
 ### B+8–B+13 ladder (2026-06-30, profiler-led, Path-B+ only)
 
-| ID | Blocker | Direction | Priority |
-|----|---------|-----------|----------|
-| B+8 | Full-backend `pipeline_barrier` quiesce | Partial dependency-frontier wait | **1** |
-| B+9 | EVENT recv on blocking path | Defer recv to barrier boundary | 2 |
-| B+10 | MoE `input_wait_copy` sync (~1682) | De-sync expert copy path | 3 |
-| B+7a′ | 4-GPU drain 50s vs 5s | Per-socket flush across 3 RPC peers | 4 (4-GPU) |
-| B+11 | Single TCP HOL blocking | Dual-socket per endpoint (proto 4.4?) | 5 |
-| B+12 | GET_TENSOR blocking storm | Path A2-style deferral | 6 |
-| B+13 | `cpy_tensor_async` sync fallback | Verify CUDA→RPC async path taken | 7 |
+| ID | Blocker | Direction | Status | Flag |
+|----|---------|-----------|--------|------|
+| B+8 | Full-backend `pipeline_barrier` quiesce | F2 partial frontier wait | **SHIPPED** (untested) | `GGML_PIPELINE_BARRIER_PARTIAL` |
+| B+9 | EVENT recv on blocking path | Defer to barrier | **SHIPPED** (untested) | `GGML_RPC_EVENT_DEFER_BARRIER` |
+| B+10 | MoE `input_wait_copy` sync (~1682) | Copy-slot event wait | **SHIPPED** (untested) | `GGML_SCHED_MOE_ASYNC_COPY` |
+| B+7a′ | 4-GPU drain 50s vs 5s | Multi-socket RPC flush | **SHIPPED** (untested) | `GGML_RPC_MULTI_SOCKET_FLUSH` |
+| B+13 | `cpy_tensor_async` sync fallback | Dst-then-src async try | **SHIPPED** (untested) | (with Plus) |
+| B+11 | Single TCP HOL blocking | Dual-socket proto 4.4 | PENDING | — |
+| B+12 | GET_TENSOR blocking storm | Full Path A2 deferral | PARTIAL | via B+9 barrier drain |
 
-Implement order: B+8 → B+9 → B+10 → B+7a′. Bench gate: `b6-2gpu-f` n=384 (overlap); `b6-4gpu-g` n=384 (drain).
+Bench: `b6-2gpu-f` n=384 first (G1). See [IMPLEMENTATION.md](../../docs/rpc-multi-backend-pipeline-plus/IMPLEMENTATION.md).
 
 ---
 

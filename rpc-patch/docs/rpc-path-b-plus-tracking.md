@@ -35,6 +35,7 @@ Overview: [rpc-path-b-plus-overview.md](rpc-path-b-plus-overview.md)
 | 2026-06-29 | B+6 | Scripts: b6-4gpu-g-triton, b6-gate-ts-sweep-4gpu.sh, b6-gate-diagnose-runs.sh |
 | 2026-06-30 | Docs | `docs/rpc-multi-backend-pipeline-plus/` incorporated; reconciled with B+6 gate + B+8–B+13 ladder |
 | 2026-06-30 | Mission | M3 (`overlap_pct >= 5%`) confirmed as hard complete criterion; Path C deferred |
+| 2026-06-30 | B+8–B+13 | Code landed: partial barrier F2, EVENT defer, MoE event wait, multi-socket flush, cpy async try | SHIPPED untested |
 
 ## Issues
 
