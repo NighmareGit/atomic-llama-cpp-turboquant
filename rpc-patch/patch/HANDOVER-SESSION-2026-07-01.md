@@ -154,5 +154,6 @@ User note: "tokens are stored on romulus in folder tokens"
 - On triton: creds/tokens updated (repo layout single-nested; git fs-boundary quirks observed but not blocking server runs).
 - Remotes verified: clean names `origin` / `gitea`; push ready (github first per plan, then gitea).
 - Also stored session token copy as `~/tokens/github-token-session.txt`.
+- `sshpass` installed on remus (via sudo + pw) for simpler non-interactive `sshpass -p 12345 ssh hunter@192.168.8.108 ...` to romulus (tested OK; complements the pexpect usage).
 
 Next: commit updates + docs, push github then gitea. (This closes the "store token / push gitea now that romulus online" item.)
