@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "trace_dir": "/src/benches/path-b-plus/b6-2gpu-jupiter-bisect-no-moe/telemetry",
+  "gen_only": true,
+  "gen_tokens_est": 128,
+  "G_tps": 99.0977,
+  "overlap_efficiency": 0.8265,
+  "drain_flush_ms": 793.71,
+  "blocking_ms": 6080.68,
+  "gate_s5": "PASS",
+  "gate_b6": "FAIL",
+  "assembly_overlap_count": 337,
+  "overlap_pct": 0.7,
+  "overlap_target_pct": 5.0,
+  "split_ms_per_token": 8.34,
+  "stall_ratio": 0.8586,
+  "stall_ms": 916.63,
+  "compute_ms": 135.42,
+  "backends_ms_per_token": {
+    "0": 0.306,
+    "1": 7.979,
+    "2": 0.055
+  },
+  "straggler_backend": "1",
+  "straggler_ms_per_token": 7.979,
+  "topology_class": "client_split",
+  "rpc_rtt_per_token": 2.13,
+  "graph_submit_count": 256,
+  "blocking_rpc_count": 273,
+  "fire_and_forget_count": 400,
+  "gpu_smell_flags": [],
+  "path_c_reserved": {
+    "cross_endpoint_copy_count": null,
+    "server_local_copy_count": null
+  }
+}

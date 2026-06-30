@@ -1,0 +1,42 @@
+=== trace summary ===
+dir=/src/benches/path-b-plus/b6-2gpu-jupiter-bisect-no-moe/telemetry
+
+[rpc] events=868
+  ALLOC_BUFFER count=8 total_ms=13.28 avg_us=1660
+  GET_ALIGNMENT count=2 total_ms=0.27 avg_us=134
+  GET_MAX_SIZE count=2 total_ms=0.3 avg_us=151
+  BUFFER_GET_BASE count=8 total_ms=4.11 avg_us=513
+  FREE_BUFFER count=8 total_ms=27.71 avg_us=3463
+  BUFFER_CLEAR count=4 total_ms=1.68 avg_us=420
+  SET_TENSOR_HASH count=162 total_ms=5146.91 avg_us=31771
+  GET_TENSOR count=256 total_ms=100.52 avg_us=393
+  GRAPH_COMPUTE count=4 total_ms=6.3 avg_us=1576
+  GET_DEVICE_MEMORY count=8 total_ms=1.73 avg_us=217
+  GET_ALLOC_SIZE count=6 total_ms=2.93 avg_us=488
+  HELLO count=18 total_ms=4.88 avg_us=271
+  DEVICE_COUNT count=2 total_ms=0.61 avg_us=303
+  GRAPH_RECOMPUTE count=252 total_ms=26.53 avg_us=105
+  EVENT_RECORD count=128 total_ms=793.71 avg_us=6201
+  blocking_events=367 blocking_ms=6080.68
+  drain_flush_ms=793.71
+  hello endpoint=192.168.8.21:50053 minor=3 peer_copy=
+  hello endpoint=192.168.8.21:50053 minor=3 peer_copy=
+  hello endpoint=192.168.8.21:50053 minor=3 peer_copy=
+  hello endpoint=192.168.8.21:50053 minor=3 peer_copy=
+  hello endpoint=192.168.8.21:50053 minor=3 peer_copy=
+  hello endpoint=192.168.8.21:50053 minor=3 peer_copy=
+
+[sched] events=1536
+  split_total_count=384
+  split_total_ms_sum=1067.57 avg_us=2780
+    backend2 splits=128 ms=7
+    backend0 splits=128 ms=39.23
+    backend1 splits=128 ms=1021.34
+  input_wait_copy_ms=915.08
+  graph_compute_async_ms=135.42
+  event_record_ms=1.55
+  assembly_overlap_count=337 pairs=49152 overlap_pct=0.7
+    copy0 splits=96
+    copy1 splits=96
+    copy2 splits=96
+    copy3 splits=96

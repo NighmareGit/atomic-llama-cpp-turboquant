@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "every": 5,
+  "max_lines": 0,
+  "files": {
+    "sched-trace.jsonl": {
+      "source_lines": 1536,
+      "sample_lines": 640
+    },
+    "rpc-trace.jsonl": {
+      "source_lines": 868,
+      "sample_lines": 521
+    },
+    "pipeline-trace.jsonl": {
+      "source_lines": 252,
+      "sample_lines": 252
+    }
+  }
+}

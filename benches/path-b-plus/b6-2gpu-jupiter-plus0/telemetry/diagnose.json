@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "trace_dir": "/src/benches/path-b-plus/b6-2gpu-jupiter-plus0/telemetry",
+  "gen_only": true,
+  "gen_tokens_est": 384,
+  "G_tps": 119.826,
+  "overlap_efficiency": 0.7522,
+  "drain_flush_ms": 2070.39,
+  "blocking_ms": 6496.4,
+  "gate_s5": "PASS",
+  "gate_b6": "FAIL",
+  "assembly_overlap_count": 882,
+  "overlap_pct": 0.2,
+  "overlap_target_pct": 5.0,
+  "split_ms_per_token": 6.277,
+  "stall_ratio": 0.9801,
+  "stall_ms": 2362.52,
+  "compute_ms": 40.62,
+  "backends_ms_per_token": {
+    "0": 0.049,
+    "1": 6.221,
+    "2": 0.007
+  },
+  "straggler_backend": "1",
+  "straggler_ms_per_token": 6.221,
+  "topology_class": "client_split",
+  "rpc_rtt_per_token": 2.05,
+  "graph_submit_count": 768,
+  "blocking_rpc_count": 786,
+  "fire_and_forget_count": 1169,
+  "gpu_smell_flags": [
+    "CLOCK_THROTTLE"
+  ],
+  "path_c_reserved": {
+    "cross_endpoint_copy_count": null,
+    "server_local_copy_count": null
+  }
+}
