@@ -2612,6 +2612,10 @@ rpc_server::~rpc_server() {
     }
 }
 
+static void rpc_serve_channel_bind(socket_ptr sock);
+static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const char * cache_dir,
+                             socket_ptr sock);
+
 static void rpc_connection_thread(std::vector<ggml_backend_t> backends, std::string cache_dir, socket_ptr sock) {
     uint8_t cmd = 0;
     if (!sock->recv_data(&cmd, 1)) {

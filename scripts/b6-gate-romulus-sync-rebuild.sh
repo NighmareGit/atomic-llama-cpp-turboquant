@@ -92,7 +92,8 @@ remote_body() {
                 cp -f ggml/include/ggml-rpc.h ggml/src/ggml-rpc.h
             fi
             # Force ggml-base regen after git reset or rsync (b15b lesson).
-            touch ggml/src/ggml-backend.cpp ggml/src/ggml-rpc/ggml-rpc.cpp ggml/include/ggml-rpc.h ggml/src/ggml-rpc.h
+            touch ggml/src/ggml-backend.cpp ggml/src/ggml-rpc/ggml-rpc.cpp \
+                ggml/src/ggml-rpc/transport.h ggml/include/ggml-rpc.h ggml/src/ggml-rpc.h
             if [[ ! -f "${BUILD_DIR}/CMakeCache.txt" ]]; then
                 cmake -S . -B "$BUILD_DIR" \
                     -DGGML_HIP=ON -DGGML_RPC=ON -DGPU_TARGETS=gfx1100 \
