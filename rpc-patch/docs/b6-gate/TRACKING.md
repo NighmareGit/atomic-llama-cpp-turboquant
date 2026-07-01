@@ -186,8 +186,9 @@ Throughput/blocking win only; **not gate-moving**. EVENT_RECORD (~28.7s) unchang
 | `-ts` | `20,10,30,10,30` |
 | Env | `GGML_PIPELINE_PLUS=1`, `GGML_RPC_DUAL_SOCKET=1` (prod preset), `GGML_RPC_HASH_DEFER=0` default |
 | Preset label | `b6-5gpu-g-prod` via `scripts/b6-gate-5gpu-production-env.sh` |
-| Measured G (n=128 dual) | 68.5 t/s (+18% vs single-socket 58.2) |
-| Overlap | Not a ship criterion (0.3-0.4%); gate closed |
+| Measured G | n=128: 68.5 (+18%); n=2048 multiturn: 65.9 (+9.7% vs 60.1 single) |
+| Blocking tradeoff | n=2048 dual blocking +46% (60s vs 41s); G win dominates for ship |
+| Overlap | Not a ship criterion (0-0.4%); gate closed |
 
 ```bash
 # profiler smoke on romulus
@@ -255,6 +256,10 @@ B6_5GPU_DUAL_SOCKET=0 B6_5GPU_HASH_DEFER=1 bash scripts/b6-gate-run-remote.sh b6
 | 2026-07-01 | P2 | HASH_DEFER=1 bisect n=128 5-GPU | G=61.0 (+4.8%), overlap=0.3%, blocking=9.4s; gate_b6 FAIL |
 | 2026-07-01 | P2 | HASH_DEFER=1 confirm n=2048 multiturn 5-GPU | G=60.8 (+1.2%), overlap=0.0%, blocking=38.2s; gate_b6 FAIL |
 | 2026-07-01 | P4 | Phase 4 gate close | **FAIL** -- structural ceiling; PLAN + overview updated |
-| 2026-07-01 | BL-1 | dual-socket n=128 5-GPU | G=68.5 (+18%), overlap=0.4%; G lever only |
+| 2026-07-01 | BL-1 | dual-socket n=128/2048 5-GPU | G +18%/+10%; prod preset `b6-5gpu-g-prod` |
+| 2026-07-01 | Ops | Phase A artifact index + triton README | categorized ACTIVE/ARCHIVE |
+| 2026-07-01 | P1 | Production ship preset | `b6-gate-5gpu-production-env.sh` |
+| 2026-07-01 | P0 | Retest matrix R1-R5 | `b6-retest-matrix-20260701-150053`; 3-GPU dual +18% |
+| 2026-07-01 | Docs | PERFORMANCE-RULES.md + auto-tuning | `b6-gate-performance-env.sh` |
 | 2026-07-01 | BL-2 | ts shift n=128 5-GPU | G=56.4, straggler worse; REJECT |
 | 2026-07-01 | BL-3 | B+16 | REJECT per mission TRACKING |

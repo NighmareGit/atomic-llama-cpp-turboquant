@@ -23,7 +23,7 @@ Presets:
 | Label | Topology | Auto dual | Notes |
 |-------|----------|-----------|-------|
 | `b6-2gpu-f` | 1 RPC + local | OFF | remus 5060 |
-| `b6-3gpu-g` | 2 RPC + local | OFF (pending retest) | remus + romulus 3060 |
+| `b6-3gpu-g` | 2 RPC + local | **ON** | +18% G n=384 (matrix R2) |
 | `b6-4gpu-g-triton` | 3 RPC + local | OFF | -9% G when dual ON |
 | `b6-5gpu-g` | 4 RPC + local | OFF | bisect baseline |
 | `b6-5gpu-g-prod` | 4 RPC + local | **ON** | production ship |

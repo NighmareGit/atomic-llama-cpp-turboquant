@@ -31,7 +31,7 @@ b6_recommend_dual_socket() {
     case "$rpc_count" in
         4) echo 1 ;;  # 5-GPU Linux (4 RPC + local): +18% n128, +10% n2048
         3) echo 0 ;;  # 4-GPU (3 RPC + local): -9% G when ON (until 3gpu retest updates)
-        2) echo 0 ;;  # 3-GPU (2 RPC + local): pending retest; default OFF
+        2) echo 1 ;;  # 3-GPU (2 RPC + local): +18% G n=384, lower blocking
         1) echo 0 ;;  # 2-GPU
         *) echo 0 ;;
     esac
