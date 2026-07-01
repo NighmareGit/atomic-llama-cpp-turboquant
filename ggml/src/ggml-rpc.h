@@ -60,6 +60,9 @@ GGML_BACKEND_API bool ggml_backend_rpc_event_defer_barrier(void);
 // B+12: defer GET_TENSOR recv to sched graph_compute boundary (default on when pipeline plus is on).
 GGML_BACKEND_API bool ggml_backend_rpc_get_tensor_defer(void);
 
+// B+7f: pipeline SET_TENSOR_HASH send/recv during load (default on when pipeline plus is on).
+GGML_BACKEND_API bool ggml_backend_rpc_hash_defer(void);
+
 // B+11: cmd/response dual-socket RPC (default OFF; proto minor >= 4). See docs/rpc-multi-backend-pipeline-plus/RPC-PROTOCOL.md
 GGML_BACKEND_API bool ggml_backend_rpc_dual_socket(void);
 
