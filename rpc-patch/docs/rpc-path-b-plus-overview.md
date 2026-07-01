@@ -137,24 +137,22 @@ Spike details: [rpc-path-b-plus-spikes.md](rpc-path-b-plus-spikes.md). Live stat
 
 ---
 
-## B+6 overlap gate milestones (active mission)
+## B+6 overlap gate milestones (CLOSED FAIL -- 2026-07-01)
 
-Plan and step checklist: [b6-gate/PLAN.md](b6-gate/PLAN.md), [b6-gate/TRACKING.md](b6-gate/TRACKING.md) (update tracking after each step).
+Plan: [b6-gate/PLAN.md](b6-gate/PLAN.md). Living state: [b6-gate/TRACKING.md](b6-gate/TRACKING.md).
+
+**Phase 4 closed:** structural ceiling on Path B. Overlap mission **reopens** under split-mission grill (new hypotheses only).
 
 | ID | overlap_pct | stall_ratio | Topology | Status |
 |----|-------------|-------------|----------|--------|
-| Baseline | 0.6% / 0.2% | 0.68 / 0.96 | 2-GPU F remus / 4-GPU G | **CURRENT** |
-| Post-B7 remus (2-GPU F) | 0.1% | 0.95 | romulus + remus 5060 | FAIL (2026-06-29) |
-| Spike triton (2-GPU F) | 0.3% | 0.92 | romulus + triton 3090 :50054 | FAIL; G=187 t/s |
-| 4-GPU canonical `b6-4gpu-g` n=384 | 0.1% | 0.93 | JUPITER :50053, ts=25,12,25,38 | FAIL; drain 50s |
-| 4-GPU triton `b6-4gpu-g-triton` n=384 | 0.1% | 0.96 | triton :50054, ts=22,11,34,33 | FAIL; drain 5.9s |
-| ts sweep best (G2 n=128) | 0.7% | - | legacy ts=36,24,24,16 | FAIL @ n=384 confirm |
-| Spike ref | remus vs triton delta recorded | - | 2-GPU + 4-GPU A/B | DONE |
-| M1 | >= 1.0% | < 0.80 | 2-GPU F / 4-GPU G | **PENDING** |
-| M2 | >= 2.5% | < 0.60 | 2-GPU F | PENDING |
-| M3 (PASS) | **>= 5.0%** | < 0.50 | 2-GPU F | PENDING |
+| Baseline | 0.6% / 0.2% | 0.68 / 0.96 | 2-GPU F / 4-GPU G | DONE |
+| 5-GPU `b6-5gpu-g` n=2048 | 0.0% | 0.84 | remus+romulus+triton docker | FAIL |
+| Spike triton (2-GPU F) | 0.2-0.3% | 0.87-0.92 | triton :50054 | FAIL; G up 4x |
+| 4-GPU triton | 0.1-0.2% | 0.96 | drain 3-6s | FAIL |
+| ts sweep best | 0.7% @ n=128 | - | G2 grid | FAIL @ n=384 |
+| M1 / M2 / M3 | - | - | all | **FAIL** |
 
-Core diagnostic: remus 5060 (`:50051`) vs triton 3090 (`192.168.8.23:50054`) with client held constant.
+**Production ship (active):** tip `a2d63acf1`, 5-GPU cluster, optional `GGML_RPC_HASH_DEFER=1`, dual-socket G lever (+18% n=128 BL-1).
 
 ---
 
@@ -192,7 +190,7 @@ Core diagnostic: remus 5060 (`:50051`) vs triton 3090 (`192.168.8.23:50054`) wit
 
 ## What's next
 
-1. **Mission plan** -- [rpc-multi-backend-pipeline-plus/PLAN.md](../../docs/rpc-multi-backend-pipeline-plus/PLAN.md): B+8→B+9→B+10 bisects, then B+7a′ 4-GPU drain.
-2. **B+6 gate** -- [b6-gate/TRACKING.md](b6-gate/TRACKING.md): living checklist; M3 (`overlap_pct >= 5%`) is hard complete criterion.
-3. **Phase 1.1** -- per-split / RPC timing visibility (parallel with bisects).
-4. **Path C** -- deferred until mitigation ladder exhausted ([rpc-multi-backend-pipeline-plus/PLAN.md](../../docs/rpc-multi-backend-pipeline-plus/PLAN.md) Phase 3 entry criteria).
+1. **Production** -- 5-GPU `b6-5gpu-g` @ `a2d63acf1`; consider `GGML_RPC_DUAL_SOCKET=1` for G (+18% n=128).
+2. **Overlap (reopened)** -- grill on split missions; new hypothesis before code ([b6-gate/PLAN.md](b6-gate/PLAN.md) Reopen section).
+3. **Mission root** -- [rpc-multi-backend-pipeline-plus/TRACKING.md](../../docs/rpc-multi-backend-pipeline-plus/TRACKING.md): ladder exhausted; ceiling finalized.
+4. **Path C** -- out of scope on this branch unless explicit reopen decision.

@@ -2,9 +2,9 @@
 
 Plan: [PLAN.md](PLAN.md)
 
-**Overall:** STRUCTURAL CEILING (5-GPU Phase B stable; overlap ~0%; M1 not reached; Phase A not ROI for gate)  
+**Overall:** Phase 4 **CLOSED FAIL** -- structural ceiling; split missions active; overlap **reopens** via grill  
 **Branch:** Path-B-Event-Support-Pipeline-Plus  
-**Last updated:** 2026-07-01 (Phase B v8 retest + origin push `a2d63acf1`)  
+**Last updated:** 2026-07-01 (PLAN refresh, Phase 4 close, backlog BL-1/BL-2/BL-3)  
 **Mission root:** [docs/rpc-multi-backend-pipeline-plus/](../../../docs/rpc-multi-backend-pipeline-plus/)
 
 > Update this file after **each** completed plan step: set Status, Evidence (path or label), and bump **Last updated**. Mirror milestones in [rpc-path-b-plus-overview.md](../rpc-path-b-plus-overview.md).
@@ -18,9 +18,9 @@ Plan: [PLAN.md](PLAN.md)
 | Baseline (2-GPU remus) | 0.6% | 0.68 | CURRENT | `trace-f-2gpu-plus` / regression seed |
 | Baseline (4-GPU romulus) | 0.2% | 0.96 | CURRENT | `profiler-4gpu-primary-romulus-trace-v2` |
 | Spike ref (remus vs triton) | 0.1% -> 0.3% | 0.95 -> 0.92 | DONE | `b6-2gpu-f-triton` |
-| M1 | >= 1.0% | < 0.80 | PENDING | - |
-| M2 | >= 2.5% | < 0.60 | PENDING | - |
-| M3 (B+6 PASS) | >= 5.0% | < 0.50 | PENDING | - |
+| M1 | >= 1.0% | < 0.80 | **FAIL** | best 0.9% guard-n128; 0.7% ts-grid n=128 |
+| M2 | >= 2.5% | < 0.60 | **FAIL** | - |
+| M3 (B+6 PASS) | >= 5.0% | < 0.50 | **FAIL** | Phase 4 closed 2026-07-01 |
 
 ## A/B verdict
 
@@ -148,11 +148,29 @@ Throughput/blocking win only; **not gate-moving**. EVENT_RECORD (~28.7s) unchang
 
 ## Phase 4 -- Gate close
 
+**Status: CLOSED FAIL** (2026-07-01). Path-B-only levers exhausted per PLAN stop rule.
+
 | Step | Status | Evidence |
 |------|--------|----------|
-| P4-1 M3 PASS on 2-GPU F | PENDING | - |
-| P4-2 `rpc-path-b-plus-overview.md` milestones | PENDING | - |
-| P4-3 `GATES.md` / PIPELINE SS9 if metrics shifted | PENDING | - |
+| P4-1 M3 PASS on 2-GPU F | **FAIL** | All topologies < 1% overlap @ n=384; 5-GPU n=2048 0.0% |
+| P4-2 `rpc-path-b-plus-overview.md` milestones | **DONE** | Milestones marked FAIL; split missions |
+| P4-3 `GATES.md` / PIPELINE SS9 if metrics shifted | **DONE** | No PASS shift; structural ceiling documented |
+
+## Split missions (forward)
+
+| Mission | Status | Notes |
+|---------|--------|-------|
+| Production ship | **ACTIVE** | Tip `a2d63acf1`; 5-GPU triton docker; HASH_DEFER opt-in |
+| Overlap gate B+6 | **CLOSED FAIL** | Reopens under grill -- new hypothesis required |
+| Ops / deploy (Phase A) | **MAINTENANCE** | A1-A11 DONE |
+
+## Post-Phase-4 backlog (optional, executed 2026-07-01)
+
+| ID | Item | Result |
+|----|------|--------|
+| BL-1 | B+11 dual-socket `GGML_RPC_DUAL_SOCKET=1` n=128 5-GPU | G=68.5 (+18% vs v8 58.2), overlap **0.4%** (noise); gate FAIL; `...-bl1-dual-socket` |
+| BL-2 | ts shift off 3060 `25,5,30,15,25` n=128 5-GPU | G=56.4 (-3%), overlap 0.4%, straggler 7.73ms (worse); **REJECT** for production; `...-bl2-ts-shift` |
+| BL-3 | B+16 CUDA `leaf_55` | **REJECT** (mission TRACKING); no code |
 
 ---
 
@@ -202,3 +220,8 @@ Throughput/blocking win only; **not gate-moving**. EVENT_RECORD (~28.7s) unchang
 | 2026-07-01 | P0 | 5-GPU `b6-5gpu-g` n=2048 multiturn v8 | G=60.1, overlap=0.0%, blocking=41.4s, gate_b6 FAIL |
 | 2026-07-01 | P6 | Phase A gate ROI review | SKIP further A/B; drain-bound ceiling confirmed on 5-GPU |
 | 2026-07-01 | P2 | HASH_DEFER=1 bisect n=128 5-GPU | G=61.0 (+4.8%), overlap=0.3%, blocking=9.4s; gate_b6 FAIL |
+| 2026-07-01 | P2 | HASH_DEFER=1 confirm n=2048 multiturn 5-GPU | G=60.8 (+1.2%), overlap=0.0%, blocking=38.2s; gate_b6 FAIL |
+| 2026-07-01 | P4 | Phase 4 gate close | **FAIL** -- structural ceiling; PLAN + overview updated |
+| 2026-07-01 | BL-1 | dual-socket n=128 5-GPU | G=68.5 (+18%), overlap=0.4%; G lever only |
+| 2026-07-01 | BL-2 | ts shift n=128 5-GPU | G=56.4, straggler worse; REJECT |
+| 2026-07-01 | BL-3 | B+16 | REJECT per mission TRACKING |
