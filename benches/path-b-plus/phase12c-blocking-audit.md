@@ -6,7 +6,7 @@ Staged D step C: existing traces only. Per-dir JSON: `telemetry/blocking-audit-c
 
 | label | gen_tokens | overlap_pct | stall_ratio | input_wait_copy_ms | graph_compute_ms | sync_copy_fallback_ms | copy_async_ok_count | blocking_ms | drain_ms | copy_issue | copy_tensor_rpc | copy_peer_rpc | get_tensor_rpc | set_hash_rpc | event_record_rpc | local_sync_gap_ms | c_full | verdict |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| b6-2gpu-f-triton-n384-romulus-native | 385 | 0.2 | 0.8575 | 1976.4 | 323.0 | 0.0 | 0 | 1892.6 | 1752.2 | 0 | 0.0 | 0.0 | 138.9 | 0.0 | 1752.2 | 1976.4 | no | NO_COPY_ISSUE_TRACE,LOCAL_SYNC_FALLBACK_LIKELY,EVENT_RECORD_DOMINATES_DRAIN,GET_TENSOR_GT_COPY,WAIT_DOMINATES_COMPUTE |
+| b6-2gpu-f-triton-n384-romulus-native | 384 | 0.2 | 0.838 | 2805.9 | 306.7 | 0.0 | 2310 | 208.7 | 207.0 | 1155 | 0.0 | 0.0 | 66.4 | 0.0 | 140.6 | 2805.9 | yes | COPY_ASYNC_OK_ONLY,GET_TENSOR_GT_COPY,WAIT_DOMINATES_COMPUTE |
 
 ## Interpretation guide
 
@@ -20,8 +20,7 @@ Staged D step C: existing traces only. Per-dir JSON: `telemetry/blocking-audit-c
 - **SET_HASH_RPC_HEAVY**: weight relay still costs gen-window budget (B+4 cache check).
 - **WAIT_DOMINATES_COMPUTE**: assembly line starved regardless of straggler ms/tok.
 
-## Phase 1.2 A+B (done)
+## Next: Phase 1.2 A+B
 
-- `phase12a-waterfall.md` — per-token blocking waterfall
-- `phase12b-gantt.md` — assembly-line Gantt + HOL tail RTT
+Per-token blocking waterfall + assembly-line Gantt (decode_id x split x cmd class).
 

@@ -30,7 +30,7 @@ The current `Path-B-Event-Support-Pipeline-Plus` state delivers excellent increm
 |-----------|--------|----------------------|-------|
 | Optimal 36B NL MoE throughput (2-device) | ≥48 t/s sustained | **48.9 t/s** (`trace-f-2gpu-plus`) | **Achieved** |
 | 3-device vs 2-device penalty | <10% regression | +32% uplift by dropping 6600 | **Achieved** — do not use 3-device for this model class |
-| **B+6 M3 overlap gate** | **`overlap_pct >= 5%`** | **0.3%** @ canonical n=384; 1.3% best (V1 n=128) | **Primary active gap** — hunt continues (B+11 next) |
+| **B+6 M3 overlap gate** | **`overlap_pct >= 5%`** | **0.3%** @ canonical n=384; 1.3% best (V1 n=128) | **Primary active gap** — hunt continues (B+13 next) |
 | B+6 M1 interim | `overlap_pct >= 1%` @ n=384 | 0.3% @ n=384; 1.3% @ n=128 | FAIL at gate depth |
 | B+14/B+15 correctness | no regressions on MoE + large | V1/V2 PASS, sync_fb=0 | **Achieved** — safe to ship |
 | GPU power duty cycle @ ≥20% TDP during gen | >15% | 3.8% (best run) | Orchestration stall signature |
@@ -63,4 +63,4 @@ The current `Path-B-Event-Support-Pipeline-Plus` state delivers excellent increm
 **Owner:** NighmareGit  
 **Review cadence:** After every major profile/profiler run or topology change.
 
-**Current focus (2026-07-01):** B+12 **NULL** on overlap — defer shipped (+1.8% G). **M3 hunt continues** — **B+11** dual-socket HOL on `b6-4gpu-g` n=384. See [TRACKING.md](TRACKING.md) B+12 section.
+**Current focus (2026-07-01):** B+11 **NULL** on overlap (-9.1% G when dual ON; default OFF). **M3 hunt continues** — **B+13** `sync_copy_fallback` / async upload on `b6-2gpu-f-triton` n=384. See [PLAN.md](PLAN.md) section 2.2.
