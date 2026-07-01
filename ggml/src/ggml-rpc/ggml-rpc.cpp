@@ -1303,6 +1303,7 @@ static void ggml_backend_rpc_buffer_get_tensor_async(ggml_backend_buffer_t buffe
     }
     if (!batch_send) {
         flush_pending_get_tensor_for_socket(sock);
+        flush_pending_hash_for_socket(sock);
         flush_set_tensor_batch();
     }
     rpc_msg_get_tensor_req request;
@@ -1335,6 +1336,7 @@ static void ggml_backend_rpc_buffer_get_tensor(ggml_backend_buffer_t buffer, con
         drain_pending_event_response(sock);
     }
     flush_pending_get_tensor_for_socket(sock);
+    flush_pending_hash_for_socket(sock);
     flush_set_tensor_batch();
     rpc_msg_get_tensor_req request;
     request.tensor = serialize_tensor(tensor);
