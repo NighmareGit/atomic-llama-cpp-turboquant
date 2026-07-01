@@ -35,7 +35,7 @@ Presets:
 | RPC endpoints | dual=ON evidence | Rule |
 |---------------|------------------|------|
 | 1 (2-GPU) | -9% G @ n=384 | **OFF** |
-| 2 (3-GPU) | retest in flight | **OFF** until `b6-3gpu-g` matrix |
+| 2 (3-GPU) | +18% G, -13% blocking @ n=384 | **ON** |
 | 3 (4-GPU) | -9% G, overlap flat | **OFF** |
 | 4 (5-GPU) | +18% n128, +10% n2048 | **ON** for prod |
 
@@ -109,4 +109,29 @@ Script: `scripts/b6-gate-retest-matrix.sh`
 | R4 | `b6-5gpu-g-prod` | 2048 multiturn | ON | long prefill + gen |
 | R5 | `b6-5gpu-g` | 2048 multiturn | OFF | single-socket compare |
 
-Results appended to [TRACKING.md](TRACKING.md) retest section after matrix completes.
+## Matrix results (20260701-150053)
+
+| Run | G_tps | overlap | blocking_ms | dual | Notes |
+|-----|-------|---------|-------------|------|-------|
+| R1 3-GPU n=384 | 55.1 | 0.2% | 23817 | 0 | baseline |
+| R2 3-GPU n=384 | **65.2** | 0.2% | 20640 | 1 | **+18% G** |
+| R3 5-GPU prod n=384 | 60.9 | 0.1% | 16621 | 1 | prod @ gate depth |
+| R4 5-GPU prod n=2048 MT | 59.7 | 0.0% | 41869 | 1 | multiturn |
+| R5 5-GPU n=2048 MT | 59.6 | 0.0% | 41898 | 0 | dual flat vs R4 |
+
+**Rule update:** 2-RPC (3-GPU) dual **ON**. 5-GPU n=2048 multiturn: dual vs single **flat** this matrix (prior n=2048 run showed +10%; treat as workload-dependent).
+
+Artifact: `benches/path-b-plus/b6-retest-matrix-20260701-150053/`
+
+## Overlap grill: GPU-class skew (20260701-151024)
+
+3-GPU n=384, dual ON — swap RPC1 3060 docker -> triton 3090:
+
+| Arm | RPC chain | G_tps | overlap | stall | straggler | backend1 split_ms |
+|-----|-----------|-------|---------|-------|-----------|-------------------|
+| A | 5060 + **3060** + 7900 | 56.2 | **0.2%** | 0.70 | 12.5 ms/tok | 4831 |
+| B | 5060 + **3090** + 7900 | 69.0 | **0.2%** | 0.58 | 8.3 ms/tok | 3182 |
+
+**Verdict:** GPU class shifts G (+23%), stall, and straggler — **overlap unchanged**. Heterogeneous RPC chain does **not** skew overlap_pct; retire as overlap lever.
+
+Script: `scripts/b6-gate-overlap-gpu-skew.sh`

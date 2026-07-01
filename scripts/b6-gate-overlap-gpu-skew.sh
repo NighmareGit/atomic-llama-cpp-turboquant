@@ -43,7 +43,9 @@ except FileNotFoundError:
 }
 
 run_case() {
-    local tag="$1" label="$2" out="${OUT_BASE}/${tag}"
+    local tag="$1"
+    local label="$2"
+    local out="${OUT_BASE}/${tag}"
     echo "=== ${tag}: ${label} ==="
     ssh_romulus "cd ${ROMULUS_REPO} && \\
       GGML_RPC_DUAL_SOCKET=1 B6_PERF_AUTO=0 \\
