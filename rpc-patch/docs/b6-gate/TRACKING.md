@@ -2,9 +2,9 @@
 
 Plan: [PLAN.md](PLAN.md)
 
-**Overall:** IN PROGRESS (4-GPU triton A/B + ts sweep done; B+6 still FAIL; M1 not reached)  
+**Overall:** STRUCTURAL CEILING (5-GPU Phase B stable; overlap ~0%; M1 not reached; Phase A not ROI for gate)  
 **Branch:** Path-B-Event-Support-Pipeline-Plus  
-**Last updated:** 2026-07-01 (tokens from romulus used for gitea creds; push prep)  
+**Last updated:** 2026-07-01 (Phase B v8 retest + origin push `a2d63acf1`)  
 **Mission root:** [docs/rpc-multi-backend-pipeline-plus/](../../../docs/rpc-multi-backend-pipeline-plus/)
 
 > Update this file after **each** completed plan step: set Status, Evidence (path or label), and bump **Last updated**. Mirror milestones in [rpc-path-b-plus-overview.md](../rpc-path-b-plus-overview.md).
@@ -88,8 +88,27 @@ Plan: [PLAN.md](PLAN.md)
 | B7-7a socket-scoped GET flush | DONE | 0.2% -> 0.1% (noise) | unchanged (1 RPC sock) | `ggml-rpc.cpp` `flush_pending_get_tensor_for_socket` |
 | B7-1b GET_ALLOC_SIZE cache | DONE | 0.1% (no move) | 2416 -> 808 | `ggml-rpc.cpp` `tls_alloc_size_cache` |
 | Post-fix triton re-spike | DONE | 0.1% -> 0.3% | drain 16993 -> 2293 | `b6-2gpu-f-triton` |
+| B+7f HASH_DEFER pipeline (default off) | DONE | no move @ n384 bisects | SET_TENSOR_HASH defer behind env | `0e107377d`..`1b21c05b3` |
+| B+7g EVENT drain before GET (same socket) | DONE | stability fix | n2048 blocking +9s vs v7 (correctness) | `a2d63acf1` |
+| Event-gated same-host relay flush | DONE | relay stable | peer_copy_count=0 on 5-GPU | `0d7b1edb1` |
 
-**Phase 2 verdict:** Two B+7 fixes shipped; **M1 not reached** on 2-GPU F (`overlap_pct=0.1%`). Straggler-bound (`backend1` 12.4 ms/tok). Socket-scoped flush likely needs **4-GPU** to show drain benefit. Stop-rule note: structural ceiling on single-RPC 2-GPU unless triton A/B or `-ts` moves straggler.
+**Phase 2 verdict:** B+7 fixes + Phase B drain bisect shipped; **M1 not reached** on all topologies. 5-GPU `b6-5gpu-g` n=2048: overlap **0.0%**, drain-bound (`blocking_ms` 32-41s), straggler **backend1** (romulus 3060 docker ~6.2 ms/tok). Phase A (topology/worker swap) does not move overlap; drain reduction is the only remaining lever before stop rule.
+
+---
+
+## Phase B -- 5-GPU cluster + drain bisect (2026-07-01)
+
+| Label | git | n_gen | G_tps | overlap_pct | drain_flush_ms | blocking_ms | SET_TENSOR_HASH | EVENT_RECORD | gate_b6 | Notes |
+|-------|-----|-------|-------|-------------|----------------|-------------|-----------------|--------------|---------|-------|
+| `b6-5gpu-g-triton-docker-n128-v7` | `0d7b1edb1` | 128 | 59.1 | 0.3% | - | - | - | - | FAIL | relay stable |
+| `b6-5gpu-g-triton-docker-n128-v8` | `a2d63acf1` | 128 | 58.2 | 0.3% | 2021 | 13093 | 10.8s | 2.0s | FAIL | HASH_DEFER=0 (default) |
+| `b6-5gpu-g-triton-docker-n128-v8-hashdefer` | `a2d63acf1` | 128 | 61.0 | 0.3% | 9170 | 9434 | 7.2s | - | FAIL | HASH_DEFER=1; G +4.8%, overlap flat |
+| `b6-5gpu-g-triton-docker-n2048-multiturn-v7` | `dbe48767c` | 2048 | 60.5 | 0.0% | - | 32190 | 10.7s | 18.7s | FAIL | long prompt |
+| `b6-5gpu-g-triton-docker-n2048-multiturn-v8` | `a2d63acf1` | 2048 | 60.1 | 0.0% | 28771 | 41440 | 10.6s | 28.7s | FAIL | EVENT drain correctness cost |
+
+**Phase B verdict:** **DRAIN_DOMINANT** on 5-GPU. Relay + hash-defer infra stable at `a2d63acf1`. Overlap unchanged. Optional `GGML_RPC_HASH_DEFER=1` bisect pending (`b6-5gpu-g-triton-docker-n128-v8-hashdefer`).
+
+**Phase A gate ROI:** **SKIP** for overlap mission. A/B already shows worker swap (remus 5060 -> triton 3090) raises G_tps 4x but overlap stays 0.2-0.3%; 4-GPU triton swap cuts drain 50s -> 5.9s with overlap still 0.1%. Phase A build-merge steps (A1-A11) remain DONE for ops; no further Phase A profiler work scheduled.
 
 ---
 
@@ -133,7 +152,7 @@ Plan: [PLAN.md](PLAN.md)
 
 | Item | Status | Notes |
 |------|--------|-------|
-| 5-GPU triton as 5th hop | DEFERRED | After M1 or scale need |
+| 5-GPU triton docker (`b6-5gpu-g`) | DONE 2026-07-01 | overlap 0%; drain-bound; relay stable @ `a2d63acf1` |
 | 3070 `:50055` | DEFERRED | 8 GB VRAM |
 | Path C | OUT OF SCOPE | - |
 
@@ -168,3 +187,9 @@ Plan: [PLAN.md](PLAN.md)
 | 2026-06-29 | P3 | ts grid G0-G4 n=128 + G2/G4 confirm n=384 | best grid G2 0.7%; confirm G4 0.2% drain=4.8s |
 | 2026-06-29 | P6 | Mission routing D3+D1 | diagnosis matrix; M1 not reached |
 | 2026-06-30 | Docs | `rpc-multi-backend-pipeline-plus/` mission root incorporated | PLAN Phase 2 B+8–B+13 ladder; M3 hard criterion |
+| 2026-07-01 | P2 | Event-gated same-host relay flush | `0d7b1edb1`; peer_copy_count=0 |
+| 2026-07-01 | P2 | B+7f HASH_DEFER (default off) + socket-scoped hash cache | `0e107377d`..`1b21c05b3` |
+| 2026-07-01 | P2 | EVENT drain before GET recv (wire desync fix) | `a2d63acf1`; pushed origin+gitea |
+| 2026-07-01 | P0 | 5-GPU `b6-5gpu-g` n=128 v8 | G=58.2, overlap=0.3%, straggler backend1 6.84ms/tok |
+| 2026-07-01 | P0 | 5-GPU `b6-5gpu-g` n=2048 multiturn v8 | G=60.1, overlap=0.0%, blocking=41.4s, gate_b6 FAIL |
+| 2026-07-01 | P6 | Phase A gate ROI review | SKIP further A/B; drain-bound ceiling confirmed on 5-GPU |
