@@ -104,9 +104,17 @@ Plan: [PLAN.md](PLAN.md)
 | `b6-5gpu-g-triton-docker-n128-v8` | `a2d63acf1` | 128 | 58.2 | 0.3% | 2021 | 13093 | 10.8s | 2.0s | FAIL | HASH_DEFER=0 (default) |
 | `b6-5gpu-g-triton-docker-n128-v8-hashdefer` | `a2d63acf1` | 128 | 61.0 | 0.3% | 9170 | 9434 | 7.2s | - | FAIL | HASH_DEFER=1; G +4.8%, overlap flat |
 | `b6-5gpu-g-triton-docker-n2048-multiturn-v7` | `dbe48767c` | 2048 | 60.5 | 0.0% | - | 32190 | 10.7s | 18.7s | FAIL | long prompt |
-| `b6-5gpu-g-triton-docker-n2048-multiturn-v8` | `a2d63acf1` | 2048 | 60.1 | 0.0% | 28771 | 41440 | 10.6s | 28.7s | FAIL | EVENT drain correctness cost |
+| `b6-5gpu-g-triton-docker-n2048-multiturn-v8` | `a2d63acf1` | 2048 | 60.1 | 0.0% | 28771 | 41440 | 10.6s | 28.7s | FAIL | HASH_DEFER=0 (default) |
+| `b6-5gpu-g-triton-docker-n2048-multiturn-v8-hashdefer` | `a2d63acf1` | 2048 | 60.8 | 0.0% | 36184 | 38201 | 7.4s | 28.7s | FAIL | HASH_DEFER=1; blocking -8%, overlap flat |
 
-**Phase B verdict:** **DRAIN_DOMINANT** on 5-GPU. Relay + hash-defer infra stable at `a2d63acf1`. Overlap unchanged. Optional `GGML_RPC_HASH_DEFER=1` bisect pending (`b6-5gpu-g-triton-docker-n128-v8-hashdefer`).
+**Phase B verdict:** **DRAIN_DOMINANT** on 5-GPU. Relay + hash-defer infra stable at `a2d63acf1`. Overlap unchanged. `GGML_RPC_HASH_DEFER=1` confirmed at scale:
+
+| n_gen | G_tps delta | blocking_ms delta | SET_TENSOR_HASH delta | overlap |
+|-------|-------------|-------------------|----------------------|---------|
+| 128 | 58.2 -> 61.0 (+4.8%) | 13.1s -> 9.4s (-28%) | 10.8s -> 7.2s | 0.3% flat |
+| 2048 | 60.1 -> 60.8 (+1.2%) | 41.4s -> 38.2s (-8%) | 10.6s -> 7.4s | 0.0% flat |
+
+Throughput/blocking win only; **not gate-moving**. EVENT_RECORD (~28.7s) unchanged at n=2048. **Keep `GGML_RPC_HASH_DEFER` default off**; opt-in for ~1-5% G_tps if drain acceptable.
 
 **Phase A gate ROI:** **SKIP** for overlap mission. A/B already shows worker swap (remus 5060 -> triton 3090) raises G_tps 4x but overlap stays 0.2-0.3%; 4-GPU triton swap cuts drain 50s -> 5.9s with overlap still 0.1%. Phase A build-merge steps (A1-A11) remain DONE for ops; no further Phase A profiler work scheduled.
 
@@ -193,3 +201,4 @@ Plan: [PLAN.md](PLAN.md)
 | 2026-07-01 | P0 | 5-GPU `b6-5gpu-g` n=128 v8 | G=58.2, overlap=0.3%, straggler backend1 6.84ms/tok |
 | 2026-07-01 | P0 | 5-GPU `b6-5gpu-g` n=2048 multiturn v8 | G=60.1, overlap=0.0%, blocking=41.4s, gate_b6 FAIL |
 | 2026-07-01 | P6 | Phase A gate ROI review | SKIP further A/B; drain-bound ceiling confirmed on 5-GPU |
+| 2026-07-01 | P2 | HASH_DEFER=1 bisect n=128 5-GPU | G=61.0 (+4.8%), overlap=0.3%, blocking=9.4s; gate_b6 FAIL |
