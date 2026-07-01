@@ -38,16 +38,17 @@ This file holds **one** deferred item: extending the post-run trace sample scrip
 
 ---
 
-## Active M3 hunt queue (post-V3 review)
+## Post-V4 backlog (2026-07-01)
 
-**Date:** 2026-07-01  
-**Status:** V3 review done — hunt **active**. See [TRACKING.md](TRACKING.md) V3 section.
+**Status:** M3 hunt **paused** — ladder exhausted. See [TRACKING.md](TRACKING.md) V4 section.
 
 | Priority | Item | Lever | Notes |
 |----------|------|-------|-------|
-| ~~1~~ | ~~B+12 `GET_TENSOR` deferral~~ | overlap | **NULL** @ n=384 (2026-07-01); shipped for G/drain |
-| **1 (next)** | B+11 dual-socket RPC | HOL / tail RTT | Gate `b6-4gpu-g` n=384 |
-| 3 | B+16 CUDA `leaf_55` MoE weight | G / `input_wait` on CUDA | ~1584us vs HIP ~122us; weak overlap ROI |
+| ~~all~~ | ~~B+8–B+16 + B+14 wavefront~~ | overlap | **NULL** on M3 (2026-07-01) |
+| **1** | 5-GPU 70B+ deploy | throughput / VRAM | B+15 L4 equal-safe **PASS**; use preflight |
+| 2 | L4 @ n=384 confirmation | deploy | optional spike on A8/A13 |
+| 3 | VRAM P2/P3 | planning accuracy | MISSION.md future work |
+| 4 | C-full sample keep lists | telemetry | deferred (below) |
 
 **Deferred:** Sample API C-full keep lists (above).
 

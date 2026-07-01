@@ -63,7 +63,7 @@ The current `Path-B-Event-Support-Pipeline-Plus` state delivers excellent increm
 **Owner:** NighmareGit  
 **Review cadence:** After every major profile/profiler run or topology change.
 
-**Current focus (2026-07-01):** B+11 **NULL** on overlap (-9.1% G when dual ON; default OFF). **M3 hunt continues** — **B+13** `sync_copy_fallback` / async upload on `b6-2gpu-f-triton` n=384. See [PLAN.md](PLAN.md) section 2.2.
+**Current focus (2026-07-01, V4):** M3 overlap hunt **paused** — structural ceiling finalized (B+8–B+16 + B+14 wavefront all NULL). **Active:** 5-GPU prod deploy for 70B+ (B+15 L4 equal-safe TS + VRAM planning reserves). See [TRACKING.md](TRACKING.md) V4 section and [PLAN.md](PLAN.md) section 2.5.
 
 ## Future work — VRAM / tensor-split planning
 

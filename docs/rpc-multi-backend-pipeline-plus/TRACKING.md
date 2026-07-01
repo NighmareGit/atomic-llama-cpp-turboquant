@@ -30,6 +30,9 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 | 2026-07-01 | **B+11 NULL on M3 overlap; HURTS G** | 4-GPU triton bisect dual ON/OFF: overlap 0.2% both; G -9.1%; hol_tail_ms +508%; default OFF kept | B+11 section; next B+13 |
 | 2026-07-01 | **B+13 NULL on M3 overlap; +G** | 2-GPU ~206 t/s; 4-GPU ~82 t/s; stall_ratio 0.95->0.68; overlap 0.1-0.3% | B+13 shipped; ceiling finalized |
 | 2026-07-01 | **Jupiter skipped; triton is 4-GPU RPC2** | `:50053` register failed from romulus; triton `:50054` operational | Gate preset `b6-4gpu-g-triton` canonical |
+| 2026-07-01 | **VRAM planning reserves (band-aid)** | Static preflight missed compute/RPC surge; 3060 OOM on naive equal TS | `pathb-rpc-vram-preflight.py` `--phase load`; P2/P3 deferred in MISSION.md |
+| 2026-07-01 | **B+14 wavefront NULL on M3** | Factorial W1+W2 @ n=64/n=384: `global_3bk` < 1%; W1-only hurts cluster fill | Default `B6_5GPU_WAVEFRONT=0`; code ships behind flags |
+| 2026-07-01 | **B+15 L4 equal-safe TS PASS** | 70B/72B load on 5-GPU prod with 3060-capped spread; no runtime OOM | Deploy via `pathb-rpc-vram-preflight.sh --ts-mode equal --phase load` |
 
 ## Current Champion Runs
 
@@ -80,7 +83,8 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 **Hardware ground truth (2026-07-01, live `nvidia-smi` + `rocm-smi` on each node):**
 
 Re-run inventory: `bash scripts/b6-gate-cluster-gpu-inventory.sh`  
-Pre-deploy ts/ngl plan: `bash scripts/pathb-rpc-vram-preflight.sh --preset b6-4gpu-g-triton --gguf <model>`
+Pre-deploy ts/ngl plan: `bash scripts/pathb-rpc-vram-preflight.sh --preset <preset> --gguf <model> [--ts-mode equal --phase load]`  
+5-GPU 70B+ equal-safe: `pathb-rpc-vram-preflight.sh --preset b6-5gpu-g-prod --gguf <model> --ts-mode equal --phase load`
 
 | Host | IP | `nvidia-smi` | `rocm-smi` | Active RPC / role |
 |------|-----|--------------|------------|-------------------|
@@ -303,6 +307,59 @@ Artifacts: `b6-2gpu-f-triton-n384-romulus-native-b12`, `...-no-get-defer`.
 
 Artifacts: `b6-4gpu-g-triton-n384-romulus-native`, `...-no-dual-socket`; logs `b11-4gpu-bisect-logs/`.
 
+### B+14 — wavefront assembly line (2026-07-01)
+
+**Flags:** `GGML_SCHED_WAVEFRONT_DISPATCH`, `GGML_SCHED_WAVEFRONT_INTRA`, `GGML_SCHED_WAVEFRONT_CROSS`, `GGML_SCHED_PIPELINE_DEPTH`. **Prod default OFF** (`B6_5GPU_WAVEFRONT=0` in `b6-gate-5gpu-production-env.sh`).
+
+**Hypothesis:** Defer input drain / cross-decode depth (W1+W2) raises `global_3bk_pct` toward M3 without Path C.
+
+| Run | Topology | n | Arms | Best `global_3bk` | Best G (t/s) | Verdict |
+|-----|----------|---|------|-------------------|--------------|---------|
+| factorial spike | `b6-5gpu-g-prod` A1/A8/A13 | 64 | A0–A3 | 0.94% (A1 A3) | A1 A0 **58.5** vs A3 57.1 | **0/12** pass >= 5% |
+| n384 compare | `b6-5gpu-g-prod` A1 | 384 | A0 vs A3 | 0.91% (A0) / 0.94% (A3) | A0 **59.73** vs A3 58.75 | NULL overlap; A0 wins G |
+
+`splits_per_decode_p50=6` on all arms. W1-only (A1) hurts cluster fill vs A0. Overlap flat ~0.9% on n=384 canonical depth.
+
+**Verdict:** **NULL on M3** — wavefront does not unlock pipelining depth on 5-GPU prod. Ship behind flags; keep default OFF.
+
+Artifacts: `b6-b14-wavefront-spike-20260701-180739`, `b6-b14-n384-compare-20260701-182245`. Design: [DESIGN-b14-parallel-assembly-line.md](DESIGN-b14-parallel-assembly-line.md).
+
+### B+15 — L4 layer spread + VRAM planning (2026-07-01)
+
+**Goal:** Spread layers across all 5 GPUs (equal TS) without 3060 OOM; validate planning reserves vs runtime alloc.
+
+**VRAM band-aid (shipped `a9fbf3a5d`):** subtract fitt + RPC process + load/decode surge + pipeline slots from live free before weights+KV check. `--phase load|decode`; L4 `--ts-mode equal` caps romulus 3060 share. Profiler fix (`d1a049e33`): do not pass `--fit` to `llama-pipeline-profiler` (unsupported); margin is preflight-only.
+
+| Model | TS mode | TS | ngl | G (t/s) | overlap | splits p50 | global_3bk | Load |
+|-------|---------|-----|-----|---------|---------|------------|------------|------|
+| A8 llama-70B | vram | 19,10,30,10,31 | 60 | 15.3 | 0.6% | 6 | 0.83% | **PASS** |
+| A8 llama-70B | equal-safe | 18,13,31,6,32 | 60 | **15.6** | 0.6% | 6 | 0.2% | **PASS** |
+| A13 kimi-72B | vram | 19,10,30,10,31 | 60 | 16.3 | 0.6% | 6 | 0.38% | **PASS** |
+| A13 kimi-72B | equal-safe | 19,14,30,6,31 | 60 | **16.6** | 0.6% | 6 | 0.22% | **PASS** |
+
+Naive equal `20,20,20,20,20` still **OOM** on 3060 (~8 GB alloc vs ~7 GB static plan). Equal-safe cap fixes runtime load; equal-safe is **+2% G** vs vram-ratio on both models @ n=64.
+
+**Verdict:** **PASS deploy** — 5-GPU prod can host 70B/72B with preflight equal-safe TS. Layer spread is a **throughput/deploy** lever, not an overlap lever (overlap 0.6% flat). Future: P2 `--probe-fit`, P3 post-load calibration (MISSION.md).
+
+Artifacts: `b6-b15-l4-layer-spread-20260701-185902` (romulus). Spike: `scripts/b6-gate-b15-l4-layer-spread-spike.sh`.
+
+### V4 — Plan review (2026-07-01)
+
+**Verdict:** Structural ceiling **unchanged** (M3 FAIL). New work closes **deploy** and **5-GPU prod** gaps, not the overlap gate.
+
+| Track | Status | Action |
+|-------|--------|--------|
+| M3 overlap hunt | FAIL @ 0.3–0.9% | No new bisect until fresh hypothesis; ceiling doc stands |
+| B+14 wavefront | NULL | Default OFF; optional factorial only |
+| B+15 L4 + VRAM | **PASS** | Use equal-safe preflight for 70B+ on `b6-5gpu-g-prod` |
+| Production ship | ON | `trace-f-2gpu-plus` 48.9 t/s; B+13/B+14 gather + B+15 prefetch shipped |
+
+**Optional next (not blocking):**
+
+- L4 equal-safe @ n=384 on A8/A13 (confirm overlap/G at gate depth)
+- L1 `GGML_RPC_HASH_DEFER=1` bisect on A1 n=384
+- P1 GGUF metadata KV in vram-calc (heuristic polish)
+
 ### B+16 — CUDA `leaf_55` MoE split-slot wait (2026-07-01)
 
 **Hypothesis:** MoE host->GPU path waits CPU `input_bid` copy slot (~1.5ms CUDA `leaf_55` stall); switch to `split_backend_id` slot.
@@ -320,6 +377,10 @@ Artifacts: `b6-2gpu-f-triton-n384-romulus-native-b16` (experiment only; code rev
 
 - ~~**B+16**~~ — **REJECT** (2026-07-01); see section above
 - ~~**4-GPU llama-70B**~~ — **PASS** (2026-07-01); `b6-4gpu-g-triton-n384-v2-llama70b-hip`
+- ~~**B+14 wavefront**~~ — **NULL** (2026-07-01); default OFF
+- ~~**B+15 L4 equal-safe**~~ — **PASS** (2026-07-01); `b6-b15-l4-layer-spread-20260701-185902`
+- **L4 @ n=384** — equal-safe 70B/72B on 5-GPU prod (optional confirmation)
+- **VRAM P2/P3** — probe-fit + post-load calibration (MISSION.md future work)
 - **Jupiter `:50053`** — deferred; triton swap is canonical 4-GPU gate
 
 ## Next 7 Days (grill-locked 2026-07-01)
@@ -352,6 +413,9 @@ Artifacts: `b6-2gpu-f-triton-n384-romulus-native-b16` (experiment only; code rev
 - [x] B+13b/c romulus A/B n=384 @ `199eb1d5e` — pre-b13b G=204.2 overlap=0.3%; b13bc G=205.4 overlap=0.2%; M3 NULL (2026-07-01)
 - [x] B+13d producer-slot wait on gather+defer — b13d G=205.9 overlap=0.2%; B+13 ladder closed NULL (2026-07-01)
 - [x] 4-GPU triton gate post-B+13 — canonical G=80.1 (+5%); dual-OFF G=81.8 (+1.6%); overlap 0.1-0.2% FAIL (2026-07-01)
+- [x] B+14 wavefront factorial + n=384 A0 vs A3 on 5-GPU prod — NULL M3; A0 wins G (2026-07-01)
+- [x] VRAM planning reserves + L4 equal-safe spike (A8/A13 4/4 load PASS) — `a9fbf3a5d`..`d1a049e33` (2026-07-01)
+- [x] **V4** plan review after B+14/B+15 L4 (2026-07-01)
 
 ## Metrics Dashboard
 
@@ -374,4 +438,4 @@ Artifacts: `b6-2gpu-f-triton-n384-romulus-native-b16` (experiment only; code rev
 ---
 
 **Update this file after every profile/profiler run or topology decision.**  
-**Last edit:** 2026-07-01 — Jupiter skipped; 4-GPU gate = triton swap; structural ceiling finalized post B+13.
+**Last edit:** 2026-07-01 — V4 review: B+14 wavefront NULL; B+15 L4 + VRAM reserves PASS; 5-GPU 70B+ deploy path locked.

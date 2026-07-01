@@ -14,7 +14,7 @@ Navigation: [TRACKING.md](TRACKING.md) | [MISSION.md](MISSION.md) | [rpc-patch/d
 
 **Deliverables:** `benchmarks/config-*/`, `profile-*/`, `benches/path-b-plus/`, `PROFILING.md`, `MULTI-NODE.md`
 
-## Phase 1 — Instrumentation & Visibility (Current — 2026-06-30)
+## Phase 1 — Instrumentation & Visibility (Complete — 2026-07-01)
 
 **Goal:** Make the serial RPC critical path visible; establish bisect evidence for mitigation ladder.
 
@@ -27,18 +27,20 @@ Navigation: [TRACKING.md](TRACKING.md) | [MISSION.md](MISSION.md) | [rpc-patch/d
 
 **Success metric:** Operator sees per-split wait vs compute; `diagnose.json` maps to audit blocker IDs (7a–7e).
 
-### 1.2 Topology decision engine
+### 1.2 Topology decision engine (partial — 2026-07-01)
 
-- Extend `pathb-vram-calc.ps1` to emit hard recommendations/warnings
-- Add `config-e-recommended` vs `config-f-recommended` presets in matrix scripts
-- Enforce "no RX6600 for 35B+ A3B MoE" guard in Config F scripts
+- [x] `pathb-rpc-vram-preflight.py` live probe + `--ts-mode equal` + planning reserves (`a9fbf3a5d`)
+- [x] Presets: `b6-5gpu-g-prod`, `b6-4gpu-g-triton`, gate integration via `PATHB_VRAM_PREFLIGHT=1`
+- [ ] Extend `pathb-vram-calc.ps1` Windows-side warnings (optional)
+- [x] RX6600 exclusion documented in TRACKING topology decisions
+- [ ] P2 `--probe-fit` / P3 calibration — deferred ([MISSION.md](MISSION.md))
 
 ### 1.3 Comparison matrix refresh
 
 - Re-run champion + 4-GPU canonical with full profiler telemetry
 - Deliverable: `BENCHMARKS/2026-07-comparison-matrix.md` (after 1.1)
 
-## Phase 1b — B+6 Overlap Gate (Active — parallel with 1.1)
+## Phase 1b — B+6 Overlap Gate (Closed — structural ceiling 2026-07-01)
 
 **Goal:** Pass M3 (`overlap_pct >= 5%`) without Path C. See [b6-gate/TRACKING.md](../../rpc-patch/docs/b6-gate/TRACKING.md).
 
@@ -51,9 +53,11 @@ Navigation: [TRACKING.md](TRACKING.md) | [MISSION.md](MISSION.md) | [rpc-patch/d
 
 **2026-07-01 post-B+15:** B+14/B+15 fixed gather stalls (HIP `input_wait` ~355us vs ~4ms pre-fix). Overlap at canonical n=384 still 0.3%. Validation on gemma4/llama-70B hit 0.8–1.3% @ n=128 — graph-dependent, not gate depth.
 
-**2026-07-01 post-B+11:** B+12 defer **NULL** on overlap (+1.8% G, shipped). B+11 dual-socket **NULL** on overlap and **-9.1% G** when `GGML_RPC_DUAL_SOCKET=1` (default OFF; proto 4.4 ships). **Next experiment: B+13** — prove/fix silent `sync_copy_fallback` on the local→RPC upload path.
+**2026-07-01 post-B+13:** Full ladder B+8–B+13 + B+11/B+12 **NULL** on M3. Structural ceiling documented. Hunt pauses unless new hypothesis.
 
-## Phase 2 — Mitigation Experiments (Path-B+ only, no Path C)
+**2026-07-01 post-B+14 wavefront:** W1+W2 factorial on 5-GPU prod — `global_3bk` < 1%; default OFF. Not an overlap lever.
+
+## Phase 2 — Mitigation Experiments (Path-B+ only, no Path C) — **Ladder exhausted**
 
 Ordered by leverage on `overlap_pct` (profiler-led). One bisect per re-bench.
 
@@ -65,14 +69,37 @@ Ordered by leverage on `overlap_pct` (profiler-led). One bisect per re-bench.
 | **B+7a′** | 4-RPC multi-socket flush (canonical 50s vs 5s drain) | `ggml-rpc.cpp` | `b6-4gpu-g` n=384 | NULL overlap; drain helped |
 | **B+12** | `GET_TENSOR` deferral (Path A2-style) | `ggml-rpc.cpp` | `b6-2gpu-f-triton` n=384 | NULL overlap; **+1.8% G** (shipped) |
 | **B+11** | Dual-socket RPC (cmd + response per endpoint, proto 4.4) | `ggml-rpc.cpp` | `b6-4gpu-g-triton` n=384 | NULL overlap; **-9.1% G** when ON; default OFF |
-| **B+13** | Verify `cpy_tensor_async` local→RPC not sync-fallback | `ggml-rpc.cpp` + sched | `b6-2gpu-f-triton` n=384 | **ACTIVE** |
-| **B+16** | CUDA `leaf_55` MoE weight path | CUDA backend | remus docker | G lever only; weak overlap ROI |
+| **B+13** | Verify `cpy_tensor_async` local→RPC not sync-fallback | `ggml-rpc.cpp` + sched | `b6-2gpu-f-triton` n=384 | NULL overlap; **+G** (shipped) |
+| **B+14** | Wavefront assembly line W1+W2 | `ggml-backend.cpp` | `b6-5gpu-g-prod` n=64/384 | NULL overlap; default OFF |
+| **B+15** | L4 layer spread + VRAM planning | preflight scripts | `b6-5gpu-g-prod` 70B/72B | **PASS** deploy; not overlap |
+| **B+16** | CUDA `leaf_55` MoE weight path | CUDA backend | remus docker | **REJECT** |
 
 **Recommended implement order:** B+8 → B+9 → B+10 → B+7a′ (4-GPU drain prerequisite if canonical is gate topology).
 
-**Post-B+15 hunt order (2026-07-01):** B+14/B+15 shipped → B+12 **NULL** (defer shipped) → B+11 **NULL** (dual OFF) → **B+13** (sync_copy_fallback) → B+16 optional G-only.
+**Ladder order (final):** B+8–B+10 → B+7a′ → B+12 → B+11 → B+13 → B+14 wavefront → B+16. All **NULL** on M3 except G/stall improvements.
 
-**Stop rule:** If M1 not reached after B+8–B+10 + B+7a′ on 2-GPU and 4-GPU, document structural ceiling in TRACKING. **Triggered 2026-07-01** — see TRACKING structural ceiling section. Ceiling coexists with continued B+13 hunt until M3 PASS or explicit mission revision.
+**Stop rule:** **Triggered 2026-07-01** — structural ceiling in TRACKING. No further overlap bisects without explicit new hypothesis and V5 review.
+
+### 2.5 — 5-GPU production deploy (2026-07-01)
+
+**Goal:** Run 70B+ dense on all-Linux 5-GPU without 3060 OOM.
+
+| Step | Status |
+|------|--------|
+| Planning reserves in preflight | **shipped** |
+| L4 equal-safe TS for A8/A13 | **PASS** (4/4 loads) |
+| Wavefront default OFF on prod | **shipped** |
+| Optional n=384 L4 confirmation | backlog |
+
+```bash
+# Pre-deploy (romulus or dev host with SSH to cluster)
+bash scripts/pathb-rpc-vram-preflight.sh --preset b6-5gpu-g-prod \
+  --gguf /mnt/models/meta-llama-3-70b-instruct.Q4_K_M.gguf \
+  --ts-mode equal --phase load
+
+# Bench spike (optional)
+bash scripts/b6-gate-b15-l4-layer-spread-spike.sh
+```
 
 ### 2.1 B+11 result (closed)
 
@@ -204,4 +231,4 @@ bash scripts/b6-gate-phase12c-blocking-audit.sh b6-2gpu-f-triton-n384-romulus-na
 - End of Phase 2: M3 PASS **or** structural ceiling documented with trace proof
 - Phase 3 start: Explicit approval only
 
-**Next action (2026-07-01):** Phase 2 complete — M3 FAIL, structural ceiling documented. 4-GPU gate = `b6-4gpu-g-triton` (jupiter skipped). Ship B+13 for G/stall; optional B+16 on remus-docker CUDA. Details: [TRACKING.md](TRACKING.md).
+**Next action (2026-07-01, V4):** Phase 2 ladder **exhausted** — M3 FAIL, ceiling stands. **Ship:** B+13 gather fixes, B+14 wavefront (OFF), B+15 L4 + VRAM preflight for 5-GPU 70B+. **Optional:** L4 @ n=384; VRAM P1/P2/P3 per MISSION.md. Details: [TRACKING.md](TRACKING.md) V4 section.
