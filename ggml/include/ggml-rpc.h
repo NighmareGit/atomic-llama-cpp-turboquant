@@ -38,6 +38,11 @@ GGML_BACKEND_API void ggml_backend_rpc_drain_all_endpoints(void);
 // B+13: complete deferred RPC->local downloads before local split graph_compute.
 GGML_BACKEND_API void ggml_backend_rpc_flush_pending_downloads(void);
 
+// B+13: buffer/input_backend may disagree on RPC; route by buffer type in sched gather.
+GGML_BACKEND_API bool ggml_backend_buffer_is_rpc(ggml_backend_buffer_t buffer);
+GGML_BACKEND_API bool ggml_backend_rpc_try_download_tensor(ggml_backend_t dst_backend, const struct ggml_tensor * src, struct ggml_tensor * dst);
+GGML_BACKEND_API bool ggml_backend_rpc_try_upload_tensor(ggml_backend_t src_backend, const struct ggml_tensor * src, struct ggml_tensor * dst);
+
 // B+9: unique RPC server endpoints registered (host:port strings).
 GGML_BACKEND_API int ggml_backend_rpc_server_count(void);
 

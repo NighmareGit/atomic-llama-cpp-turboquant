@@ -1764,10 +1764,25 @@ static bool ggml_backend_sched_try_async_tensor_copy(
         return false;
     }
 
+    // B+13: sched tensor_backend_id can disagree with src/dst buffer (split-2 gather).
+    if (ggml_backend_buffer_is_rpc(buf_src) && !ggml_backend_buffer_is_rpc(buf_dst)) {
+        if (ggml_backend_rpc_try_download_tensor(split_backend, input, input_cpy)) {
+            return true;
+        }
+    }
+    if (!ggml_backend_buffer_is_rpc(buf_src) && ggml_backend_buffer_is_rpc(buf_dst)) {
+        if (ggml_backend_rpc_try_upload_tensor(input_backend, input, input_cpy)) {
+            return true;
+        }
+    }
+
     const bool host_src = ggml_backend_buffer_is_host(buf_src);
     const bool host_dst = ggml_backend_buffer_is_host(buf_dst);
 
     if (host_src != host_dst) {
+        if (ggml_backend_buffer_is_rpc(buf_src) || ggml_backend_buffer_is_rpc(buf_dst)) {
+            return false;
+        }
         const size_t nbytes = ggml_nbytes(input);
         if (nbytes == 0) {
             return true;

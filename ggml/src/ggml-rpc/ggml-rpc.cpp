@@ -919,8 +919,8 @@ static void * ggml_backend_rpc_buffer_get_base(ggml_backend_buffer_t buffer) {
     return ctx->base_ptr;
 }
 
-static bool ggml_backend_buffer_is_rpc(ggml_backend_buffer_t buffer) {
-    return buffer->iface.free_buffer == ggml_backend_rpc_buffer_free_buffer;
+bool ggml_backend_buffer_is_rpc(ggml_backend_buffer_t buffer) {
+    return buffer != nullptr && buffer->iface.free_buffer == ggml_backend_rpc_buffer_free_buffer;
 }
 
 static rpc_tensor serialize_tensor(const ggml_tensor * tensor) {
@@ -1178,6 +1178,14 @@ static bool rpc_issue_download_tensor(ggml_backend_t backend_dst, const ggml_ten
 
     tls_pending_downloads.push_back(std::move(pd));
     return true;
+}
+
+bool ggml_backend_rpc_try_download_tensor(ggml_backend_t dst_backend, const ggml_tensor * src, ggml_tensor * dst) {
+    return rpc_issue_download_tensor(dst_backend, src, dst, true);
+}
+
+bool ggml_backend_rpc_try_upload_tensor(ggml_backend_t src_backend, const ggml_tensor * src, ggml_tensor * dst) {
+    return rpc_issue_upload_tensor(src_backend, src, dst, true);
 }
 
 void ggml_backend_rpc_flush_pending_downloads(void) {
