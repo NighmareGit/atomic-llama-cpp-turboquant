@@ -909,8 +909,11 @@ static bool rpc_exchange_hello(const socket_ptr & sock, const void * req, size_t
     if (req_size > 0 && !sock->send_data(req, req_size)) {
         return false;
     }
+    if (expect_v4_rsp) {
+        return recv_msg(sock, &response, sizeof(response));
+    }
     rpc_msg_hello_rsp_v3 rsp3 = {};
-    if (!sock->recv_data(&rsp3, sizeof(rsp3))) {
+    if (!recv_msg(sock, &rsp3, sizeof(rsp3))) {
         return false;
     }
     response.major = rsp3.major;
@@ -919,11 +922,6 @@ static bool rpc_exchange_hello(const socket_ptr & sock, const void * req, size_t
     response.flags = rsp3.padding;
     memcpy(response.conn_caps, rsp3.conn_caps, sizeof(response.conn_caps));
     response.session_id = 0;
-    if (expect_v4_rsp) {
-        if (!sock->recv_data(&response.session_id, sizeof(response.session_id))) {
-            return false;
-        }
-    }
     return true;
 }
 
