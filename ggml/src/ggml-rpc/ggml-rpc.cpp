@@ -323,13 +323,14 @@ static int rpc_dual_socket_env_enabled() {
     static int v = -1;
     if (v < 0) {
         const char * e = getenv("GGML_RPC_DUAL_SOCKET");
-        v = e ? atoi(e) : (rpc_pipeline_plus_enabled() ? 1 : 0);
+        // Default OFF until all rpc-servers are proto 4.4 (bisect sets =1 explicitly).
+        v = e ? atoi(e) : 0;
     }
     return v;
 }
 
 bool ggml_backend_rpc_dual_socket(void) {
-    return rpc_dual_socket_env_enabled() != 0 && rpc_pipeline_plus_enabled();
+    return rpc_dual_socket_env_enabled() != 0;
 }
 
 struct rpc_dual_pending {
@@ -895,15 +896,49 @@ static bool rpc_client_bind_response_channel(const socket_ptr & cmd_sock,
 // Performs HELLO handshake with transport auto-negotiation.
 // Advertises local capabilities via conn_caps; if the server responds with
 // matching capabilities, the socket is upgraded transparently.
+static bool rpc_exchange_hello(const socket_ptr & sock, const void * req, size_t req_size,
+                               rpc_msg_hello_rsp & response, bool expect_v4_rsp) {
+    const uint8_t cmd = (uint8_t) RPC_CMD_HELLO;
+    const uint64_t input_size = req_size;
+    if (!sock->send_data(&cmd, sizeof(cmd))) {
+        return false;
+    }
+    if (!sock->send_data(&input_size, sizeof(input_size))) {
+        return false;
+    }
+    if (req_size > 0 && !sock->send_data(req, req_size)) {
+        return false;
+    }
+    rpc_msg_hello_rsp_v3 rsp3 = {};
+    if (!sock->recv_data(&rsp3, sizeof(rsp3))) {
+        return false;
+    }
+    response.major = rsp3.major;
+    response.minor = rsp3.minor;
+    response.patch = rsp3.patch;
+    response.flags = rsp3.padding;
+    memcpy(response.conn_caps, rsp3.conn_caps, sizeof(response.conn_caps));
+    response.session_id = 0;
+    if (expect_v4_rsp) {
+        if (!sock->recv_data(&response.session_id, sizeof(response.session_id))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool negotiate_hello(const std::shared_ptr<socket_t> & sock, const char * endpoint) {
     rpc_msg_hello_req request = {};
     rpc_msg_hello_rsp response = {};
 
     sock->get_caps(request.conn_caps);
     request.session_id = rpc_gen_session_id();
-    request.dual_socket = (ggml_backend_rpc_dual_socket() && RPC_PROTO_MINOR_VERSION >= 4) ? 1 : 0;
+    request.dual_socket = ggml_backend_rpc_dual_socket() ? 1 : 0;
 
-    bool status = send_rpc_cmd(sock, RPC_CMD_HELLO, &request, sizeof(request), &response, sizeof(response));
+    const bool use_v4_req = request.dual_socket != 0;
+    const bool status = use_v4_req
+        ? rpc_exchange_hello(sock, &request, sizeof(request), response, true)
+        : rpc_exchange_hello(sock, request.conn_caps, RPC_HELLO_REQ_V3_SIZE, response, false);
     RPC_STATUS_ASSERT(status);
 
     if (response.major != RPC_PROTO_MAJOR_VERSION || response.minor > RPC_PROTO_MINOR_VERSION) {

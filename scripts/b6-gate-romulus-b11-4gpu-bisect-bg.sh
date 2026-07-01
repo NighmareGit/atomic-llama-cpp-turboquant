@@ -21,5 +21,7 @@ run_bisect() {
     echo "=== DONE ${bisect} $(date -u +%FT%TZ) ===" | tee -a "$log"
 }
 
+# B+11 ON arm: dual-socket explicit (requires proto 4.4 on all rpc-servers).
+export GGML_RPC_DUAL_SOCKET=1
 run_bisect canonical-romulus b6-4gpu-g-n384-romulus-native-b11
 run_bisect no-dual-socket b6-4gpu-g-n384-romulus-native-no-dual-socket
