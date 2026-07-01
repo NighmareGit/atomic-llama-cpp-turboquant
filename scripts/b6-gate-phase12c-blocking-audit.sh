@@ -158,7 +158,7 @@ local_sync_gap = max(0.0, input_wait - copy_tensor_ms - copy_peer_ms)
 overlap = float(diag.get("overlap_pct", 0) or 0)
 stall = float(diag.get("stall_ratio", 0) or 0)
 drain = float(diag.get("drain_flush_ms", 0) or 0)
-gen_tokens = int(diag.get("gen_tokens_est", len(decode_windows)) or len(decode_windows))
+gen_tokens = len(decode_windows) if decode_windows else int(diag.get("gen_tokens_est", 0) or 0)
 
 # Verdict heuristics for Phase 1.2C / C-full
 flags = []
