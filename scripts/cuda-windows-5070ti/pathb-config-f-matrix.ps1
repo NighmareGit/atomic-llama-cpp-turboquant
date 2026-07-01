@@ -1,6 +1,7 @@
 # Config F matrix: Windows 5070 Ti + remus 5060 Ti (:50051) + RX6600 (:50052)
+# RX6600 third hop is deprecated for 35B+ A3B MoE (TRACKING 2026-06-27: 2-device +32% vs 3-device).
 param(
-    [string[]]$Preset = @("9b", "27b", "31b", "35b", "36b"),
+    [string[]]$Preset = @("9b", "27b", "31b"),
     [string]$ModelsRoot = "D:\models",
     [string]$TensorSplit = "30,12,58",
     [switch]$EnsureRemusRpc
@@ -27,8 +28,15 @@ if ($EnsureRemusRpc) {
 $summary = Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..\..\docs\cuda-windows-5070ti\benchmarks")).Path "config-f-matrix-summary.txt"
 "" | Set-Content $summary -Encoding utf8
 
+$Rx6600BlockedPresets = @("35b", "36b", "36b-nl", "48b", "80b")
+
 foreach ($p in $Preset) {
     if (-not $Presets.ContainsKey($p)) { Write-Warning "unknown preset $p"; continue }
+    if ($Rx6600BlockedPresets -contains $p) {
+        "SKIP $p Config F + RX6600 deprecated for 35B+ A3B MoE (use trace-f-2gpu-plus 2-device)" |
+            Tee-Object -FilePath $summary -Append
+        continue
+    }
     $cfg = $Presets[$p]
     $model = Get-ChildItem -Path $ModelsRoot -Recurse -Filter $cfg.File -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $model) {

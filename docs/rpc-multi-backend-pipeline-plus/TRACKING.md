@@ -72,8 +72,10 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 
 ### Ops / hygiene
 
-- RX6600 guard in Config F matrix scripts
-- 500 ms + 45 s flush default for all bench scripts
+- ~~RX6600 guard in Config F matrix scripts~~ (**done 2026-07-01** — `pathb-config-f-matrix.ps1`, `rpc-server-bench.ps1`)
+- ~~Triton Linux ops scripts~~ (**done 2026-07-01** — `b6-gate-triton-{git-sync,start-rpc,stop-rpc,sync-rebuild,remote}.sh`)
+- ~~Triton git repair~~ (**done 2026-07-01** — missing `.git/objects/`; force checkout to `78e8f3c45`)
+- 500 ms telemetry default in profiler (`pipeline-gpu-telemetry`); 45 s flush in `rpc-server-bench.ps1` — verify cluster scripts inherit
 - Link doc root from all entry READMEs (**done 2026-06-30**)
 
 ## Recently Completed
@@ -94,7 +96,7 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 - [x] B+9 OFF bisect on n=384 triton — null
 - [x] PR 2 + PR 6: `b6-gate-bisect-run.sh`, env audit in cluster, docker `GGML_*` forward, `--skip-rpc-validate` auto (2026-07-01)
 - [x] Phase 0: archive `b6-2gpu-f-triton-n384-remus-docker`; romulus reset `deacf5e65`; canonical-romulus re-bench (2026-07-01)
-- [ ] Triton git sync (repo git fs-boundary quirk); rpc-server :50054 was already up
+- [x] Triton git sync + repair (missing objects/); SHA `78e8f3c45`; rpc-server :50054 up (2026-07-01)
 - [x] **B+8 OFF** bisect on romulus: overlap 0.2% (NULL vs canonical), stall 0.904 vs 0.858 (borderline MITIGATION_HELPS) — 2026-07-01
 - [x] **B+10 OFF** bisect on romulus: overlap 0.2% (NULL), stall 0.906 vs 0.858 — 2026-07-01
 - [x] **2-GPU partial verdict** recorded (2026-07-01)
@@ -105,7 +107,8 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 - [x] `b6-4gpu-g-triton-n384-romulus-native` — overlap 0.1%, G=73.2, drain 4.6s (2026-07-01)
 - [ ] **Structural ceiling doc** (PLAN stop rule: B+8–B+10 + B+7a′ exhausted, M1 FAIL on 2-GPU + 4-GPU)
 - [ ] Phase 1.1 re-parse; PR 3 bisect comparator; PR 8 validate-rpc
-- [ ] Triton ops (git fs-boundary, start/stop scripts); commit/push session work
+- [x] Triton ops scripts + commit/push session work (2026-07-01)
+- [ ] Structural ceiling doc (PLAN stop rule met)
 
 ## Metrics Dashboard
 

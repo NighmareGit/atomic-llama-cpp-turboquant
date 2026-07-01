@@ -71,6 +71,10 @@ if (-not $ModelPath) {
     if (-not $ModelPath) { throw "No default model found under $ModelsRoot" }
 }
 
+if (Test-ConfigFRx6600Blocked -Path $ModelPath -Cfg $Config) {
+    throw "Config F + RX6600 (:50052) blocked for 35B+ A3B MoE models. Use 2-device trace-f-2gpu-plus or Config E."
+}
+
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $Meta = Join-Path $LogDir "result.meta"
 $Result = Join-Path $LogDir "bench.result"
