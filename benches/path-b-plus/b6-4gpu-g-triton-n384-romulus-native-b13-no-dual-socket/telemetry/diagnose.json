@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "trace_dir": "/home/hunter/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-4gpu-g-triton-n384-romulus-native-b13-no-dual-socket/telemetry",
+  "gen_only": true,
+  "gen_tokens_est": 385,
+  "G_tps": 81.8485,
+  "overlap_efficiency": 1.0701,
+  "drain_flush_ms": 4284.2,
+  "blocking_ms": 14949.7,
+  "gate_s5": "PASS",
+  "gate_b6": "FAIL",
+  "assembly_overlap_count": 2307,
+  "overlap_pct": 0.2,
+  "overlap_target_pct": 5.0,
+  "split_ms_per_token": 13.074,
+  "stall_ratio": 0.6789,
+  "stall_ms": 3417.31,
+  "compute_ms": 225.77,
+  "backends_ms_per_token": {
+    "0": 0.081,
+    "1": 6.662,
+    "2": 1.842,
+    "3": 4.467,
+    "4": 0.022
+  },
+  "straggler_backend": "1",
+  "straggler_ms_per_token": 6.662,
+  "topology_class": "client_split",
+  "rpc_rtt_per_token": 6.21,
+  "graph_submit_count": 2310,
+  "blocking_rpc_count": 2392,
+  "fire_and_forget_count": 6626,
+  "gpu_smell_flags": [],
+  "path_c_reserved": {
+    "cross_endpoint_copy_count": null,
+    "server_local_copy_count": null
+  }
+}

@@ -297,6 +297,7 @@ Artifacts: `b6-4gpu-g-triton-n384-romulus-native`, `...-no-dual-socket`; logs `b
 - [x] B+11 bisect on `b6-4gpu-g-triton` n=384 — NULL overlap; HURTS G (2026-07-01)
 - [x] B+13b/c romulus A/B n=384 @ `199eb1d5e` — pre-b13b G=204.2 overlap=0.3%; b13bc G=205.4 overlap=0.2%; M3 NULL (2026-07-01)
 - [x] B+13d producer-slot wait on gather+defer — b13d G=205.9 overlap=0.2%; B+13 ladder closed NULL (2026-07-01)
+- [x] 4-GPU triton gate post-B+13 — canonical G=80.1 (+5%); dual-OFF G=81.8 (+1.6%); overlap 0.1-0.2% FAIL (2026-07-01)
 
 ## Metrics Dashboard
 

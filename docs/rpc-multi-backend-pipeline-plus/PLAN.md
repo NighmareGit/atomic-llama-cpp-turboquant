@@ -120,6 +120,15 @@ Gate `b6-4gpu-g-triton` n=384, romulus client, proto 4.4 on remus/romulus/triton
 
 **B+13 closed (NULL on M3 overlap).** Next hunt: B+16 CUDA `leaf_55` (G-only) or structural ceiling doc update.
 
+### 2.3 B+13 4-GPU gate (2026-07-01, `d5c5f2fb0`, triton swap)
+
+| Arm | G (t/s) | overlap | stall_ratio | vs pre-B+13 |
+|-----|---------|---------|-------------|-------------|
+| canonical (dual ON) | 80.1 | 0.1% | 0.70 | +5% G (76.3) |
+| dual OFF (ships) | **81.8** | 0.2% | 0.68 | +1.6% G (80.5) |
+
+M3 still FAIL. B+13 cuts orchestration stall on 4-GPU; G gain is real but overlap gate unchanged. Production 4-GPU: keep **dual OFF** (B+11).
+
 **Trace env:** `GGML_SCHED_TRACE=1`, `GGML_RPC_TRACE=1` (C-full phases in [IMPLEMENTATION.md](IMPLEMENTATION.md)).
 
 **Path C boundary:** Path C (server-side scheduling / distributed orchestration) is **out of scope** for `rpc-multi-backend-pipeline-plus`. Reference Path C docs for ideas only; do not implement Path C on this branch.
