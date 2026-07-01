@@ -41,6 +41,11 @@ case "$LABEL" in
         export BENCH_TS="${BENCH_TS:-50,28,22}"
         export GGML_PIPELINE_PLUS="${GGML_PIPELINE_PLUS:-1}"
         ;;
+    b6-3gpu-g-triton)
+        export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051,192.168.8.23:50054}"
+        export BENCH_TS="${BENCH_TS:-30,35,35}"
+        export GGML_PIPELINE_PLUS="${GGML_PIPELINE_PLUS:-1}"
+        ;;
     b6-5gpu-g|b6-5gpu-g-prod)
         # shellcheck source=scripts/b6-gate-5gpu-production-env.sh
         source "${ROOT}/scripts/b6-gate-5gpu-production-env.sh"

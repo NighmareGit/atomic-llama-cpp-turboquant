@@ -19,6 +19,7 @@ if [[ -z "$LABEL" || "$LABEL" == "-h" || "$LABEL" == "--help" ]]; then
     echo "  b6-4gpu-g          4-GPU jupiter :50053 (DEPRECATED — use triton)"
     echo "  b6-4gpu-g-triton   4-GPU canonical gate (triton :50054 as RPC2)"
     echo "  b6-3gpu-g          3-GPU Linux (remus 5060 + romulus 3060 + 7900)"
+    echo "  b6-3gpu-g-triton   3-GPU A/B (remus 5060 + triton 3090 + 7900)"
     echo "  b6-5gpu-g          5-GPU Linux profiler (baseline; dual-socket off)"
     echo "  b6-5gpu-g-prod     5-GPU production preset (dual-socket ON, see b6-gate-5gpu-production-env.sh)"
     echo "  b6-2gpu-f-plus0    2-GPU remus, GGML_PIPELINE_PLUS=0"
