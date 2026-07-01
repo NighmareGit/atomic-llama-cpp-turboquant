@@ -72,12 +72,25 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 
 | Slot | Endpoint | Role |
 |------|----------|------|
-| RPC0 | `192.168.8.176:50051` | remus 5060 Ti |
-| RPC1 | `127.0.0.1:50051` | remus 3060 (romulus tunnel) |
+| RPC0 | `192.168.8.176:50051` | remus 5060 Ti (`hostname=remus`) |
+| RPC1 | `127.0.0.1:50051` | romulus 3060 Ti docker (`pathb-rpc-romulus`; **not** on remus) |
 | RPC2 | `192.168.8.23:50054` | triton 3090 (replaces jupiter 5070) |
-| ROCm0 | romulus 7900 XTX | client gather |
+| ROCm0 | romulus 7900 XTX | client gather (`192.168.8.108`) |
 
-`-ts 22,11,34,33`. Do not block gates on jupiter rebuild. Preset `b6-4gpu-g` (JUPITER) is **deprecated** for active hunt until ops revisits Windows rpc-server.
+**Hardware ground truth (2026-07-01, live `nvidia-smi` + `rocm-smi` on each node):**
+
+Re-run inventory: `bash scripts/b6-gate-cluster-gpu-inventory.sh`  
+Pre-deploy ts/ngl plan: `bash scripts/pathb-rpc-vram-preflight.sh --preset b6-4gpu-g-triton --gguf <model>`
+
+| Host | IP | `nvidia-smi` | `rocm-smi` | Active RPC / role |
+|------|-----|--------------|------------|-------------------|
+| romulus | `192.168.8.108` | RTX **3060 Ti** 8192 MiB (7646 free) | RX **7900 XTX** ~24 GB (25753026560 B) | `:50051` docker on **local 3060**; ROCm **client** on **local 7900** |
+| remus | `192.168.8.176` | RTX **5060 Ti** 16311 MiB (15656 free) | RX **6600** ~8 GB (8573157376 B) — **unused** | `:50051` (5060); `:50052` (6600 parked) |
+| triton | `192.168.8.23` | RTX **3090** 24576 MiB + RTX **3070** 8192 MiB | n/a | `:50054` (3090) / `:50055` (3070 parked) |
+
+Each bench host is **dual-GPU**: romulus and remus pair one NVIDIA + one AMD on the same machine; triton pairs two NVIDIA cards. The **3060 Ti and 7900 XTX are both on romulus** — not on remus. `127.0.0.1:50051` is the romulus client loopback to its own docker RPC worker on the local 3060 Ti.
+
+`-ts 22,11,34,33` matches live free VRAM ratio (5060/3060/3090/7900 ~22/11/33/34%). Do not block gates on jupiter rebuild. Preset `b6-4gpu-g` (JUPITER) is **deprecated** for active hunt until ops revisits Windows rpc-server.
 
 Triton `:50055` (3070) remains parked for 35B+ MoE per ops notes.
 

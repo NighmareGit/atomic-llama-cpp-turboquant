@@ -148,6 +148,25 @@ build_profiler_args() {
     printf '%s\n' "${args[@]}"
 }
 
+vram_preflight() {
+    if [[ "${PATHB_VRAM_PREFLIGHT:-0}" != "1" ]]; then
+        return 0
+    fi
+    local preflight="${ROOT}/scripts/pathb-rpc-vram-preflight.sh"
+    local preset="${B6_GATE_PRESET:-${LABEL}}"
+    if [[ ! -x "$preflight" ]] && [[ ! -f "$preflight" ]]; then
+        echo "warn: PATHB_VRAM_PREFLIGHT=1 but missing ${preflight}" >&2
+        return 0
+    fi
+    echo "=== vram preflight (live ts/ngl plan) ==="
+    python3 "${ROOT}/rpc-patch/scripts/pathb-rpc-vram-preflight.py" \
+        --preset "$preset" \
+        --gguf "$MODEL" \
+        --rpc "$ENDPOINT" \
+        --ts "$TS" \
+        --strict || return 1
+}
+
 validate_rpc() {
     echo "=== rpc preflight (R5) ==="
     echo "endpoint=${ENDPOINT} ts=${TS}"
@@ -160,6 +179,7 @@ run_local() {
         echo "hint: cmake --build build --target llama-pipeline-profiler" >&2
         exit 1
     fi
+    vram_preflight || exit 1
     if [[ "${PROFILER_SKIP_VALIDATE:-0}" != "1" ]]; then
         validate_rpc || exit 1
     fi

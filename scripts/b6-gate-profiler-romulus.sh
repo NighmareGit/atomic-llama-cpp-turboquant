@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 # B+6 gate profiler presets on romulus (see rpc-patch/docs/b6-gate/PLAN.md).
+#
+# Cluster GPUs (live inventory: scripts/b6-gate-cluster-gpu-inventory.sh):
+#   romulus 192.168.8.108 — 7900 XTX (ROCm client) + 3060 Ti (docker :50051)
+#   remus   192.168.8.176 — 5060 Ti (:50051) + RX6600 (:50052, unused)
+#   triton  192.168.8.23  — 3090 (:50054) + 3070 (:50055, parked)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LABEL="${1:-}"
@@ -58,21 +63,21 @@ case "$LABEL" in
         ;;
     b6-4gpu-g)
         export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051,127.0.0.1:50051,192.168.8.21:50053}"
-        # ts order: RPC0 remus 5060, RPC1 3060, RPC2 JUPITER 5070, ROCm0 7900 (VRAM ~25/12/25/38)
+        # ts order: RPC0 remus 5060, RPC1 romulus 3060 docker (127.0.0.1), RPC2 JUPITER 5070, ROCm0 7900
         export BENCH_TS="${BENCH_TS:-25,12,25,38}"
         export GGML_PIPELINE_PLUS="${GGML_PIPELINE_PLUS:-1}"
         export PROFILER_OUT_DIR="${PROFILER_OUT_DIR:-${ROOT}/benches/path-b-plus/${LABEL}}"
         ;;
     b6-4gpu-g-triton)
         export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051,127.0.0.1:50051,192.168.8.23:50054}"
-        # ts order: RPC0 5060, RPC1 3060, RPC2 triton 3090, ROCm0 7900 (VRAM ~22/11/34/33)
+        # ts order: RPC0 remus 5060, RPC1 romulus 3060 docker, RPC2 triton 3090, ROCm0 7900 (VRAM ~22/11/34/33)
         export BENCH_TS="${BENCH_TS:-22,11,34,33}"
         export GGML_PIPELINE_PLUS="${GGML_PIPELINE_PLUS:-1}"
         export PROFILER_OUT_DIR="${PROFILER_OUT_DIR:-${ROOT}/benches/path-b-plus/${LABEL}}"
         ;;
     b6-5gpu-g)
         export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051,127.0.0.1:50051,192.168.8.21:50053,192.168.8.23:50055}"
-        # ts order: RPC0 5060, RPC1 3060, RPC2 5070, RPC3 triton 3070, ROCm0 7900 (VRAM ~22/11/22/11/34)
+        # ts order: RPC0 remus 5060, RPC1 romulus 3060 docker, RPC2 5070, RPC3 triton 3070, ROCm0 7900
         export BENCH_TS="${BENCH_TS:-22,11,22,11,34}"
         export GGML_PIPELINE_PLUS="${GGML_PIPELINE_PLUS:-1}"
         export PROFILER_OUT_DIR="${PROFILER_OUT_DIR:-${ROOT}/benches/path-b-plus/${LABEL}}"

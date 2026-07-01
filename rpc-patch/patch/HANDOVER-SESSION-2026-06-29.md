@@ -28,14 +28,14 @@
 
 ## Cluster map (current)
 
-| Node | IP | GPU | Port | Role |
-|------|-----|-----|------|------|
-| romulus | 192.168.8.108 | 7900 | - | ROCm client / profiler |
-| remus | 192.168.8.176 | 5060 | :50051 | CUDA RPC |
-| romulus docker | 127.0.0.1 | 3060 | :50051 | CUDA RPC |
-| JUPITER | 192.168.8.21 | 5070 Ti | :50053 | CUDA RPC (canonical RPC2) |
-| triton | 192.168.8.23 | 3090 | :50054 | CUDA RPC (A/B swap) |
-| triton | 192.168.8.23 | 3070 | :50055 | deferred (8 GB) |
+Live inventory: `bash scripts/b6-gate-cluster-gpu-inventory.sh` (`nvidia-smi` + `rocm-smi` per node).
+
+| Node | IP | GPUs on host | Port | Role |
+|------|-----|--------------|------|------|
+| romulus | 192.168.8.108 | 7900 XTX + 3060 Ti | 7900 local / `:50051` docker | ROCm client + local CUDA RPC |
+| remus | 192.168.8.176 | 5060 Ti + RX 6600 (unused) | `:50051` / `:50052` | CUDA RPC worker |
+| JUPITER | 192.168.8.21 | 5070 Ti | :50053 | CUDA RPC (deprecated RPC2) |
+| triton | 192.168.8.23 | 3090 + 3070 | `:50054` / `:50055` | CUDA RPC (canonical RPC2) |
 
 **Hard rule:** one profiler at a time; never two profilers on triton `:50054`.
 
@@ -45,8 +45,8 @@
 
 | Preset | `-rpc` | `-ts` |
 |--------|--------|-------|
-| 4-GPU canonical (gate default) | remus, 3060, JUPITER | `25,12,25,38` |
-| 4-GPU triton A/B | remus, 3060, triton :50054 | `22,11,34,33` |
+| 4-GPU canonical (gate default) | remus 5060, romulus 3060 docker, JUPITER | `25,12,25,38` |
+| 4-GPU triton A/B | remus 5060, romulus 3060 docker, triton :50054 | `22,11,34,33` |
 | ts sweep best n=128 overlap | same canonical | `36,24,24,16` (G2) |
 | ts confirm best n=384 G | same canonical | `30,14,16,40` (G4) |
 

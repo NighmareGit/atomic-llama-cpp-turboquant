@@ -6,7 +6,7 @@ Usage:
   pathb-72b-vram-calc.py --config config-c --model-gb 38 --layers 80 --ctx 8192
 
 Device index order with --rpc: RPC workers first (index 0..N-1), local CUDA last.
-Config C remus-first: RPC0=5060 Ti, RPC1=3060 Ti, ROCm0=7900 XTX.
+Config C (romulus client): RPC0=romulus 3060 docker (127.0.0.1:50051), RPC1=remus 5060, ROCm0=7900 XTX.
 Config E: RPC0=remus 5060 Ti, CUDA0=Windows 5070 Ti.
 Config F: RPC0=remus 5060 Ti, RPC1=remus RX 6600, CUDA0=Windows 5070 Ti.
 Config G: RPC0=remus 5060, RPC1=romulus 3060, RPC2=Windows 5070, ROCm0=romulus 7900 client.
@@ -32,7 +32,7 @@ CONFIGS = {
         "rpc_order": "5060,7900",
     },
     "config-c": {
-        "name": "Config C remus-first (5060 + 3060 + 7900 XTX)",
+        "name": "Config C (remus 5060 + romulus 3060 docker + 7900 XTX; endpoint remus-first)",
         "vrams": [15.5, 7.0, 22.0],
         "ts_default": [35, 15, 50],
         "rpc_order": "5060,3060,7900",

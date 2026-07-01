@@ -13,11 +13,15 @@ A controlled rollback run that sets one mitigation env flag to `0` while holding
 _Avoid_: A/B test, experiment
 
 **Romulus**:
-Linux ROCm cluster host at `192.168.8.108`; primary gate **client** (7900XTX) with optional local RPC worker (3060 Ti on `:50051`) and access to `/mnt/models`.
+Linux dual-GPU host at `192.168.8.108`: RX **7900 XTX** (ROCm gate **client**) and RTX **3060 Ti** (CUDA RPC docker `127.0.0.1:50051`, container `pathb-rpc-romulus`). Both GPUs live on romulus — the 3060 is **not** on remus.
 _Avoid_: cluster, server
 
+**Remus**:
+Linux dual-GPU host at `192.168.8.176`: RTX **5060 Ti** CUDA RPC on `:50051` (active worker) and RX **6600** on `:50052` (present per `rocm-smi`, **excluded** from production 4-GPU and 35B+ MoE paths).
+_Avoid_: worker, remote GPU
+
 **Triton**:
-Ubuntu 24.04 CUDA worker at `192.168.8.23`; RTX 3090 RPC on `:50054` is **canonical 4-GPU RPC2** (replaces jupiter `:50053`, skipped 2026-07-01). 3070 on `:50055` parked for 35B MoE. Ops: `scripts/b6-gate-triton-*.sh`.
+Ubuntu 24.04 dual-NVIDIA host at `192.168.8.23`: RTX **3090** RPC on `:50054` is **canonical 4-GPU RPC2** (replaces jupiter `:50053`, skipped 2026-07-01). RTX **3070** on `:50055` parked for 35B MoE. Ops: `scripts/b6-gate-triton-*.sh`.
 _Avoid_: worker, remote GPU
 
 **Mitigation ladder**:
