@@ -1742,10 +1742,24 @@ static bool ggml_backend_share_physical_device(ggml_backend_t a, ggml_backend_t 
     return false;
 }
 
+static ggml_backend_t ggml_backend_sched_backend_from_buft(ggml_backend_sched_t sched, ggml_backend_buffer_type_t buft) {
+    for (int i = 0; i < sched->n_backends; i++) {
+        if (sched->bufts[i] == buft) {
+            return sched->backends[i];
+        }
+    }
+    for (int i = 0; i < sched->n_backends; i++) {
+        if (ggml_backend_supports_buft(sched->backends[i], buft)) {
+            return sched->backends[i];
+        }
+    }
+    return nullptr;
+}
+
 // B+13 gather: dst/src cpy_tensor_async, then host<->device async, then same-device retry.
 // Host paths cover CPU sched backends; CUDA/HIP extension covers device<->device same GPU.
 static bool ggml_backend_sched_try_async_tensor_copy(
-        ggml_backend_t input_backend, ggml_backend_t split_backend,
+        ggml_backend_sched_t sched, ggml_backend_t input_backend, ggml_backend_t split_backend,
         const ggml_tensor * input, ggml_tensor * input_cpy) {
     if (split_backend->iface.cpy_tensor_async != nullptr) {
         if (split_backend->iface.cpy_tensor_async(input_backend, split_backend, input, input_cpy)) {
@@ -1771,13 +1785,38 @@ static bool ggml_backend_sched_try_async_tensor_copy(
         }
     }
     if (!ggml_backend_buffer_is_rpc(buf_src) && ggml_backend_buffer_is_rpc(buf_dst)) {
-        if (ggml_backend_rpc_try_upload_tensor(input_backend, input, input_cpy)) {
+        ggml_backend_t upload_backend = ggml_backend_sched_backend_from_buft(sched, buf_src->buft);
+        if (upload_backend == nullptr) {
+            upload_backend = input_backend;
+        }
+        if (ggml_backend_rpc_try_upload_tensor(upload_backend, input, input_cpy)) {
             return true;
         }
     }
 
     const bool host_src = ggml_backend_buffer_is_host(buf_src);
     const bool host_dst = ggml_backend_buffer_is_host(buf_dst);
+
+    if (!host_src && !host_dst && !ggml_backend_buffer_is_rpc(buf_src) && !ggml_backend_buffer_is_rpc(buf_dst)) {
+        ggml_backend_t src_backend = ggml_backend_sched_backend_from_buft(sched, buf_src->buft);
+        ggml_backend_t dst_backend = ggml_backend_sched_backend_from_buft(sched, buf_dst->buft);
+        if (src_backend == nullptr) {
+            src_backend = input_backend;
+        }
+        if (dst_backend == nullptr) {
+            dst_backend = split_backend;
+        }
+        if (src_backend->iface.cpy_tensor_async != nullptr) {
+            if (src_backend->iface.cpy_tensor_async(src_backend, dst_backend, input, input_cpy)) {
+                return true;
+            }
+        }
+        if (dst_backend->iface.cpy_tensor_async != nullptr) {
+            if (dst_backend->iface.cpy_tensor_async(src_backend, dst_backend, input, input_cpy)) {
+                return true;
+            }
+        }
+    }
 
     if (host_src != host_dst) {
         if (ggml_backend_buffer_is_rpc(buf_src) || ggml_backend_buffer_is_rpc(buf_dst)) {
@@ -1953,7 +1992,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     copy_experts(first_id, last_id);
                 } else {
                     const bool copied_async = ggml_backend_sched_try_async_tensor_copy(
-                        input_backend, split_backend, input, input_cpy);
+                        sched, input_backend, split_backend, input, input_cpy);
                     if (!copied_async) {
                         const auto sync_t0 = std::chrono::steady_clock::now();
                         ggml_backend_synchronize(input_backend);
