@@ -26,6 +26,7 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 | 2026-07-01 | **Sample API C-full keep lists deferred** | Emit/parser/re-bench first | [FUTURE-EXPANSIONS.md](FUTURE-EXPANSIONS.md) only |
 | 2026-07-01 | **Validation before next M3 experiment** | B+14/B+15 closed HIP gather gap; CUDA `leaf_55` residual ~1.5ms; M3 still ~0.3% — run MoE + larger-model smoke before picking next hunt step | Lateral todo below; PLAN review after V1+V2 (M3 hunt not postponed) |
 | 2026-07-01 | **V3 plan review: ship B+14/B+15, resume M3 hunt** | V1/V2 PASS; overlap 0.3% @ n=384 canonical unchanged; next experiment B+12 not leaf_55 | TRACKING V3 section; PLAN Phase 2b |
+| 2026-07-01 | **B+12 NULL on M3 overlap** | Canonical bisect ON/OFF: overlap 0.3% both; G +1.8%; drain_flush -52%; defer path shipped | B+12 section; next B+11 |
 
 ## Current Champion Runs
 
@@ -113,7 +114,7 @@ Romulus-native canonical (`78e8f3c45` ladder):
 
 ### Primary — B+6 overlap gate (M3 hunt resumed)
 
-V1+V2 validation **PASS** (see Lateral Todo). B+14/B+15 cleared for ship. **M3 hunt active** — next canonical experiment is B+12 (`GET_TENSOR` deferral), not CUDA `leaf_55` alone (G lever, weak overlap lever). See **V3 plan review** in Lateral Todo.
+V1+V2 validation **PASS** (see Lateral Todo). B+14/B+15 cleared for ship. **B+12 done — NULL on overlap** (see B+12 section). **M3 hunt active** — next experiment **B+11** (dual-socket HOL), gate `b6-4gpu-g` n=384.
 
 ### Secondary — cluster sync + instrumentation
 
@@ -148,6 +149,7 @@ V1+V2 validation **PASS** (see Lateral Todo). B+14/B+15 cleared for ship. **M3 h
 - Reconciled with B+6 gate, b6-gate/TRACKING, grilling lateral ladder (B+8–B+13)
 - Formalized [Path-B-Plus-MultiBackend-RPC-Orchestration-Audit.md](ANALYSIS/Path-B-Plus-MultiBackend-RPC-Orchestration-Audit.md)
 - B+14 gather prefetch + producer mask; B+15 split-1-start RPC prefetch + MoE ids path (`41a65d963`, `590597110`)
+- B+12 GET_TENSOR deferral — NULL overlap @ n=384; G +1.8%; `GGML_RPC_GET_TENSOR_DEFER`; romulus sync/rebuild scripts (2026-07-01)
 
 ## Lateral Todo (post-B+15 — 2026-07-01)
 
@@ -209,7 +211,7 @@ Validation overlap (0.8–1.3% @ n=128) shows the scheduler **can** overlap more
 1. **Ship B+14/B+15** — V1/V2 PASS; zero `sync_copy_fallback`; no MoE leaf regressions on gemma4 or llama-70B HIP.
 2. **Keep M3 as hard complete criterion** — do not downgrade to throughput-only or Path C.
 3. **Resume hunt on canonical bench** — next experiments ordered by overlap leverage, not G alone:
-   - **B+16-candidate:** pipelining-depth / `GET_TENSOR` deferral (B+12) — addresses serial RPC wait, not leaf H2D
+   - ~~B+12 GET_TENSOR deferral~~ — **NULL overlap** (shipped for G/drain)
    - **B+17-candidate:** CUDA `leaf_55` MoE weight path — G/stall ROI on CUDA docker; unlikely to move overlap_pct materially
 4. **Dual-track execution:** production ship (`trace-f-2gpu-plus` 48.9 t/s) proceeds in parallel with canonical M3 experiments.
 5. **V2 CUDA gap** — llama-70B blocked on remus 5060 Ti VRAM; not a B+15 regression. Use romulus HIP or larger local GPU for dense 70B+ CUDA validation.
@@ -218,13 +220,32 @@ Validation overlap (0.8–1.3% @ n=128) shows the scheduler **can** overlap more
 
 - [x] Push B+14/B+15 to gitea; canonical `b15b` re-bench (rebuild `ggml-base` after sync)
 - [x] V2 CUDA via `llama-server` + triton `:50054` (remus client, `--fit on`) — PASS 2026-07-01
-- [ ] B+12 prototype + bisect on canonical n=384 (overlap lever)
+- [x] B+12 bisect on canonical n=384 — **NULL overlap** (2026-07-01); see B+12 section
+- [ ] B+11 dual-socket RPC scope + bisect on `b6-4gpu-g` n=384
 - [ ] Phase 1.2 A+B parsers (waterfall/Gantt) before next major bisect
+
+### B+12 — GET_TENSOR deferral (2026-07-01)
+
+**Flag:** `GGML_RPC_GET_TENSOR_DEFER=1` (default ON when `GGML_PIPELINE_PLUS=1`). Bisect OFF: `bash scripts/b6-gate-bisect-run.sh no-get-defer`.
+
+**Implementation:** Skip `rpc_gather_flush` / `rpc_early_flush` when defer ON; single `rpc_defer_flush` at graph_compute boundary; blocking `tensor_set` at flush (avoids multi-slot `synchronize` deadlock). Romulus rebuild must copy `ggml/include/ggml-rpc.h` -> `ggml/src/ggml-rpc.h` (`b6-gate-romulus-sync-rebuild.sh`).
+
+| Bisect | G (t/s) | overlap_pct | stall_ratio | drain_flush_ms | blocking_ms |
+|--------|---------|-------------|-------------|----------------|-------------|
+| B+12 ON (`-b12`) | **204.5** | 0.3% | 0.904 | 79 | 1297 |
+| B+12 OFF (`no-get-defer`) | 200.9 | 0.3% | 0.908 | 166 | 1426 |
+| Delta | +1.8% | **0.0** | -0.004 | -52% | -9% |
+
+**Trace proof (ON):** `rpc_defer_flush=386`, `rpc_gather_flush=0`, `rpc_early_flush=0`, `decode_max=384`.
+
+**Verdict:** **NULL on M3 overlap** — ship defer path for G/drain/correctness; not the pipelining-depth lever. **Next:** B+11 (HOL).
+
+Artifacts: `b6-2gpu-f-triton-n384-romulus-native-b12`, `...-no-get-defer`.
 
 ### Pending M3 experiments (hunt active)
 
-- CUDA `leaf_55` MoE weight path (~1.5ms vs HIP ~122us) — candidate next experiment; see FUTURE-EXPANSIONS
-- Further overlap / pipelining-depth work — **review in PLAN/MISSION after V1+V2**, not postponed as a mission item
+- **B+11** dual-socket RPC (cmd/response split, proto 4.4?) — HOL / tail RTT; gate `b6-4gpu-g` n=384
+- CUDA `leaf_55` MoE weight path (~1.5ms vs HIP ~122us) — G lever only; see FUTURE-EXPANSIONS / B+16
 
 ## Next 7 Days (grill-locked 2026-07-01)
 
@@ -251,7 +272,8 @@ Validation overlap (0.8–1.3% @ n=128) shows the scheduler **can** overlap more
 - [x] **V3** Plan / mission review after V1+V2 (2026-07-01)
 - [x] Push B+14/B+15 to gitea; romulus + triton @ `590597110` (2026-07-01)
 - [x] Canonical B+15 re-bench `b6-2gpu-f-triton-n384-romulus-native-b15b` — G=190.2, overlap=0.3%, `input_wait` ~358ms (b15 stale `ggml-base`; rebuild fixed)
-- [ ] B+12 `GET_TENSOR` deferral bisect on canonical n=384
+- [x] B+12 `GET_TENSOR` deferral bisect on canonical n=384 — NULL overlap (2026-07-01)
+- [ ] B+11 dual-socket RPC — scope + `b6-4gpu-g` bisect
 
 ## Metrics Dashboard
 
@@ -274,4 +296,4 @@ Validation overlap (0.8–1.3% @ n=128) shows the scheduler **can** overlap more
 ---
 
 **Update this file after every profile/profiler run or topology decision.**  
-**Last edit:** 2026-07-01 — V3 review: ship B+14/B+15; M3 hunt resumes (B+12 next).
+**Last edit:** 2026-07-01 — B+12 NULL overlap; shipped defer path; next B+11.

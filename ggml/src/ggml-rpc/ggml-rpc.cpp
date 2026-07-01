@@ -261,6 +261,7 @@ static void rpc_drain_all_endpoints_pending();
 
 int ggml_backend_rpc_server_count(void);
 bool ggml_backend_rpc_event_defer_barrier(void);
+bool ggml_backend_rpc_get_tensor_defer(void);
 
 static bool rpc_pipeline_plus_enabled() {
     static int v = -1;
@@ -287,6 +288,15 @@ static int rpc_event_defer_env_enabled() {
     static int v = -1;
     if (v < 0) {
         const char * e = getenv("GGML_RPC_EVENT_DEFER_BARRIER");
+        v = e ? atoi(e) : (rpc_pipeline_plus_enabled() ? 1 : 0);
+    }
+    return v;
+}
+
+static int rpc_get_tensor_defer_env_enabled() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_RPC_GET_TENSOR_DEFER");
         v = e ? atoi(e) : (rpc_pipeline_plus_enabled() ? 1 : 0);
     }
     return v;
@@ -1254,10 +1264,15 @@ void ggml_backend_rpc_flush_pending_downloads_for_dst(const ggml_tensor * const 
         flush_pending_get_tensor_for_socket(sock);
     }
 
+    const bool defer_h2d_sync = ggml_backend_rpc_get_tensor_defer();
     auto it = tls_pending_downloads.begin();
     while (it != tls_pending_downloads.end()) {
         if (rpc_pending_download_matches_dst(*it, dst, n_dst)) {
-            ggml_backend_tensor_set_async(it->dst_backend, it->dst, it->staging.data(), 0, it->staging.size());
+            if (defer_h2d_sync) {
+                ggml_backend_tensor_set(it->dst, it->staging.data(), 0, it->staging.size());
+            } else {
+                ggml_backend_tensor_set_async(it->dst_backend, it->dst, it->staging.data(), 0, it->staging.size());
+            }
             it = tls_pending_downloads.erase(it);
         } else {
             ++it;
@@ -1555,6 +1570,10 @@ bool ggml_backend_rpc_event_defer_barrier(void) {
         return false;
     }
     return ggml_backend_rpc_server_count() >= rpc_event_defer_min_servers();
+}
+
+bool ggml_backend_rpc_get_tensor_defer(void) {
+    return rpc_pipeline_plus_enabled() && rpc_get_tensor_defer_env_enabled() != 0;
 }
 
 static void rpc_backend_event_record(ggml_backend_t backend, ggml_backend_event_t event) {

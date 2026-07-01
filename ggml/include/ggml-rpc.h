@@ -53,6 +53,9 @@ GGML_BACKEND_API int ggml_backend_rpc_server_count(void);
 // B+9: defer EVENT recv to pipeline_barrier (default on for 2-GPU when pipeline plus is on).
 GGML_BACKEND_API bool ggml_backend_rpc_event_defer_barrier(void);
 
+// B+12: defer GET_TENSOR recv to sched graph_compute boundary (default on when pipeline plus is on).
+GGML_BACKEND_API bool ggml_backend_rpc_get_tensor_defer(void);
+
 #ifdef  __cplusplus
 }
 #endif

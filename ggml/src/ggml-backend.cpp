@@ -79,6 +79,10 @@ static bool ggml_sched_rpc_event_defer_barrier() {
     return ggml_backend_rpc_event_defer_barrier();
 }
 
+static bool ggml_sched_rpc_get_tensor_defer() {
+    return ggml_backend_rpc_get_tensor_defer();
+}
+
 static bool ggml_sched_moe_async_copy_enabled() {
     static int v = -1;
     if (v < 0) {
@@ -2105,7 +2109,8 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
         }
 
         // B+15: drain prefetched RPC GETs at gather-split entry (GETs should have overlapped RPC compute).
-        if (!ggml_backend_is_rpc(split_backend)) {
+        // B+12: skip early recv when defer is on; flush once before graph_compute instead.
+        if (!ggml_backend_is_rpc(split_backend) && !ggml_sched_rpc_get_tensor_defer()) {
             const ggml_tensor * gather_flush_dsts[GGML_SCHED_MAX_SPLIT_INPUTS + 1];
             int n_gather_flush = 0;
             for (int i = 0; i < split->n_inputs; i++) {
@@ -2360,7 +2365,8 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
             }
         }
 
-            if (input_pass == 0 && !ggml_backend_is_rpc(split_backend) && n_rpc_early_flush_dsts > 0) {
+            if (input_pass == 0 && !ggml_backend_is_rpc(split_backend) && n_rpc_early_flush_dsts > 0 &&
+                !ggml_sched_rpc_get_tensor_defer()) {
                 const auto flush_t0 = std::chrono::steady_clock::now();
                 ggml_backend_rpc_flush_pending_downloads_for_dst(rpc_early_flush_dsts, (size_t) n_rpc_early_flush_dsts);
                 const auto flush_us = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -2397,7 +2403,8 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
             const auto flush_us = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - flush_t0).count();
             if (flush_us > 0) {
-                sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "rpc_flush_downloads", flush_us);
+                sched_trace_emit(split_id, split_backend_id, sched->cur_copy,
+                    ggml_sched_rpc_get_tensor_defer() ? "rpc_defer_flush" : "rpc_flush_downloads", flush_us);
             }
         }
 

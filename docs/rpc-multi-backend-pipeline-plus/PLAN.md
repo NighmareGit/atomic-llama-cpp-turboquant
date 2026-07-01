@@ -67,7 +67,7 @@ Ordered by leverage on `overlap_pct` (profiler-led). One bisect per re-bench.
 
 **Recommended implement order:** B+8 → B+9 → B+10 → B+7a′ (4-GPU drain prerequisite if canonical is gate topology).
 
-**Post-B+15 order (V3 review 2026-07-01):** B+13/B+14/B+15 done → **B+12** (overlap) → B+11 (HOL) → B+16 `leaf_55` (CUDA G only, weak overlap ROI).
+**Post-B+15 order (V3 review 2026-07-01):** B+13/B+14/B+15 done → B+12 **NULL** (shipped defer) → **B+11** (HOL) → B+16 `leaf_55` (CUDA G only, weak overlap ROI).
 
 **Stop rule:** If M1 not reached after B+8–B+10 + B+7a′ on 2-GPU and 4-GPU, document structural ceiling in TRACKING. **Triggered 2026-07-01** — see TRACKING structural ceiling section. Ceiling coexists with continued B+12/B+11 hunt until M3 PASS or explicit mission revision.
 
@@ -130,4 +130,4 @@ bash scripts/b6-gate-diagnose-runs.sh b6-2gpu-f b6-4gpu-g
 - End of Phase 2: M3 PASS **or** structural ceiling documented with trace proof
 - Phase 3 start: Explicit approval only
 
-**Next action (2026-07-01):** V3 review done — **ship B+14/B+15**, **resume M3 hunt**. Canonical `b15b` confirmed on romulus. **B+12** next on canonical n=384. Large-model validation (V2 CUDA): use **llama-server + RPC** (remus+triton or remus+romulus), not profiler-on-5060-Ti alone. Details: [TRACKING.md](TRACKING.md) V3 section.
+**Next action (2026-07-01):** B+12 NULL — defer shipped. **B+11** dual-socket scope + `b6-4gpu-g` n=384 bisect. Details: [TRACKING.md](TRACKING.md) B+12 section.

@@ -45,8 +45,8 @@ This file holds **one** deferred item: extending the post-run trace sample scrip
 
 | Priority | Item | Lever | Notes |
 |----------|------|-------|-------|
-| **1 (next)** | B+12 `GET_TENSOR` deferral | overlap / pipelining depth | Addresses serial RPC wait on hot path |
-| 2 | B+11 dual-socket RPC | HOL / tail RTT | After Phase 1.2 A+B parsers |
+| ~~1~~ | ~~B+12 `GET_TENSOR` deferral~~ | overlap | **NULL** @ n=384 (2026-07-01); shipped for G/drain |
+| **1 (next)** | B+11 dual-socket RPC | HOL / tail RTT | Gate `b6-4gpu-g` n=384 |
 | 3 | B+16 CUDA `leaf_55` MoE weight | G / `input_wait` on CUDA | ~1584us vs HIP ~122us; weak overlap ROI |
 
 **Deferred:** Sample API C-full keep lists (above).

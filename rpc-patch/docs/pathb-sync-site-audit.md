@@ -63,7 +63,7 @@ Mission tracking: [b6-gate/TRACKING.md](b6-gate/TRACKING.md).
 | B+7a′ | 4-GPU drain 50s vs 5s | Multi-socket RPC flush | **SHIPPED** (untested) | `GGML_RPC_MULTI_SOCKET_FLUSH` |
 | B+13 | `cpy_tensor_async` sync fallback | Dst-then-src async try | **SHIPPED** (untested) | (with Plus) |
 | B+11 | Single TCP HOL blocking | Dual-socket proto 4.4 | PENDING | — |
-| B+12 | GET_TENSOR blocking storm | Full Path A2 deferral | PARTIAL | via B+9 barrier drain |
+| B+12 | GET_TENSOR blocking storm | Full Path A2 deferral | **NULL overlap** (shipped) | `GGML_RPC_GET_TENSOR_DEFER` |
 
 ### B+7f — hot-path observability (Phase 1.2C-full, 2026-07-01)
 
