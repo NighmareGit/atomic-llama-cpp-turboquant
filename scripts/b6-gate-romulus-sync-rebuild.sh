@@ -149,6 +149,7 @@ rsync_sources() {
         scripts/b6-gate-phase0-assembly-bounds.sh
         scripts/b6-gate-overlap-serial-audit.py
         rpc-patch/scripts/pathb-rpc-vram-preflight.py
+        rpc-patch/scripts/pathb-72b-vram-calc.py
         scripts/b6-gate-profiler-romulus.sh
         scripts/b6-gate-romulus-sync-rebuild.sh
         scripts/b6-gate-romulus-b12-bisect-bg.sh
