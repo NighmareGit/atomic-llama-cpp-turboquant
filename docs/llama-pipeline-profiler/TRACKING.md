@@ -45,6 +45,7 @@
 
 | Date | Atomic step | Action | Artifact |
 |------|-------------|--------|----------|
+| 2026-07-01 | R5-1b | PR 8 matrix all PASS; `pipeline_rpc_validate_prepare()` RPC-only load | `b6-gate-validate-rpc-matrix.sh` |
 | 2026-06-28 | R5-1 | `--validate-rpc` + auto preflight | live OK: 192.168.8.176, 192.168.8.21 |
 | 2026-06-28 | R5-2 | `llama-pipeline-r5-validate.sh` + cluster preflight | `scripts/` |
 | 2026-06-28 | R5-3 | Wire `-r` repetitions in `run_cell` | `llama-pipeline-profiler.cpp` |

@@ -8,6 +8,14 @@
 
 namespace {
 
+bool try_load_rpc_plugin(const char * path) {
+    if (!path || !path[0]) {
+        return false;
+    }
+    ggml_backend_reg_t reg = ggml_backend_load(path);
+    return reg != nullptr && ggml_backend_reg_by_name("RPC") != nullptr;
+}
+
 std::vector<std::string> split_csv(const std::string & s) {
     return string_split<std::string>(s, ',');
 }
@@ -29,6 +37,24 @@ int count_tensor_split_devices(const std::string & ts) {
 }
 
 } // namespace
+
+bool pipeline_rpc_validate_prepare() {
+    if (ggml_backend_reg_by_name("RPC")) {
+        return true;
+    }
+    static const char * const k_rpc_plugins[] = {
+        "libggml-rpc.so",
+        "libggml-rpc.so.0",
+        "ggml-rpc.dll",
+        nullptr,
+    };
+    for (const char * const * p = k_rpc_plugins; *p; ++p) {
+        if (try_load_rpc_plugin(*p)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 bool pipeline_rpc_validate(
         const std::string & rpc_endpoints,

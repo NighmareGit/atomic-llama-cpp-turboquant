@@ -657,11 +657,17 @@ int llama_pipeline_profiler(int argc, char ** argv) {
     apply_tensor_split(cfg);
 
     if (cfg.validate_rpc_only) {
-        llama_backend_init();
-        ggml_backend_load_all();
+        if (!pipeline_rpc_validate_prepare()) {
+            llama_backend_init();
+            ggml_backend_load_all();
+        }
         const bool ok = run_rpc_validate(cfg);
+        if (!ok) {
+            llama_backend_free();
+            return 1;
+        }
         llama_backend_free();
-        return ok ? 0 : 1;
+        return 0;
     }
 
     if (!cfg.diagnose_only_dir.empty()) {

@@ -128,4 +128,4 @@ bash scripts/b6-gate-diagnose-runs.sh b6-2gpu-f b6-4gpu-g
 - End of Phase 2: M3 PASS **or** structural ceiling documented with trace proof
 - Phase 3 start: Explicit approval only
 
-**Next action (2026-07-01):** Structural ceiling closed. Remaining: PR 8 validate-rpc hygiene, comparison matrix refresh. B+11–B+13 parked (not Path C).
+**Next action (2026-07-01):** Structural ceiling closed. PR 8 + comparison matrix done. **Grill B+11–B+13** for scope before any further code. Path C out of scope.

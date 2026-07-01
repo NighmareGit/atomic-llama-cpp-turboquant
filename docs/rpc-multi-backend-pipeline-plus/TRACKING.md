@@ -99,7 +99,7 @@ Romulus-native canonical (`78e8f3c45` ladder):
 
 ### What remains in path-b-plus (no Path C)
 
-1. **PR 8** — validate-rpc hang root cause (hygiene; re-enable after fix)
+1. ~~**PR 8** validate-rpc~~ (**done 2026-07-01** — matrix all PASS; RPC handshake fix; `b6-gate-validate-rpc-matrix.sh`)
 2. **Production guard** — `trace-f-2gpu-plus` @ 48.9 t/s; RX6600 excluded for 35B+ A3B MoE
 3. **B+11–B+13** — parked unless explicit new scope (proto/cross-cutting; not Path C)
 4. **Comparison matrix** — `BENCHMARKS/2026-07-comparison-matrix.md` when 1.1 data is folded in
@@ -115,7 +115,7 @@ Ladder exhausted; see **Structural ceiling** section above. No further bisect wa
 ### Secondary — Instrumentation (Phase 1.1)
 
 - ~~Per-split / per-RPC RTT in trace parsers~~ (**done 2026-07-01** — `pathb-rpc-trace-parse.sh`, `b6-gate-phase11-reparse.sh`)
-- `BENCHMARKS/2026-07-comparison-matrix.md` after refresh
+- ~~`BENCHMARKS/2026-07-comparison-matrix.md`~~ (**done 2026-07-01**)
 
 ### Ops / hygiene
 
@@ -151,7 +151,8 @@ Ladder exhausted; see **Structural ceiling** section above. No further bisect wa
 - [x] B+7a′ OFF (`no-flush`) on 4-GPU: overlap 0.1% (Δ-0.1), drain 5.3s vs 6.4s — NULL/worse overlap (2026-07-01)
 - [x] Phase 1.1 re-parse: RTT p50/p95/p99, per-split RPC RTT, `trace-parse-extended.json` (2026-07-01)
 - [x] PR 3 `b6-gate-bisect-compare.sh` — bisect verdict TSV (2026-07-01)
-- [ ] **PR 8:** validate-rpc investigation matrix (client x endpoint x server state)
+- [x] **PR 8:** validate-rpc matrix all PASS; RPC-only preflight helper (2026-07-01)
+- [x] **Comparison matrix** `BENCHMARKS/2026-07-comparison-matrix.md` (2026-07-01)
 - [x] `b6-4gpu-g-triton-n384-romulus-native` — overlap 0.1%, G=73.2, drain 4.6s (2026-07-01)
 - [x] **Structural ceiling doc** — PLAN stop rule met (2026-07-01)
 - [x] Triton ops scripts + commit/push session work (2026-07-01)

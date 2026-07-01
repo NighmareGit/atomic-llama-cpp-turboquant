@@ -30,9 +30,9 @@ Curated reference runs and matrix summaries for multi-backend RPC orchestration 
 3. Append row to `benches/path-b-plus/regression.jsonl` via profiler import
 4. Update audit if bottleneck classification changes
 
-## Planned Matrices
+## Matrices
 
-- `2026-07-comparison-matrix.md` — 2-device vs 3-device vs 4-GPU with per-split timing (after Phase 1.1)
+- [2026-07-comparison-matrix.md](2026-07-comparison-matrix.md) — 2-device vs 3-device vs 4-GPU + Phase 1.1 signals + PR 8 validate-rpc (2026-07-01)
 
 ---
 
