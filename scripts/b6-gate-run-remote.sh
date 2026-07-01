@@ -2,6 +2,7 @@
 # Run on romulus: bash scripts/b6-gate-run-remote.sh b6-2gpu-f
 set -euo pipefail
 LABEL="${1:?label required}"
+shift || true
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 export LD_LIBRARY_PATH="${ROOT}/build-rocm-docker/bin:/opt/rocm/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
@@ -13,6 +14,8 @@ export BENCH_PROMPT_FILE="${BENCH_PROMPT_FILE:-${ROOT}/benches/path-b-plus/promp
 export PROFILER_MODE=trace
 export PROFILER_OUT_DIR="${PROFILER_OUT_DIR:-${ROOT}/benches/path-b-plus/${LABEL}}"
 export GGML_PIPELINE_PLUS="${GGML_PIPELINE_PLUS:-1}"
+export B6_CLIENT_KIND="${B6_CLIENT_KIND:-rocm-native}"
+export PROFILER_SKIP_VALIDATE="${PROFILER_SKIP_VALIDATE:-1}"
 
 case "$LABEL" in
     b6-2gpu-f)
@@ -50,4 +53,5 @@ echo "=== b6-gate remote run: $LABEL ==="
 bash scripts/llama-pipeline-profiler-cluster.sh "$LABEL" \
     -ctk q8_0 -ctv q8_0 -ngl 99 --no-warmup \
     --with-gpu-telemetry --trace-sample 5 \
-    --regression-file "${ROOT}/benches/path-b-plus/regression.jsonl"
+    --regression-file "${ROOT}/benches/path-b-plus/regression.jsonl" \
+    "$@"

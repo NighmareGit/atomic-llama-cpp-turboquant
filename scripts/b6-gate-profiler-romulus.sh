@@ -16,6 +16,8 @@ if [[ -z "$LABEL" || "$LABEL" == "-h" || "$LABEL" == "--help" ]]; then
     echo "  b6-2gpu-f-plus0    2-GPU remus, GGML_PIPELINE_PLUS=0"
     echo "  b6-2gpu-jupiter    2-GPU remus CUDA + JUPITER 5070 :50053"
     echo "  b6-2gpu-jupiter-plus0  same, GGML_PIPELINE_PLUS=0"
+    echo ""
+    echo "OFF bisects: bash scripts/b6-gate-bisect-run.sh <no-partial|no-async-copy|no-defer|canonical-romulus>"
     exit 0
 fi
 
@@ -28,6 +30,7 @@ export BENCH_PROMPT_FILE="${BENCH_PROMPT_FILE:-${ROOT}/benches/path-b-plus/promp
 export PROFILER_MODE="${PROFILER_MODE:-trace}"
 export PROFILER_LOCAL=1
 export BENCH_TRACE=1
+export B6_CLIENT_KIND="${B6_CLIENT_KIND:-rocm-native}"
 
 case "$LABEL" in
     b6-2gpu-f)

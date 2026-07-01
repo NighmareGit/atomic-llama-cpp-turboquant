@@ -62,6 +62,52 @@ if [[ "${LABEL}" == "--help" || "${LABEL}" == "-h" ]]; then
     usage
 fi
 
+b6_mitigation_default() {
+    local v="${!1-}"
+    if [[ -n "$v" ]]; then
+        echo "$v"
+    elif [[ "${GGML_PIPELINE_PLUS:-0}" == "1" ]]; then
+        echo "1"
+    else
+        echo "0"
+    fi
+}
+
+b6_resolve_client_kind() {
+    if [[ -n "${B6_CLIENT_KIND:-}" ]]; then
+        echo "$B6_CLIENT_KIND"
+        return
+    fi
+    if [[ "$OUT_DIR" == /src/* ]]; then
+        echo "cuda-docker"
+    else
+        echo "rocm-native"
+    fi
+}
+
+b6_append_env_audit() {
+    local kind
+    kind="$(b6_resolve_client_kind)"
+    local git_sha
+    git_sha="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    {
+        echo "DATE_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "OUT_DIR=${OUT_DIR}"
+        echo "PROFILER_MODE=${MODE}"
+        echo "client_kind=${kind}"
+        echo "GIT_SHA=${git_sha}"
+        echo "RPC=${ENDPOINT}"
+        echo "TS=${TS}"
+        echo "N_GEN=${GEN}"
+        echo "GGML_PIPELINE_PLUS=${GGML_PIPELINE_PLUS:-1}"
+        echo "GGML_PIPELINE_BARRIER_PARTIAL=$(b6_mitigation_default GGML_PIPELINE_BARRIER_PARTIAL)"
+        echo "GGML_PIPELINE_BARRIER_PARTIAL_STRICT=$(b6_mitigation_default GGML_PIPELINE_BARRIER_PARTIAL_STRICT)"
+        echo "GGML_RPC_EVENT_DEFER_BARRIER=$(b6_mitigation_default GGML_RPC_EVENT_DEFER_BARRIER)"
+        echo "GGML_SCHED_MOE_ASYNC_COPY=$(b6_mitigation_default GGML_SCHED_MOE_ASYNC_COPY)"
+        echo "GGML_RPC_MULTI_SOCKET_FLUSH=$(b6_mitigation_default GGML_RPC_MULTI_SOCKET_FLUSH)"
+    } >>"${OUT_DIR}/env.txt"
+}
+
 build_profiler_args() {
     local args=(
         -m "$MODEL"
@@ -88,6 +134,15 @@ build_profiler_args() {
         args+=(--with-gpu-telemetry)
     fi
     args+=("$@")
+    if [[ "${PROFILER_SKIP_VALIDATE:-0}" == "1" ]]; then
+        local has_skip=0 a
+        for a in "${args[@]}"; do
+            [[ "$a" == "--skip-rpc-validate" ]] && has_skip=1
+        done
+        if [[ "$has_skip" -eq 0 ]]; then
+            args+=(--skip-rpc-validate)
+        fi
+    fi
     printf '%s\n' "${args[@]}"
 }
 
@@ -115,14 +170,8 @@ run_local() {
         export LD_LIBRARY_PATH
     fi
     "$PROFILER_BIN" "${PROF_ARGS[@]}"
-    {
-        echo "LABEL=${LABEL}"
-        echo "GIT_SHA=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-        echo "DATE_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        echo "client_kind=native"
-        echo "PROFILER_MODE=${MODE}"
-        echo "OUT_DIR=${OUT_DIR}"
-    } >>"${OUT_DIR}/env.txt"
+    echo "LABEL=${LABEL}" >>"${OUT_DIR}/env.txt"
+    b6_append_env_audit
     echo "PROFILER_CLUSTER_DONE label=${LABEL} out=${OUT_DIR}"
 }
 

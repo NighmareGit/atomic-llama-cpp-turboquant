@@ -2,7 +2,7 @@
 
 **Branch:** `Path-B-Event-Support-Pipeline-Plus`  
 **Date:** 2026-07-01  
-**Status:** Phase 1 (Instrumentation) + Phase 1b (B+6 gate) — in progress (triton n=128/384 runs completed; B+9 bisect started; instrumentation enhancements begun). Creds/tokens synced from romulus, pushes enabled.
+**Status:** Phase 1b — 2-GPU triton ladder **exhausted** (partial verdict below); 4-GPU gate run in progress on romulus.
 
 Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs/b6-gate/TRACKING.md)
 
@@ -18,6 +18,8 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 | 2026-06-30 | **M3 is hard mission complete criterion** | User decision: B+6 gate must pass or structural ceiling documented | Mitigation ladder before Path C |
 | 2026-06-30 | **Path C deferred** | Mother-repo / fork compatibility | Stay in `ggml-rpc.cpp` + `ggml-backend.cpp` until ladder exhausted |
 | 2026-06-30 | **Implement order B+8→B+9→B+10→B+7a′** | Profiler: overlap is pipelining depth; drain fixes alone insufficient | See [PLAN.md](PLAN.md) Phase 2 |
+| 2026-07-01 | **B+9 OFF null on n=384 triton** | DEFER=0 vs canonical: overlap 0.2% both, stall ~0.87 | Next: B+8 OFF bisect; see [ADR-0001](../adr/0001-b6-ladder-execution-post-b9-null.md) |
+| 2026-07-01 | **Topology-agnostic gate client** | Any synced node may run profiler; romulus primary | [CONTEXT.md](CONTEXT.md) |
 
 ## Current Champion Runs
 
@@ -25,12 +27,32 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 |-------|----------|------|---------|-------------|-------|--------|
 | `trace-f-2gpu-plus` | 5070 + 5060 `ts=50,50` | 1 | **48.9** | 0.6% | **Production default** 36B NL MoE | Shipped |
 | `b6-2gpu-f-triton-guard-n128` | romulus + triton 3090 (guard) | 1 | 116.0 | 0.9% | n=128 guard run; stall improved vs baseline | Gate data (MIXED) |
-| `b6-2gpu-f-triton-n384` | romulus + triton 3090 | 1 | 128.8 | 0.2% | canonical n=384 Plus=1; straggler dominant | Gate data (STRAGGLER_DOMINANT) |
+| `b6-2gpu-f-triton-n384-remus-docker` | remus docker + triton 3090 | 1 | 128.8 | 0.2% | archived from legacy n384; B+9 NULL baseline | Gate data |
+| `b6-2gpu-f-triton-n384-romulus-native` | romulus 7900XTX + triton 3090 | 1 | 200.8 | 0.2% | canonical romulus-native @ deacf5e65; stall 0.858 | Gate data (STRAGGLER_DOMINANT) |
 | `b6-2gpu-f-triton` | romulus + triton 3090 | 1 | 186.6 | 0.3% | Fast worker; overlap still FAIL | Gate ref |
 | `b6-2gpu-f` | romulus + remus 5060 | 1 | 75.6 | 0.2% | Post-B7 partial | Gate FAIL |
-| `b6-4gpu-g` | 4-GPU JUPITER canonical n=384 | 1 | 77.2 | 0.1% | drain 50.4s | Gate FAIL |
-| `b6-4gpu-g-triton` | 4-GPU triton swap n=384 | 1 | 63.1 | 0.1% | drain 5.9s | Gate FAIL |
+| `b6-4gpu-g` | 4-GPU JUPITER canonical n=384 (2026-06) | 1 | 77.2 | 0.1% | drain 50.4s | Gate FAIL |
+| `b6-4gpu-g-n384-romulus-native` | romulus 4-GPU + JUPITER n=384 | 1 | 69.5 | 0.2% | drain 6.4s; stall 0.96 | Gate FAIL |
+| `b6-4gpu-g-triton` | 4-GPU triton swap n=384 (2026-06) | 1 | 63.1 | 0.1% | drain 5.9s | Gate FAIL |
+| `b6-4gpu-g-triton-n384-romulus-native` | romulus 4-GPU + triton 3090 n=384 | 1 | 73.2 | 0.1% | drain 4.6s; stall 0.94 | Gate FAIL |
 | `trace-g-4gpu-primary` | romulus 4-GPU (no 6600) | 1 | ~43.0 | 0.1% | Stable cluster | Path-C baseline |
+
+## Partial 2-GPU verdict (2026-07-01)
+
+**Topology:** romulus 7900XTX client + triton 3090 `:50054`, n=384, `ts=50,50`, Plus=1, SHA `deacf5e65`.
+
+| Bisect | `overlap_pct` | `stall_ratio` | vs canonical Δoverlap | Verdict |
+|--------|---------------|---------------|----------------------|---------|
+| canonical (`romulus-native`) | 0.2% | 0.858 | — | baseline |
+| B+9 OFF (`no-defer`, docker baseline) | 0.2% | 0.870 | 0.0 | NULL |
+| B+8 OFF (`no-partial`) | 0.2% | 0.904 | 0.0 | NULL |
+| B+10 OFF (`no-async-copy`) | 0.2% | 0.906 | 0.0 | NULL |
+
+**Conclusion:** B+8, B+9, B+10 do **not** move `overlap_pct` on 2-GPU triton n=384. Stall worsens slightly when each flag is OFF (Δstall +0.046 to +0.048) — mitigations help stability marginally, not pipelining depth. **M1 FAIL** (best overlap 0.9% on guard-n128 only; n=384 canonical stuck at 0.2%). Straggler remains backend 1 (triton RPC) @ ~5.6-8.2 ms/tok depending on client.
+
+**4-GPU summary (2026-07-01):** JUPITER canonical 0.2%/6.4s drain; B+7a′ OFF 0.1%; triton swap 0.1%/4.6s drain, G=73.2. All M1 FAIL.
+
+**Next:** Structural ceiling doc per PLAN stop rule; optional B+11–B+13 only with explicit scope.
 
 ## Open Items / Blockers
 
@@ -39,7 +61,7 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 1. **Copy-slot pipelining collapsed** — `stall_ratio` 0.92–0.95; `input_wait_copy_ms` >> `graph_compute_async_ms`
 2. **EVENT_RECORD recv on hot path** — `drain_flush_ms` tracks EVENT count (b6-2gpu-f: 4514ms / 385 tok)
 3. **4-GPU drain amplification** — canonical 50.4s vs triton 5.9s (B+7a′ multi-socket)
-4. **Overlap metric ceiling** — 0.1–0.7% after B+1–B+6; needs B+8–B+10 before declaring structural limit
+4. **2-GPU overlap ceiling** — 0.2% at n=384 after B+8–B+10 OFF bisects (2026-07-01); 4-GPU ladder pending
 
 **Actions:** See [PLAN.md](PLAN.md) Phase 2 table; update [pathb-sync-site-audit.md](../../rpc-patch/docs/pathb-sync-site-audit.md) after each bisect.
 
@@ -57,7 +79,8 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 ## Recently Completed
 
 - n=128 triton guard + n=384 canonical Plus=1 runs on triton (2026-07-01); data collected (0.9% and 0.2% overlap)
-- B+9 (DEFER=0) bisect on n=384 triton launched
+- B+9 (DEFER=0) bisect on n=384 triton — **null result** (overlap 0.2% vs canonical 0.2%)
+- Grill-with-docs session: execution plan locked ([ADR-0001](../adr/0001-b6-ladder-execution-post-b9-null.md), [CONTEXT.md](CONTEXT.md))
 - Tokens read from romulus ~/tokens (gitea 8ca5... PAT etc); .git-credentials + insteadOf + local token mirrors updated on remus+triton; git ls-remote OK for origin/gitea (2026-07-01)
 - RPC send combined-buffer improvement + early-cmd drain skip + post-hello pending reset (helped runs complete)
 - Per-split / basic RPC RTT histogram starter in pathb-rpc-trace-parse.sh (plan 1.1)
@@ -65,17 +88,24 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 - Reconciled with B+6 gate, b6-gate/TRACKING, grilling lateral ladder (B+8–B+13)
 - Formalized [Path-B-Plus-MultiBackend-RPC-Orchestration-Audit.md](ANALYSIS/Path-B-Plus-MultiBackend-RPC-Orchestration-Audit.md)
 
-## Next 7 Days
+## Next 7 Days (grill-locked 2026-07-01)
 
-- [x] B+8–B+10, B+7a′, B+13 code landed (2026-06-30, **untested** — see [IMPLEMENTATION.md](IMPLEMENTATION.md)); 2-GPU triton n=128/384 data collected
-- [x] n=384 triton Plus=1 + initial B+9 bisect launched (2026-07-01)
-- [ ] Complete B+ bisects (B+8/B+9/B+10) + n=384 re-bench on triton (Q5 contract); compare DEFER=0 vs Plus=1
-- [ ] B+7a′ validate on `b6-4gpu-g` n=384 (after 2-GPU pass/partial)
-- [ ] Phase 1.1: full per-split timing + RPC RTT histogram in scheduler trace / profiler output + parsers (starter added)
-- [ ] Fix `--validate-rpc` hang (still using --skip; handshake debug in progress)
-- [ ] Topology guard in `pathb-vram-calc.ps1` / Config F scripts
-- [ ] Publish `BENCHMARKS/2026-07-comparison-matrix.md` after instrumentation refresh
-- [ ] Triton ops (full git sync, start/stop scripts); rebuilds; push session work + handover
+- [x] B+8–B+10, B+7a′, B+13 code landed; 2-GPU triton n=128/384 collected
+- [x] B+9 OFF bisect on n=384 triton — null
+- [x] PR 2 + PR 6: `b6-gate-bisect-run.sh`, env audit in cluster, docker `GGML_*` forward, `--skip-rpc-validate` auto (2026-07-01)
+- [x] Phase 0: archive `b6-2gpu-f-triton-n384-remus-docker`; romulus reset `deacf5e65`; canonical-romulus re-bench (2026-07-01)
+- [ ] Triton git sync (repo git fs-boundary quirk); rpc-server :50054 was already up
+- [x] **B+8 OFF** bisect on romulus: overlap 0.2% (NULL vs canonical), stall 0.904 vs 0.858 (borderline MITIGATION_HELPS) — 2026-07-01
+- [x] **B+10 OFF** bisect on romulus: overlap 0.2% (NULL), stall 0.906 vs 0.858 — 2026-07-01
+- [x] **2-GPU partial verdict** recorded (2026-07-01)
+- [x] **`b6-4gpu-g-n384-romulus-native`** on romulus — overlap 0.2%, drain 6.4s, M1 FAIL (2026-07-01)
+- [x] B+7a′ OFF (`no-flush`) on 4-GPU: overlap 0.1% (Δ-0.1), drain 5.3s vs 6.4s — NULL/worse overlap (2026-07-01)
+- [ ] Phase 1.1 parallel: re-parse canonical/no-defer traces for full RTT hist + per-split RPC
+- [ ] **PR 8:** validate-rpc investigation matrix (client x endpoint x server state); not remus-specific — fix root cause, re-enable for 4-GPU after proven
+- [x] `b6-4gpu-g-triton-n384-romulus-native` — overlap 0.1%, G=73.2, drain 4.6s (2026-07-01)
+- [ ] **Structural ceiling doc** (PLAN stop rule: B+8–B+10 + B+7a′ exhausted, M1 FAIL on 2-GPU + 4-GPU)
+- [ ] Phase 1.1 re-parse; PR 3 bisect comparator; PR 8 validate-rpc
+- [ ] Triton ops (git fs-boundary, start/stop scripts); commit/push session work
 
 ## Metrics Dashboard
 
@@ -98,4 +128,4 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 ---
 
 **Update this file after every profile/profiler run or topology decision.**  
-**Last edit:** 2026-06-30 — handoff package incorporated + B+6 gate reconciliation.
+**Last edit:** 2026-07-01 — grill session locked execution plan (ADR-0001).

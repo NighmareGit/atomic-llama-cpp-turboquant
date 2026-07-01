@@ -24,12 +24,18 @@ B+13 (dual-side `cpy_tensor_async` try) is always on in scheduler copy path when
 | B+10 | `ggml/src/ggml-backend.cpp` | MoE `MUL_MAT_ID` weight path ~1682 |
 | B+13 | `ggml/src/ggml-backend.cpp` | `input_wait_copy` async try dst then src |
 
-## Bisect procedure (G1 — 2-GPU only)
+## Bisect procedure (G1 — 2-GPU triton n=384)
 
 ```bash
-# After rebuild + remus/romulus deploy
-bash scripts/b6-gate-run-remote.sh b6-2gpu-f
-bash scripts/b6-gate-diagnose-runs.sh b6-2gpu-f
+# After sync + rebuild (romulus client, triton :50054)
+bash scripts/b6-gate-bisect-run.sh no-partial          # B+8 OFF
+bash scripts/b6-gate-bisect-run.sh no-async-copy       # B+10 OFF
+bash scripts/b6-gate-bisect-run.sh canonical-romulus   # romulus-native baseline
+
+# Fallback (remus docker CUDA client)
+B6_GATE_CLIENT=remus-docker bash scripts/b6-gate-bisect-run.sh no-partial
+
+bash scripts/b6-gate-diagnose-runs.sh b6-2gpu-f-triton-n384-*
 ```
 
 Compare `diagnose.json` to baseline in `benches/path-b-plus/b6-2gpu-f/`.
