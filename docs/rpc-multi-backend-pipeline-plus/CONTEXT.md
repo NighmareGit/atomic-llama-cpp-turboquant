@@ -21,7 +21,7 @@ Linux dual-GPU host at `192.168.8.176`: RTX **5060 Ti** CUDA RPC on `:50051` (ac
 _Avoid_: worker, remote GPU
 
 **Triton**:
-Ubuntu 24.04 dual-NVIDIA host at `192.168.8.23`: RTX **3090** RPC on `:50054` is **canonical 4-GPU RPC2** (replaces jupiter `:50053`, skipped 2026-07-01). RTX **3070** on `:50055` parked for 35B MoE. Ops: `scripts/b6-gate-triton-*.sh`.
+Ubuntu 24.04 dual-NVIDIA host at `192.168.8.23`: RTX **3090** RPC on `:50054` (**4-GPU RPC2**); RTX **3070** on `:50055` (**5-GPU Linux RPC3**). Both cards count toward the all-Linux 5-GPU path (`b6-5gpu-g`). Ops: `scripts/b6-gate-triton-*.sh`.
 _Avoid_: worker, remote GPU
 
 **Mitigation ladder**:

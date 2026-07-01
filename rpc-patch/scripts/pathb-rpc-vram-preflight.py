@@ -112,6 +112,32 @@ PRESETS: dict[str, PresetSpec] = {
         vrams_static=[15.5, 7.0, 23.0, 22.0],
         config="config-g",
     ),
+    "b6-5gpu-g": PresetSpec(
+        name="b6-5gpu-g Linux (remus 5060 + romulus 3060/7900 + triton 3090/3070)",
+        rpc=f"{REMUS_HOST}:50051,127.0.0.1:50051,{TRITON_HOST}:50054,{TRITON_HOST}:50055",
+        devices=[
+            DeviceSpec("RPC0 remus 5060", "rpc", endpoint=f"{REMUS_HOST}:50051", fallback_host=REMUS_HOST),
+            DeviceSpec(
+                "RPC1 romulus 3060 docker",
+                "rpc",
+                endpoint="127.0.0.1:50051",
+                via_host=ROMULUS_HOST,
+                fallback_host=ROMULUS_HOST,
+            ),
+            DeviceSpec("RPC2 triton 3090", "rpc", endpoint=f"{TRITON_HOST}:50054", fallback_host=TRITON_HOST),
+            DeviceSpec(
+                "RPC3 triton 3070",
+                "rpc",
+                endpoint=f"{TRITON_HOST}:50055",
+                fallback_host=TRITON_HOST,
+                gpu_index=1,
+            ),
+            DeviceSpec("ROCm0 romulus 7900", "rocm", host=ROMULUS_HOST),
+        ],
+        ts_default=[20, 10, 30, 10, 30],
+        vrams_static=[15.5, 7.0, 23.0, 7.5, 22.0],
+        config="config-g",
+    ),
     "config-c": PresetSpec(
         name="Config C (remus 5060 + romulus 3060 docker + romulus 7900 client)",
         rpc=f"{REMUS_HOST}:50051,127.0.0.1:50051",

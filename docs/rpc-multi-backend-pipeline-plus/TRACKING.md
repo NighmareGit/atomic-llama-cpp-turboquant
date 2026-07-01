@@ -92,7 +92,9 @@ Each bench host is **dual-GPU**: romulus and remus pair one NVIDIA + one AMD on 
 
 `-ts 22,11,34,33` matches live free VRAM ratio (5060/3060/3090/7900 ~22/11/33/34%). Do not block gates on jupiter rebuild. Preset `b6-4gpu-g` (JUPITER) is **deprecated** for active hunt until ops revisits Windows rpc-server.
 
-Triton `:50055` (3070) remains parked for 35B+ MoE per ops notes.
+**5-GPU Linux** (`b6-5gpu-g`, no jupiter): remus 5060 + romulus 3060/7900 + triton 3090/3070 = **5 active GPUs** (~80 GB physical, ~77 GB live free). RPC `:50054` + `:50055` on triton; `-ts 20,10,30,10,30` from live ratio. Jupiter `:50053` deferred until SSH fixed.
+
+Triton `:50055` (3070) is the 5th device in `b6-5gpu-g`; still optional for 4-GPU gate presets.
 
 ## Structural ceiling (2026-07-01 — finalized post B+13)
 

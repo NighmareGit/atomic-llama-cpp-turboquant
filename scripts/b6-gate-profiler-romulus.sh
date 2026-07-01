@@ -4,7 +4,8 @@
 # Cluster GPUs (live inventory: scripts/b6-gate-cluster-gpu-inventory.sh):
 #   romulus 192.168.8.108 — 7900 XTX (ROCm client) + 3060 Ti (docker :50051)
 #   remus   192.168.8.176 — 5060 Ti (:50051) + RX6600 (:50052, unused)
-#   triton  192.168.8.23  — 3090 (:50054) + 3070 (:50055, parked)
+#   triton  192.168.8.23  — 3090 (:50054) + 3070 (:50055)
+# Linux 5-GPU = remus(1) + romulus(2) + triton(2); jupiter skipped
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LABEL="${1:-}"
@@ -17,7 +18,7 @@ if [[ -z "$LABEL" || "$LABEL" == "-h" || "$LABEL" == "--help" ]]; then
     echo "  b6-2gpu-f-triton   triton 3090 RPC (spike, same client)"
     echo "  b6-4gpu-g          4-GPU jupiter :50053 (DEPRECATED — use triton)"
     echo "  b6-4gpu-g-triton   4-GPU canonical gate (triton :50054 as RPC2)"
-    echo "  b6-5gpu-g          5-GPU primary + triton 3070 :50055 (local PCIe hop)"
+    echo "  b6-5gpu-g          5-GPU Linux (remus+romulus+triton 3090/3070, no jupiter)"
     echo "  b6-2gpu-f-plus0    2-GPU remus, GGML_PIPELINE_PLUS=0"
     echo "  b6-2gpu-jupiter    2-GPU remus CUDA + JUPITER 5070 :50053"
     echo "  b6-2gpu-jupiter-plus0  same, GGML_PIPELINE_PLUS=0"
@@ -76,9 +77,9 @@ case "$LABEL" in
         export PROFILER_OUT_DIR="${PROFILER_OUT_DIR:-${ROOT}/benches/path-b-plus/${LABEL}}"
         ;;
     b6-5gpu-g)
-        export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051,127.0.0.1:50051,192.168.8.21:50053,192.168.8.23:50055}"
-        # ts order: RPC0 remus 5060, RPC1 romulus 3060 docker, RPC2 5070, RPC3 triton 3070, ROCm0 7900
-        export BENCH_TS="${BENCH_TS:-22,11,22,11,34}"
+        export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051,127.0.0.1:50051,192.168.8.23:50054,192.168.8.23:50055}"
+        # ts order: RPC0 remus 5060, RPC1 romulus 3060, RPC2 triton 3090, RPC3 triton 3070, ROCm0 7900
+        export BENCH_TS="${BENCH_TS:-20,10,30,10,30}"
         export GGML_PIPELINE_PLUS="${GGML_PIPELINE_PLUS:-1}"
         export PROFILER_OUT_DIR="${PROFILER_OUT_DIR:-${ROOT}/benches/path-b-plus/${LABEL}}"
         ;;
