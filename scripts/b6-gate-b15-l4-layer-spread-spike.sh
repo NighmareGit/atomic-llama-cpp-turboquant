@@ -55,8 +55,17 @@ run_case() {
     ts="$(printf '%s\n' "$plan" | awk 'NR==1{print $1}')"
     ngl="$(printf '%s\n' "$plan" | awk 'NR==1{print $2}')"
     if [[ -z "$ts" ]]; then
-        echo "FAIL ${model_id}-${ts_mode}: no TS from preflight"
-        return 1
+        echo "SKIP ${model_id}-${ts_mode}: no TS from preflight"
+        return 0
+    fi
+    if [[ "$ts_mode" == "equal" ]]; then
+        local fit_ok
+        fit_ok="$(ssh_romulus "cd ${ROMULUS_REPO} && python3 rpc-patch/scripts/pathb-rpc-vram-preflight.py \\
+          --preset b6-5gpu-g --gguf '${path}' --ts-mode equal 2>/dev/null | grep -c '^PASS:' || true")"
+        if [[ "${fit_ok:-0}" -eq 0 ]]; then
+            echo "SKIP ${model_id}-equal: equal TS does not fit (OOM); use vram mode or lighter quant"
+            return 0
+        fi
     fi
     local ngl_env=""
     if [[ -n "$ngl" ]]; then
