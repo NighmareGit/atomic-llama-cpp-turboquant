@@ -25,6 +25,8 @@ struct socket_t {
     bool server_supports_batch = false;
     // Set after HELLO: server supports RPC_CMD_COPY_TENSOR_PEER when minor >= 3
     bool server_supports_peer_copy = false;
+    // B+11: paired response socket (cmd/response split); nullptr = single-socket
+    socket_ptr rsp_channel;
 
     static socket_ptr create_server(const char * host, int port);
     static socket_ptr connect(const char * host, int port);

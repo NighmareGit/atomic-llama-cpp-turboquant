@@ -104,7 +104,7 @@ RPC rows add optional `decode_id`, `split`, `backend`. Join key for parsers: `(d
 
 1. **B+13** — prove/fix `cpy_tensor_async`; stop silent `sync_copy_fallback`
 2. **B+12** — `GET_TENSOR` deferral
-3. **B+11** — dual-socket RPC (if A+B shows HOL)
+3. **B+11** — dual-socket RPC proto 4.4 — **shipped** (`GGML_RPC_DUAL_SOCKET`); 4-GPU bisect pending
 
 ### Deferred (sample API only)
 

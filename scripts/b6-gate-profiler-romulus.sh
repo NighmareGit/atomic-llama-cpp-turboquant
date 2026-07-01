@@ -17,7 +17,7 @@ if [[ -z "$LABEL" || "$LABEL" == "-h" || "$LABEL" == "--help" ]]; then
     echo "  b6-2gpu-jupiter    2-GPU remus CUDA + JUPITER 5070 :50053"
     echo "  b6-2gpu-jupiter-plus0  same, GGML_PIPELINE_PLUS=0"
     echo ""
-    echo "OFF bisects: bash scripts/b6-gate-bisect-run.sh <no-partial|no-async-copy|no-defer|no-get-defer|canonical-romulus>"
+    echo "OFF bisects: bash scripts/b6-gate-bisect-run.sh <no-partial|no-async-copy|no-defer|no-get-defer|no-dual-socket|canonical-romulus>"
     exit 0
 fi
 

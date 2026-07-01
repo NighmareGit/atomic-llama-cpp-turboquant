@@ -139,6 +139,7 @@ enum rpc_cmd {
     RPC_CMD_SET_TENSOR_BATCH,
     RPC_CMD_EVENT_RECORD,    // Path B: event notification via TCP ordering (value 18)
     RPC_CMD_COPY_TENSOR_PEER,
+    RPC_CMD_CHANNEL_BIND,    // B+11: pair response socket (value 20)
     RPC_CMD_COUNT,
 };
 
@@ -262,6 +263,9 @@ static void rpc_drain_all_endpoints_pending();
 int ggml_backend_rpc_server_count(void);
 bool ggml_backend_rpc_event_defer_barrier(void);
 bool ggml_backend_rpc_get_tensor_defer(void);
+bool ggml_backend_rpc_dual_socket(void);
+
+static socket_ptr rpc_response_sock(const socket_ptr & cmd);
 
 static bool rpc_pipeline_plus_enabled() {
     static int v = -1;
@@ -313,6 +317,39 @@ static bool rpc_multi_socket_flush() {
         v = e ? atoi(e) : (rpc_pipeline_plus_enabled() ? 1 : 0);
     }
     return v != 0 && rpc_pipeline_plus_enabled();
+}
+
+static int rpc_dual_socket_env_enabled() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_RPC_DUAL_SOCKET");
+        v = e ? atoi(e) : (rpc_pipeline_plus_enabled() ? 1 : 0);
+    }
+    return v;
+}
+
+bool ggml_backend_rpc_dual_socket(void) {
+    return rpc_dual_socket_env_enabled() != 0 && rpc_pipeline_plus_enabled();
+}
+
+struct rpc_dual_pending {
+    std::mutex              mutex;
+    std::condition_variable cv;
+    socket_ptr              rsp;
+    bool                    paired = false;
+};
+
+static std::mutex g_dual_pending_mutex;
+static std::unordered_map<uint32_t, std::shared_ptr<rpc_dual_pending>> g_dual_pending;
+
+static uint32_t rpc_gen_session_id() {
+    static std::atomic<uint32_t> seq{1};
+    const uint32_t t = (uint32_t) std::chrono::steady_clock::now().time_since_epoch().count();
+    return t ^ seq.fetch_add(1, std::memory_order_relaxed);
+}
+
+static socket_ptr rpc_response_sock(const socket_ptr & cmd) {
+    return (cmd && cmd->rsp_channel) ? cmd->rsp_channel : cmd;
 }
 
 static std::mutex g_rpc_socket_registry_mutex;
@@ -400,27 +437,46 @@ static bool send_rpc_cmd_deferred(const socket_ptr & sock, enum rpc_cmd cmd,
 }
 
 static bool recv_rpc_cmd_deferred(const socket_ptr & sock, void * output, size_t output_size) {
+    const socket_ptr rsock = rpc_response_sock(sock);
     uint64_t resp_size;
-    if (!sock->recv_data(&resp_size, sizeof(resp_size))) return false;
+    if (!rsock->recv_data(&resp_size, sizeof(resp_size))) return false;
     if (resp_size != output_size) {
         GGML_LOG_ERROR("[%s] deferred response size mismatch: expected %zu, got %" PRIu64 "\n",
                        __func__, output_size, resp_size);
         return false;
     }
-    if (!sock->recv_data(output, output_size)) return false;
+    if (!rsock->recv_data(output, output_size)) return false;
     return true;
 }
 
+static constexpr size_t RPC_HELLO_REQ_V3_SIZE = RPC_CONN_CAPS_SIZE;
+
 struct rpc_msg_hello_req {
     uint8_t conn_caps[RPC_CONN_CAPS_SIZE];
+    uint32_t session_id;
+    uint8_t  dual_socket;
+    uint8_t  reserved[3];
 };
 
 struct rpc_msg_hello_rsp {
     uint8_t major;
     uint8_t minor;
     uint8_t patch;
+    uint8_t flags; // bit0: dual_socket negotiated
+    uint8_t conn_caps[RPC_CONN_CAPS_SIZE];
+    uint32_t session_id;
+};
+
+struct rpc_msg_hello_rsp_v3 {
+    uint8_t major;
+    uint8_t minor;
+    uint8_t patch;
     uint8_t padding;
     uint8_t conn_caps[RPC_CONN_CAPS_SIZE];
+};
+
+struct rpc_msg_channel_bind_req {
+    uint32_t session_id;
 };
 
 struct rpc_msg_device_count_rsp {
@@ -614,8 +670,9 @@ static void flush_pending_get_tensor_for_socket(const socket_ptr & sock) {
             continue;
         }
         const auto t0 = std::chrono::steady_clock::now();
+        const socket_ptr rsock = rpc_response_sock(it->sock);
         uint64_t out_size;
-        if (!it->sock->recv_data(&out_size, sizeof(out_size))) {
+        if (!rsock->recv_data(&out_size, sizeof(out_size))) {
             GGML_LOG_ERROR("[%s] failed to read get_tensor response size\n", __func__);
             it = tls_pending_get_tensor.erase(it);
             continue;
@@ -624,7 +681,7 @@ static void flush_pending_get_tensor_for_socket(const socket_ptr & sock) {
             GGML_LOG_ERROR("[%s] get_tensor response size mismatch: expected %zu, got %zu\n",
                             __func__, it->size, (size_t) out_size);
         }
-        if (!it->sock->recv_data(it->data, it->size)) {
+        if (!rsock->recv_data(it->data, it->size)) {
             GGML_LOG_ERROR("[%s] failed to read get_tensor response data\n", __func__);
         }
         const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -739,6 +796,10 @@ static bool recv_msg(socket_ptr sock, std::vector<uint8_t> & input) {
     return sock->recv_data(input.data(), size);
 }
 
+static bool send_response(const socket_ptr & cmd, const void * msg, size_t msg_size) {
+    return send_msg(rpc_response_sock(cmd), msg, msg_size);
+}
+
 static bool parse_endpoint(const std::string & endpoint, std::string & host, int & port) {
     size_t pos = endpoint.find(':');
     if (pos == std::string::npos) {
@@ -791,14 +852,15 @@ static bool send_rpc_cmd(socket_ptr sock, enum rpc_cmd cmd, const void * input, 
     if (!send_rpc_cmd(sock, cmd, input, input_size)) {
         return false;
     }
+    const socket_ptr rsock = rpc_response_sock(sock);
     uint64_t out_size;
-    if (!sock->recv_data(&out_size, sizeof(out_size))) {
+    if (!rsock->recv_data(&out_size, sizeof(out_size))) {
         return false;
     }
     if (out_size != output_size) {
         return false;
     }
-    if (!sock->recv_data(output, output_size)) {
+    if (!rsock->recv_data(output, output_size)) {
         return false;
     }
     const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -809,6 +871,27 @@ static bool send_rpc_cmd(socket_ptr sock, enum rpc_cmd cmd, const void * input, 
 
 // RPC client-side implementation
 
+static bool rpc_client_bind_response_channel(const socket_ptr & cmd_sock,
+                                             const std::string & host, int port,
+                                             uint32_t session_id) {
+    auto rsp_sock = socket_t::connect(host.c_str(), port);
+    if (!rsp_sock) {
+        return false;
+    }
+    const uint8_t cmd = (uint8_t) RPC_CMD_CHANNEL_BIND;
+    if (!rsp_sock->send_data(&cmd, sizeof(cmd))) {
+        return false;
+    }
+    rpc_msg_channel_bind_req bind_req = { session_id };
+    if (!send_msg(rsp_sock, &bind_req, sizeof(bind_req))) {
+        return false;
+    }
+    cmd_sock->rsp_channel = rsp_sock;
+    rpc_register_socket(rsp_sock);
+    LOG_DBG("[%s] dual-socket response channel bound session=%u\n", __func__, session_id);
+    return true;
+}
+
 // Performs HELLO handshake with transport auto-negotiation.
 // Advertises local capabilities via conn_caps; if the server responds with
 // matching capabilities, the socket is upgraded transparently.
@@ -817,6 +900,8 @@ static bool negotiate_hello(const std::shared_ptr<socket_t> & sock, const char *
     rpc_msg_hello_rsp response = {};
 
     sock->get_caps(request.conn_caps);
+    request.session_id = rpc_gen_session_id();
+    request.dual_socket = (ggml_backend_rpc_dual_socket() && RPC_PROTO_MINOR_VERSION >= 4) ? 1 : 0;
 
     bool status = send_rpc_cmd(sock, RPC_CMD_HELLO, &request, sizeof(request), &response, sizeof(response));
     RPC_STATUS_ASSERT(status);
@@ -830,10 +915,23 @@ static bool negotiate_hello(const std::shared_ptr<socket_t> & sock, const char *
     sock->server_supports_batch = (response.major == RPC_PROTO_MAJOR_VERSION && response.minor >= 1);
     sock->server_supports_peer_copy = (response.major == RPC_PROTO_MAJOR_VERSION && response.minor >= 3);
     sock->update_caps(response.conn_caps);
+
+    if (request.dual_socket && response.minor >= 4 && (response.flags & 1) && response.session_id != 0) {
+        std::string host;
+        int port = 0;
+        if (parse_endpoint(endpoint, host, port)) {
+            if (!rpc_client_bind_response_channel(sock, host, port, response.session_id)) {
+                GGML_LOG_WARN("RPC %s: dual-socket bind failed; falling back to single socket\n", endpoint);
+                sock->rsp_channel.reset();
+            }
+        }
+    }
+
     if (endpoint && endpoint[0]) {
         rpc_trace_emit_hello(endpoint, response.minor, sock->server_supports_peer_copy);
-        GGML_LOG_INFO("RPC %s: proto %d.%d peer_copy=%s\n", endpoint, response.major, response.minor,
-                      sock->server_supports_peer_copy ? "yes" : "no");
+        GGML_LOG_INFO("RPC %s: proto %d.%d peer_copy=%s dual=%s\n", endpoint, response.major, response.minor,
+                      sock->server_supports_peer_copy ? "yes" : "no",
+                      sock->rsp_channel ? "yes" : "no");
     }
     // reset B+ pending state after fresh hello to avoid stale drain on subsequent cmds
     tls_pending_event = {nullptr, false, nullptr};
@@ -2514,45 +2612,132 @@ rpc_server::~rpc_server() {
     }
 }
 
-static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const char * cache_dir,
-                             socket_ptr sock) {
-    rpc_server server(backends, cache_dir);
-    uint8_t cmd;
+static void rpc_connection_thread(std::vector<ggml_backend_t> backends, std::string cache_dir, socket_ptr sock) {
+    uint8_t cmd = 0;
     if (!sock->recv_data(&cmd, 1)) {
         return;
     }
-    if (cmd != RPC_CMD_HELLO) {
-        GGML_LOG_ERROR("Expected HELLO command, update client\n");
+    if (cmd == RPC_CMD_CHANNEL_BIND) {
+        rpc_serve_channel_bind(sock);
         return;
     }
+    if (cmd != RPC_CMD_HELLO) {
+        GGML_LOG_ERROR("Expected HELLO or CHANNEL_BIND, got %d\n", cmd);
+        return;
+    }
+    rpc_serve_client(backends, cache_dir.c_str(), sock);
+}
 
-    // Read input_size and validate protocol version
+static void rpc_serve_channel_bind(socket_ptr sock) {
+    rpc_msg_channel_bind_req req = {};
+    if (!recv_msg(sock, &req, sizeof(req))) {
+        return;
+    }
+    std::shared_ptr<rpc_dual_pending> pending;
+    {
+        std::lock_guard<std::mutex> lock(g_dual_pending_mutex);
+        auto it = g_dual_pending.find(req.session_id);
+        if (it != g_dual_pending.end()) {
+            pending = it->second;
+        }
+    }
+    if (!pending) {
+        GGML_LOG_WARN("CHANNEL_BIND: unknown session %u\n", req.session_id);
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(pending->mutex);
+        pending->rsp = sock;
+        pending->paired = true;
+    }
+    pending->cv.notify_all();
+}
+
+static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const char * cache_dir,
+                             socket_ptr sock) {
+    rpc_server server(backends, cache_dir);
+
+    // Read input_size and validate protocol version (HELLO cmd byte already consumed)
     uint64_t hello_input_size;
     if (!sock->recv_data(&hello_input_size, sizeof(hello_input_size))) {
         return;
     }
 
-    if (hello_input_size != sizeof(rpc_msg_hello_req)) {
-        GGML_LOG_ERROR("HELLO request size mismatch (%zu vs %zu) — client needs upgrade to protocol v%d.x\n",
-                       (size_t)hello_input_size, sizeof(rpc_msg_hello_req), RPC_PROTO_MAJOR_VERSION);
-        return;
-    }
-
     rpc_msg_hello_req req = {};
-    if (!sock->recv_data(&req, sizeof(req))) {
+    uint8_t req_conn_caps[RPC_CONN_CAPS_SIZE] = {};
+    uint32_t session_id = 0;
+    uint8_t dual_want = 0;
+
+    if (hello_input_size == RPC_HELLO_REQ_V3_SIZE) {
+        if (!sock->recv_data(req_conn_caps, sizeof(req_conn_caps))) {
+            return;
+        }
+        memcpy(req.conn_caps, req_conn_caps, sizeof(req_conn_caps));
+    } else if (hello_input_size == sizeof(rpc_msg_hello_req)) {
+        if (!sock->recv_data(&req, sizeof(req))) {
+            return;
+        }
+        session_id = req.session_id;
+        dual_want = req.dual_socket;
+    } else {
+        GGML_LOG_ERROR("HELLO request size mismatch (%zu) — expected %zu or %zu\n",
+                       (size_t) hello_input_size, RPC_HELLO_REQ_V3_SIZE, sizeof(rpc_msg_hello_req));
         return;
     }
 
-    rpc_msg_hello_rsp rsp = {};
-    server.hello(rsp);
-    // Advertise server transport capabilities based on client's caps
-    sock->get_caps(rsp.conn_caps);
-    if (!send_msg(sock, &rsp, sizeof(rsp))) {
-        return;
+    std::shared_ptr<rpc_dual_pending> pending;
+    if (dual_want && RPC_PROTO_MINOR_VERSION >= 4 && session_id != 0) {
+        pending = std::make_shared<rpc_dual_pending>();
+        {
+            std::lock_guard<std::mutex> lock(g_dual_pending_mutex);
+            g_dual_pending[session_id] = pending;
+        }
+    }
+
+    if (hello_input_size == RPC_HELLO_REQ_V3_SIZE) {
+        rpc_msg_hello_rsp_v3 rsp3 = {};
+        {
+            rpc_msg_hello_rsp tmp = {};
+            server.hello(tmp);
+            rsp3.major = tmp.major;
+            rsp3.minor = tmp.minor;
+            rsp3.patch = tmp.patch;
+        }
+        sock->get_caps(rsp3.conn_caps);
+        if (!send_msg(sock, &rsp3, sizeof(rsp3))) {
+            return;
+        }
+    } else {
+        rpc_msg_hello_rsp rsp = {};
+        server.hello(rsp);
+        if (pending) {
+            rsp.flags |= 1;
+            rsp.session_id = session_id;
+        }
+        sock->get_caps(rsp.conn_caps);
+        if (!send_msg(sock, &rsp, sizeof(rsp))) {
+            return;
+        }
+    }
+
+    if (pending) {
+        std::unique_lock<std::mutex> lock(pending->mutex);
+        pending->cv.wait_for(lock, std::chrono::seconds(10), [&] { return pending->paired; });
+        if (pending->paired) {
+            sock->rsp_channel = pending->rsp;
+            LOG_DBG("[%s] dual-socket response channel paired session=%u\n", __func__, session_id);
+        } else {
+            GGML_LOG_WARN("[%s] dual-socket bind timeout session=%u; single-socket fallback\n", __func__, session_id);
+        }
+        {
+            std::lock_guard<std::mutex> glock(g_dual_pending_mutex);
+            g_dual_pending.erase(session_id);
+        }
     }
 
     // Activate transport upgrade using client's caps
     sock->update_caps(req.conn_caps);
+    uint8_t cmd = 0;
     while (true) {
         if (!sock->recv_data(&cmd, 1)) {
             break;
@@ -2573,7 +2758,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 }
                 rpc_msg_device_count_rsp response;
                 response.device_count = backends.size();
-                if (!send_msg(sock, &response, sizeof(response))) {
+                if (!send_response(sock, &response, sizeof(response))) {
                     return;
                 }
                 break;
@@ -2587,7 +2772,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!server.alloc_buffer(request, response)) {
                     return;
                 }
-                if (!send_msg(sock, &response, sizeof(response))) {
+                if (!send_response(sock, &response, sizeof(response))) {
                     return;
                 }
                 break;
@@ -2601,7 +2786,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!server.get_alloc_size(request, response)) {
                     return;
                 }
-                if (!send_msg(sock, &response, sizeof(response))) {
+                if (!send_response(sock, &response, sizeof(response))) {
                     return;
                 }
                 break;
@@ -2615,7 +2800,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!server.get_alignment(request, response)) {
                     return;
                 }
-                if (!send_msg(sock, &response, sizeof(response))) {
+                if (!send_response(sock, &response, sizeof(response))) {
                     return;
                 }
                 break;
@@ -2629,7 +2814,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!server.get_max_size(request, response)) {
                     return;
                 }
-                if (!send_msg(sock, &response, sizeof(response))) {
+                if (!send_response(sock, &response, sizeof(response))) {
                     return;
                 }
                 break;
@@ -2643,7 +2828,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!server.buffer_get_base(request, response)) {
                     return;
                 }
-                if (!send_msg(sock, &response, sizeof(response))) {
+                if (!send_response(sock, &response, sizeof(response))) {
                     return;
                 }
                 break;
@@ -2656,7 +2841,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!server.free_buffer(request)) {
                     return;
                 }
-                if (!send_msg(sock, nullptr, 0)) {
+                if (!send_response(sock, nullptr, 0)) {
                     return;
                 }
                 break;
@@ -2669,7 +2854,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!server.buffer_clear(request)) {
                     return;
                 }
-                if (!send_msg(sock, nullptr, 0)) {
+                if (!send_response(sock, nullptr, 0)) {
                     return;
                 }
                 break;
@@ -2693,7 +2878,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!server.set_tensor_hash(request, response)) {
                     return;
                 }
-                if (!send_msg(sock, &response, sizeof(response))) {
+                if (!send_response(sock, &response, sizeof(response))) {
                     return;
                 }
                 break;
@@ -2706,7 +2891,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!server.init_tensor(request)) {
                     return;
                 }
-                if (!send_msg(sock, nullptr, 0)) {
+                if (!send_response(sock, nullptr, 0)) {
                     return;
                 }
                 break;
@@ -2720,7 +2905,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!server.get_tensor(request, response)) {
                     return;
                 }
-                if (!send_msg(sock, response.data(), response.size())) {
+                if (!send_response(sock, response.data(), response.size())) {
                     return;
                 }
                 break;
@@ -2734,7 +2919,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!server.copy_tensor(request, response)) {
                     return;
                 }
-                if (!send_msg(sock, &response, sizeof(response))) {
+                if (!send_response(sock, &response, sizeof(response))) {
                     return;
                 }
                 break;
@@ -2748,7 +2933,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!server.copy_tensor_peer(request, response)) {
                     return;
                 }
-                if (!send_msg(sock, &response, sizeof(response))) {
+                if (!send_response(sock, &response, sizeof(response))) {
                     return;
                 }
                 break;
@@ -2834,7 +3019,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 }
                 server.wait_compute_idle();
                 rpc_msg_event_record_rsp response = {request.event_id, 0};
-                if (!send_msg(sock, &response, sizeof(response))) {
+                if (!send_response(sock, &response, sizeof(response))) {
                     return;
                 }
                 LOG_DBG("[%s] RPC_CMD_EVENT_RECORD: event_id=%lu, device=%u\n",
@@ -2850,7 +3035,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!server.get_device_memory(request, response)) {
                     return;
                 }
-                if (!send_msg(sock, &response, sizeof(response))) {
+                if (!send_response(sock, &response, sizeof(response))) {
                     return;
                 }
                 break;
@@ -2926,9 +3111,7 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
         }
         printf("Accepted client connection\n");
         fflush(stdout);
-        rpc_serve_client(backends, cache_dir, client_socket);
-        printf("Client connection closed\n");
-        fflush(stdout);
+        std::thread(rpc_connection_thread, backends, std::string(cache_dir ? cache_dir : ""), client_socket).detach();
     }
     rpc_transport_shutdown();
     for (auto backend : backends) {

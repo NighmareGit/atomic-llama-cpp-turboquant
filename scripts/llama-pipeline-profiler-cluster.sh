@@ -106,6 +106,7 @@ b6_append_env_audit() {
         echo "GGML_SCHED_MOE_ASYNC_COPY=$(b6_mitigation_default GGML_SCHED_MOE_ASYNC_COPY)"
         echo "GGML_RPC_MULTI_SOCKET_FLUSH=$(b6_mitigation_default GGML_RPC_MULTI_SOCKET_FLUSH)"
         echo "GGML_RPC_GET_TENSOR_DEFER=$(b6_mitigation_default GGML_RPC_GET_TENSOR_DEFER)"
+        echo "GGML_RPC_DUAL_SOCKET=$(b6_mitigation_default GGML_RPC_DUAL_SOCKET)"
     } >>"${OUT_DIR}/env.txt"
 }
 

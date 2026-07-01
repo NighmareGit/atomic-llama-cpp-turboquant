@@ -7,7 +7,7 @@ extern "C" {
 #endif
 
 #define RPC_PROTO_MAJOR_VERSION    4
-#define RPC_PROTO_MINOR_VERSION    3   // + RPC_CMD_COPY_TENSOR_PEER (3)
+#define RPC_PROTO_MINOR_VERSION    4   // + RPC_CMD_CHANNEL_BIND dual-socket (4)
 #define RPC_PROTO_PATCH_VERSION    2
 
 #ifdef  __cplusplus
@@ -55,6 +55,9 @@ GGML_BACKEND_API bool ggml_backend_rpc_event_defer_barrier(void);
 
 // B+12: defer GET_TENSOR recv to sched graph_compute boundary (default on when pipeline plus is on).
 GGML_BACKEND_API bool ggml_backend_rpc_get_tensor_defer(void);
+
+// B+11: cmd/response dual-socket RPC (default on when pipeline plus is on; proto minor >= 4).
+GGML_BACKEND_API bool ggml_backend_rpc_dual_socket(void);
 
 #ifdef  __cplusplus
 }

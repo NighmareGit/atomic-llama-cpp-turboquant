@@ -221,7 +221,8 @@ Validation overlap (0.8–1.3% @ n=128) shows the scheduler **can** overlap more
 - [x] Push B+14/B+15 to gitea; canonical `b15b` re-bench (rebuild `ggml-base` after sync)
 - [x] V2 CUDA via `llama-server` + triton `:50054` (remus client, `--fit on`) — PASS 2026-07-01
 - [x] B+12 bisect on canonical n=384 — **NULL overlap** (2026-07-01); see B+12 section
-- [ ] B+11 dual-socket RPC scope + bisect on `b6-4gpu-g` n=384
+- [x] B+11 dual-socket RPC scope (`DESIGN-b11-dual-socket.md`)
+- [ ] B+11 bisect on `b6-4gpu-g` n=384 (rebuild all rpc-servers proto 4.4 first)
 - [ ] Phase 1.2 A+B parsers (waterfall/Gantt) before next major bisect
 
 ### B+12 — GET_TENSOR deferral (2026-07-01)
@@ -273,7 +274,7 @@ Artifacts: `b6-2gpu-f-triton-n384-romulus-native-b12`, `...-no-get-defer`.
 - [x] Push B+14/B+15 to gitea; romulus + triton @ `590597110` (2026-07-01)
 - [x] Canonical B+15 re-bench `b6-2gpu-f-triton-n384-romulus-native-b15b` — G=190.2, overlap=0.3%, `input_wait` ~358ms (b15 stale `ggml-base`; rebuild fixed)
 - [x] B+12 `GET_TENSOR` deferral bisect on canonical n=384 — NULL overlap (2026-07-01)
-- [ ] B+11 dual-socket RPC — scope + `b6-4gpu-g` bisect
+- [ ] B+11 bisect on `b6-4gpu-g` n=384 (proto 4.4 rpc-server rebuild required)
 
 ## Metrics Dashboard
 

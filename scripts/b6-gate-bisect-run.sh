@@ -8,10 +8,12 @@
 #   no-async-copy     B+10 OFF (GGML_SCHED_MOE_ASYNC_COPY=0)
 #   no-defer          B+9 OFF  (GGML_RPC_EVENT_DEFER_BARRIER=0)
 #   no-get-defer      B+12 OFF (GGML_RPC_GET_TENSOR_DEFER=0)
+#   no-dual-socket    B+11 OFF (GGML_RPC_DUAL_SOCKET=0)
 #   canonical-romulus romulus-native canonical re-bench (all mitigations ON)
 #
 # bisect (4-GPU, set B6_GATE_PRESET=b6-4gpu-g):
 #   no-flush          B+7a' OFF (GGML_RPC_MULTI_SOCKET_FLUSH=0)
+#   no-dual-socket    B+11 OFF (GGML_RPC_DUAL_SOCKET=0)
 #
 # env:
 #   B6_GATE_CLIENT=romulus|remus-docker  (default: romulus)
@@ -48,6 +50,10 @@ case "$BISECT" in
     no-get-defer)
         export GGML_RPC_GET_TENSOR_DEFER=0
         SUFFIX="no-get-defer"
+        ;;
+    no-dual-socket)
+        export GGML_RPC_DUAL_SOCKET=0
+        SUFFIX="no-dual-socket"
         ;;
     no-flush)
         export GGML_RPC_MULTI_SOCKET_FLUSH=0
