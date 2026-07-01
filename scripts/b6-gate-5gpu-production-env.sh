@@ -17,7 +17,9 @@ b6_5gpu_base_env() {
 
 b6_5gpu_production_env() {
     b6_5gpu_base_env
-    if [[ "${B6_5GPU_DUAL_SOCKET:-1}" == "1" ]]; then
+    if [[ -n "${GGML_RPC_DUAL_SOCKET:-}" ]]; then
+        :
+    elif [[ "${B6_5GPU_DUAL_SOCKET:-1}" == "1" ]]; then
         export GGML_RPC_DUAL_SOCKET=1
     else
         export GGML_RPC_DUAL_SOCKET=0

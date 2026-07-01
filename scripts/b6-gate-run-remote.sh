@@ -5,6 +5,8 @@ LABEL="${1:?label required}"
 shift || true
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+# shellcheck source=scripts/b6-gate-performance-env.sh
+source "${ROOT}/scripts/b6-gate-performance-env.sh"
 export LD_LIBRARY_PATH="${ROOT}/build-rocm-docker/bin:/opt/rocm/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 export PROFILER_LOCAL=1
 export PROFILER_BIN="${ROOT}/build-rocm-docker/bin/llama-pipeline-profiler"
@@ -34,6 +36,11 @@ case "$LABEL" in
         export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051,127.0.0.1:50051,192.168.8.23:50054}"
         export BENCH_TS="${BENCH_TS:-22,11,34,33}"
         ;;
+    b6-3gpu-g)
+        export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051,127.0.0.1:50051}"
+        export BENCH_TS="${BENCH_TS:-50,28,22}"
+        export GGML_PIPELINE_PLUS="${GGML_PIPELINE_PLUS:-1}"
+        ;;
     b6-5gpu-g|b6-5gpu-g-prod)
         # shellcheck source=scripts/b6-gate-5gpu-production-env.sh
         source "${ROOT}/scripts/b6-gate-5gpu-production-env.sh"
@@ -54,7 +61,12 @@ case "$LABEL" in
         ;;
 esac
 
+if [[ "$LABEL" != "b6-5gpu-g-prod" && "${B6_PERF_AUTO:-1}" == "1" && -z "${GGML_RPC_DUAL_SOCKET:-}" ]]; then
+    b6_apply_performance_tuning "${BENCH_RPC_ENDPOINT:-}"
+fi
+
 echo "=== b6-gate remote run: $LABEL ==="
+echo "perf: dual=${GGML_RPC_DUAL_SOCKET:-0} hash_defer=${GGML_RPC_HASH_DEFER:-0} rpc=${BENCH_RPC_ENDPOINT:-}"
 bash scripts/llama-pipeline-profiler-cluster.sh "$LABEL" \
     -ctk q8_0 -ctv q8_0 -ngl 99 --no-warmup \
     --with-gpu-telemetry --trace-sample 5 \
