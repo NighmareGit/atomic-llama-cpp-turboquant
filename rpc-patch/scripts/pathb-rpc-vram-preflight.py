@@ -332,6 +332,106 @@ def probe_device(dev: DeviceSpec) -> tuple[int, int, str]:
     raise ValueError(f"unknown device kind: {dev.kind}")
 
 
+def fitt_mib_for_preset(preset: PresetSpec) -> list[int]:
+    """Per-device fit-target MiB aligned with tensor-split device order (RPC0..ROCm)."""
+    n = len(preset.devices) if preset.devices else len(preset.ts_default)
+    return [VRAM.FITT_MIB_DEFAULT] * n
+
+
+def small_device_index(preset: PresetSpec) -> int:
+    """Romulus 3060 docker is index 1 on b6-5gpu-g; else smallest VRAM slot."""
+    if preset.devices:
+        for i, dev in enumerate(preset.devices):
+            if "3060" in dev.label:
+                return i
+    return 1 if len(preset.ts_default) > 1 else 0
+
+
+def normalize_ts_sum(ts: list[int], floor_pct: int = 4) -> list[int]:
+    n = len(ts)
+    if n == 0:
+        return []
+    s = sum(ts)
+    if s <= 0:
+        base = max(floor_pct, 100 // n)
+        return normalize_ts_sum([base] * n, floor_pct=floor_pct)
+    raw = [max(floor_pct, int(round(100 * t / s))) for t in ts]
+    delta = 100 - sum(raw)
+    i = 0
+    while delta > 0:
+        raw[i % n] += 1
+        delta -= 1
+        i += 1
+    i = 0
+    while delta < 0:
+        idx = i % n
+        if raw[idx] > floor_pct:
+            raw[idx] -= 1
+            delta += 1
+        i += 1
+        if i > n * 200:
+            break
+    return raw
+
+
+def max_ts_small_fits(
+    model_gb: float,
+    layers: int,
+    ctx: int,
+    ngl: int,
+    small_idx: int,
+    vrams_gb: list[float],
+    margins_gb: list[float],
+    floor_pct: int = 4,
+) -> int:
+    n = len(vrams_gb)
+    best = floor_pct
+    lo, hi = floor_pct, 45
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        ts = [0] * n
+        ts[small_idx] = mid
+        rem = 100 - mid
+        others = [i for i in range(n) if i != small_idx]
+        ov = sum(vrams_gb[i] for i in others) or 1.0
+        for i in others:
+            ts[i] = max(floor_pct, int(round(rem * vrams_gb[i] / ov)))
+        ts = normalize_ts_sum(ts, floor_pct=floor_pct)
+        ok, _, _ = VRAM.check_split(model_gb, layers, ctx, ngl, ts, vrams_gb, margins_gb)
+        if ok:
+            best = mid
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best
+
+
+def ts_l4_spread_cap_small(
+    preset: PresetSpec,
+    vrams_gb: list[float],
+    model_gb: float,
+    layers: int,
+    ctx: int,
+    ngl: int,
+    margins_gb: list[float],
+    floor_pct: int = 4,
+) -> list[int]:
+    """L4 spread: cap romulus 3060 share, redistribute by VRAM (fitt-aware)."""
+    n = len(vrams_gb)
+    small_idx = small_device_index(preset)
+    cap = max_ts_small_fits(
+        model_gb, layers, ctx, ngl, small_idx, vrams_gb, margins_gb, floor_pct=floor_pct
+    )
+    rem = 100 - cap
+    others = [i for i in range(n) if i != small_idx]
+    ov = sum(vrams_gb[i] for i in others) or 1.0
+    ts = [0] * n
+    ts[small_idx] = cap
+    for i in others:
+        ts[i] = max(floor_pct, int(round(rem * vrams_gb[i] / ov)))
+    return normalize_ts_sum(ts, floor_pct=floor_pct)
+
+
 def ts_layer_spread_equal(n_devices: int, floor_pct: int = 4) -> list[int]:
     """L4: equal tensor-split to spread layers across all cluster GPUs."""
     if n_devices <= 0:
@@ -418,7 +518,7 @@ def main() -> int:
         "--ts-mode",
         choices=("vram", "equal"),
         default="vram",
-        help="vram=live ratio (default); equal=L4 layer spread across all devices",
+        help="vram=live ratio (default); equal=L4 cap romulus 3060 + spread (fitt 1024 MiB)",
     )
     p.add_argument("--rpc", default="", help="override RPC endpoint list")
     p.add_argument("--live", action="store_true", default=True, help="probe live VRAM (default)")
@@ -472,11 +572,27 @@ def main() -> int:
     free_mibs = [r[1] for r in live_rows] if live_rows else []
     ts_live = ts_from_free_mb(free_mibs) if free_mibs else []
     n_dev = len(preset.devices) if preset.devices else len(preset.ts_default)
-    ts_equal = ts_layer_spread_equal(n_dev) if n_dev else []
+    fitt_mib = fitt_mib_for_preset(preset)
+    margins_gb = VRAM.margins_gb_from_fitt_mib(fitt_mib, n_dev)
+    ts_equal_naive = ts_layer_spread_equal(n_dev) if n_dev else []
+    ngl_rows = VRAM.ngl_candidates(layers)
+    ngl_rec = ngl_rows[1][0] if len(ngl_rows) > 1 else ngl_rows[0][0]
+    ts_equal_safe: list[int] = []
+    if args.ts_mode == "equal" and n_dev:
+        for ngl, _frac in ngl_rows:
+            ts_equal_safe = ts_l4_spread_cap_small(
+                preset, vrams_gb, model_gb, layers, args.ctx, ngl, margins_gb
+            )
+            ok, _, _ = VRAM.check_split(
+                model_gb, layers, args.ctx, ngl, ts_equal_safe, vrams_gb, margins_gb
+            )
+            if ok:
+                ngl_rec = ngl
+                break
     if args.ts:
         ts_eval = [int(x) for x in args.ts.split(",")]
-    elif args.ts_mode == "equal" and ts_equal:
-        ts_eval = ts_equal
+    elif args.ts_mode == "equal" and ts_equal_safe:
+        ts_eval = ts_equal_safe
     elif ts_live:
         ts_eval = ts_live
     else:
@@ -494,24 +610,35 @@ def main() -> int:
     print("=== recommended deploy flags ===")
     print(f"  BENCH_RPC_ENDPOINT='{rpc}'")
     print(f"  BENCH_TS={','.join(str(t) for t in ts_eval)}")
-    if ts_equal:
-        print(f"  # L4 equal spread ts: {','.join(str(t) for t in ts_equal)}")
+    small_idx = small_device_index(preset)
+    small_label = preset.devices[small_idx].label if preset.devices and small_idx < len(preset.devices) else f"dev{small_idx}"
+    if ts_equal_naive:
+        print(f"  # L4 naive equal ts: {','.join(str(t) for t in ts_equal_naive)}")
+    if ts_equal_safe:
+        print(
+            f"  # L4 3060-safe spread (dev{small_idx}={small_label} cap, fitt 1024 MiB): "
+            f"{','.join(str(t) for t in ts_equal_safe)}"
+        )
     if ts_live and ts_eval != preset.ts_default:
         print(f"  # live ratio ts: {','.join(str(t) for t in ts_live)}")
         print(f"  # preset default: {','.join(str(t) for t in preset.ts_default)}")
     if args.ts_mode == "equal":
-        print(f"  # ts-mode: equal (L4 layer spread)")
-    ngl_rows = VRAM.ngl_candidates(layers)
-    ngl_rec = ngl_rows[1][0] if len(ngl_rows) > 1 else ngl_rows[0][0]
+        print(f"  # ts-mode: equal (L4 cap-small @ {small_label})")
+    print(f"  BENCH_FITT={','.join(str(m) for m in fitt_mib)}")
     print(f"  BENCH_NGL={ngl_rec}")
-    print("  BENCH_EXTRA='--fit off --verbose -lv 4 --reasoning off'")
+    fitt_s = ",".join(str(m) for m in fitt_mib)
+    print(
+        f"  BENCH_EXTRA='--fit off --fit-target {fitt_s} --verbose -lv 4 --reasoning off'"
+    )
     print()
 
     ok_default = False
     best: tuple[int, list[int], list[float]] | None = None
-    print(f"{'ngl':>4} {'cpu%':>5} {'ts':>16} | per-dev GB (w+KV+margin) | ok")
+    print(f"{'ngl':>4} {'cpu%':>5} {'ts':>16} | per-dev GB (w+KV+fitt) | ok")
     for ngl, frac in ngl_rows:
-        ok, totals, w_cpu = VRAM.check_split(model_gb, layers, args.ctx, ngl, ts_eval, vrams_gb)
+        ok, totals, w_cpu = VRAM.check_split(
+            model_gb, layers, args.ctx, ngl, ts_eval, vrams_gb, margins_gb
+        )
         ts_s = ",".join(str(t) for t in ts_eval)
         tot_s = " ".join(f"{t:.1f}" for t in totals) if totals else "-"
         flag = "OK" if ok else "OOM"

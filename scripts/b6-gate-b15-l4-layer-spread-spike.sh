@@ -37,23 +37,29 @@ plan_deploy() {
     local out
     out="$(ssh_romulus "cd ${ROMULUS_REPO} && python3 rpc-patch/scripts/pathb-rpc-vram-preflight.py \\
       --preset b6-5gpu-g --gguf '${path}' --ts-mode ${mode} 2>/dev/null || true")"
-    local ts ngl
+    local ts ngl fitt pass_ngl
     ts="$(printf '%s\n' "$out" | awk -F= '/^  BENCH_TS=/{print $2; exit}')"
     ngl="$(printf '%s\n' "$out" | awk -F= '/^  BENCH_NGL=/{print $2; exit}')"
+    fitt="$(printf '%s\n' "$out" | awk -F= '/^  BENCH_FITT=/{print $2; exit}')"
+    pass_ngl="$(printf '%s\n' "$out" | sed -n 's/^PASS: ngl=\([0-9]*\).*/\1/p' | head -1)"
+    if [[ -n "$pass_ngl" ]]; then
+        ngl="$pass_ngl"
+    fi
     if [[ -z "$ts" ]]; then
         return 1
     fi
-    printf '%s %s\n' "$ts" "${ngl:-}"
+    printf '%s %s %s\n' "$ts" "${ngl:-}" "${fitt:-}"
 }
 
 run_case() {
     local model_id="$1"
     local ts_mode="$2"
     local path="${MODEL_PATH[$model_id]}"
-    local ts ngl plan
+    local ts ngl fitt plan
     plan="$(plan_deploy "$ts_mode" "$path")" || true
     ts="$(printf '%s\n' "$plan" | awk 'NR==1{print $1}')"
     ngl="$(printf '%s\n' "$plan" | awk 'NR==1{print $2}')"
+    fitt="$(printf '%s\n' "$plan" | awk 'NR==1{print $3}')"
     if [[ -z "$ts" ]]; then
         echo "SKIP ${model_id}-${ts_mode}: no TS from preflight"
         return 0
@@ -67,15 +73,18 @@ run_case() {
             return 0
         fi
     fi
-    local ngl_env=""
+    local ngl_env="" fitt_env=""
     if [[ -n "$ngl" ]]; then
         ngl_env="BENCH_NGL=${ngl}"
     fi
+    if [[ -n "$fitt" ]]; then
+        fitt_env="BENCH_FIT_TARGET='${fitt}'"
+    fi
     local out="${OUT_BASE}/${model_id}-${ts_mode}-n${GEN}"
-    echo "=== L4 ${model_id} ts_mode=${ts_mode} TS=${ts} ==="
+    echo "=== L4 ${model_id} ts_mode=${ts_mode} TS=${ts} ngl=${ngl:-?} fitt=${fitt:-?} ==="
     set +e
     ssh_romulus "cd ${ROMULUS_REPO} && \\
-      BENCH_MODEL='${path}' BENCH_GEN_TOKENS=${GEN} BENCH_TS='${ts}' ${ngl_env} \\
+      BENCH_MODEL='${path}' BENCH_GEN_TOKENS=${GEN} BENCH_TS='${ts}' ${ngl_env} ${fitt_env} \\
       BENCH_CTK=q8_0 BENCH_CTV=turbo3 \\
       GGML_PIPELINE_PLUS=1 B6_5GPU_WAVEFRONT=0 \\
       GGML_RPC_HASH_DEFER=\${B6_L4_HASH_DEFER:-0} \\

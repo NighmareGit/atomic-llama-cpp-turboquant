@@ -112,6 +112,8 @@ b6_append_env_audit() {
         echo "GGML_SCHED_WAVEFRONT_INTRA=${GGML_SCHED_WAVEFRONT_INTRA:-}"
         echo "GGML_SCHED_WAVEFRONT_CROSS=${GGML_SCHED_WAVEFRONT_CROSS:-}"
         echo "GGML_SCHED_PIPELINE_DEPTH=${GGML_SCHED_PIPELINE_DEPTH:-4}"
+        echo "BENCH_FIT_TARGET=${BENCH_FIT_TARGET:-}"
+        echo "BENCH_NGL=${BENCH_NGL:-}"
     } >>"${OUT_DIR}/env.txt"
 }
 
@@ -157,6 +159,14 @@ build_profiler_args() {
     fi
     if [[ -n "${BENCH_CTX:-}" ]]; then
         args+=(-c "$BENCH_CTX")
+    fi
+    if [[ -n "${BENCH_FIT_TARGET:-}" ]]; then
+        args+=(--fit off --fit-target "$BENCH_FIT_TARGET")
+    fi
+    if [[ -n "${BENCH_EXTRA:-}" ]]; then
+        # shellcheck disable=SC2206
+        local extra_parts=(${BENCH_EXTRA})
+        args+=("${extra_parts[@]}")
     fi
     args+=("$@")
     if [[ "${PROFILER_SKIP_VALIDATE:-0}" == "1" ]]; then

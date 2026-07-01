@@ -59,7 +59,8 @@ CONFIGS = {
 
 DEFAULT_MODEL_GB = 38.0
 DEFAULT_LAYERS = 80
-MARGIN_GB = 1.0
+MARGIN_GB = 1.0  # legacy default (~1024 MiB)
+FITT_MIB_DEFAULT = 1024
 CPU_OFFLOAD_FRACS = (0.25, 0.30, 0.35, 0.40)
 
 
@@ -170,6 +171,15 @@ def ngl_candidates(n_layer: int) -> list[tuple[int, float]]:
     return sorted(set(rows), key=lambda x: -x[0])
 
 
+def margins_gb_from_fitt_mib(fitt_mib: list[int] | None, n: int) -> list[float]:
+    if not fitt_mib:
+        return [MARGIN_GB] * n
+    out = [m / 1024.0 for m in fitt_mib]
+    if len(out) < n:
+        out.extend([FITT_MIB_DEFAULT / 1024.0] * (n - len(out)))
+    return out[:n]
+
+
 def check_split(
     model_gb: float,
     layers: int,
@@ -177,19 +187,23 @@ def check_split(
     ngl: int,
     ts_parts: list[int],
     vrams: list[float],
+    margins_gb: list[float] | None = None,
 ) -> tuple[bool, list[float], float]:
     if ngl > layers:
         return False, [], 0.0
+    if margins_gb is None:
+        margins_gb = [MARGIN_GB] * len(vrams)
     gpu_frac = ngl / layers
     w_gpu = model_gb * gpu_frac
     w_cpu = model_gb * (1 - gpu_frac)
     s = sum(ts_parts)
     totals = []
-    for ts, vram in zip(ts_parts, vrams):
+    for i, (ts, vram) in enumerate(zip(ts_parts, vrams)):
         w_i = w_gpu * ts / s
         layers_i = ngl * ts / s
         kv_i = kv_gb(layers_i, ctx)
-        tot = w_i + kv_i + MARGIN_GB
+        margin = margins_gb[i] if i < len(margins_gb) else MARGIN_GB
+        tot = w_i + kv_i + margin
         totals.append(tot)
         if tot > vram:
             return False, totals, w_cpu
