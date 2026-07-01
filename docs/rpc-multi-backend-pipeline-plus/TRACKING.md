@@ -343,6 +343,12 @@ Naive equal `20,20,20,20,20` still **OOM** on 3060 (~8 GB alloc vs ~7 GB static 
 
 Artifacts: `b6-b15-l4-layer-spread-20260701-185902` (romulus). Spike: `scripts/b6-gate-b15-l4-layer-spread-spike.sh`.
 
+### V5 — Overlap closed; Phase 1c active (2026-07-01)
+
+**Overlap verdict:** No further beneficial M3 ideas within Path-B+. Ladder + wavefront NULL; pair `overlap_pct` is the wrong production gate (`global_multi` 14–23% vs pair ~0.2%). One marginal experiment remains: **L1** `GGML_RPC_HASH_DEFER` (G lever, not M3). True multi-RPC concurrency needs **Path C** or finer server-side splits.
+
+**Branch:** deploy-ready. **Continue:** Phase 1c assembly line production ([DESIGN-b14](DESIGN-b14-parallel-assembly-line.md) s10) — runbook, L1 spike, optional L4 @ n=384.
+
 ### V4 — Plan review (2026-07-01)
 
 **Verdict:** Structural ceiling **unchanged** (M3 FAIL). New work closes **deploy** and **5-GPU prod** gaps, not the overlap gate.

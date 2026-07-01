@@ -231,4 +231,17 @@ bash scripts/b6-gate-phase12c-blocking-audit.sh b6-2gpu-f-triton-n384-romulus-na
 - End of Phase 2: M3 PASS **or** structural ceiling documented with trace proof
 - Phase 3 start: Explicit approval only
 
-**Next action (2026-07-01, V4):** Phase 2 ladder **exhausted** — M3 FAIL, ceiling stands. **Ship:** B+13 gather fixes, B+14 wavefront (OFF), B+15 L4 + VRAM preflight for 5-GPU 70B+. **Optional:** L4 @ n=384; VRAM P1/P2/P3 per MISSION.md. Details: [TRACKING.md](TRACKING.md) V4 section.
+## Phase 1c — Assembly line production (Active — 2026-07-01)
+
+**Goal:** Working 5-GPU assembly line for deploy — all GPUs loaded, stable G, operator runbook. **Not** M3 `overlap_pct` (closed).
+
+Overlap hunt on this branch is **done**. See [DESIGN-b14-parallel-assembly-line.md](DESIGN-b14-parallel-assembly-line.md) section 10.
+
+| Step | Work | Gate |
+|------|------|------|
+| 1 | Deploy runbook + equal-safe preflight | 70B+ load PASS |
+| 2 | L1 `GGML_RPC_HASH_DEFER` spike @ n=384 | G >= 0%; no regression |
+| 3 | L4 n=384 confirm (A8/A13) | optional |
+| 4 | Path C bridge criteria doc | when to escalate W2 |
+
+**Next action (2026-07-01, V5):** Branch **deploy-ready**. Continue Phase 1c: L1 spike, then optional n=384 L4. Details: [TRACKING.md](TRACKING.md) V4; assembly line: DESIGN-b14 s10.

@@ -30,7 +30,7 @@ The current `Path-B-Event-Support-Pipeline-Plus` state delivers excellent increm
 |-----------|--------|----------------------|-------|
 | Optimal 36B NL MoE throughput (2-device) | ≥48 t/s sustained | **48.9 t/s** (`trace-f-2gpu-plus`) | **Achieved** |
 | 3-device vs 2-device penalty | <10% regression | +32% uplift by dropping 6600 | **Achieved** — do not use 3-device for this model class |
-| **B+6 M3 overlap gate** | **`overlap_pct >= 5%`** | **0.3%** @ canonical n=384; 1.3% best (V1 n=128) | **Primary active gap** — hunt continues (B+13 next) |
+| **B+6 M3 overlap gate** | **`overlap_pct >= 5%`** | **0.3%** @ canonical n=384; 1.3% best (V1 n=128) | **Closed on this branch** — Path C or new effort required |
 | B+6 M1 interim | `overlap_pct >= 1%` @ n=384 | 0.3% @ n=384; 1.3% @ n=128 | FAIL at gate depth |
 | B+14/B+15 correctness | no regressions on MoE + large | V1/V2 PASS, sync_fb=0 | **Achieved** — safe to ship |
 | GPU power duty cycle @ ≥20% TDP during gen | >15% | 3.8% (best run) | Orchestration stall signature |
@@ -63,7 +63,7 @@ The current `Path-B-Event-Support-Pipeline-Plus` state delivers excellent increm
 **Owner:** NighmareGit  
 **Review cadence:** After every major profile/profiler run or topology change.
 
-**Current focus (2026-07-01, V4):** M3 overlap hunt **paused** — structural ceiling finalized (B+8–B+16 + B+14 wavefront all NULL). **Active:** 5-GPU prod deploy for 70B+ (B+15 L4 equal-safe TS + VRAM planning reserves). See [TRACKING.md](TRACKING.md) V4 section and [PLAN.md](PLAN.md) section 2.5.
+**Current focus (2026-07-01, V5):** Branch **deploy-ready**. M3 overlap **closed** on Path-B+. **Active:** Phase 1c assembly line production — 5-GPU 70B+ deploy runbook, L1 hash-defer spike, optional n=384 L4. See [DESIGN-b14-parallel-assembly-line.md](DESIGN-b14-parallel-assembly-line.md) section 10 and [PLAN.md](PLAN.md) Phase 1c.
 
 ## Future work — VRAM / tensor-split planning
 

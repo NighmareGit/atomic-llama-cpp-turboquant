@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|-------|
 | **Date** | 2026-07-01 |
-| **Status** | Hypothesis — grill in progress |
+| **Status** | Phase 1 spike **NULL on M3** (2026-07-01); **Phase 1c production** active |
 | **Branch** | Path-B-Event-Support-Pipeline-Plus |
 | **Prereq** | Tier A baseline frozen (14/16); B+8–B+13 ladder NULL on overlap |
 
@@ -202,3 +202,59 @@ Artifact: `benches/path-b-plus/b6-phase0-assembly-bounds-20260701-175805/`
 
 - Q1: W1-first vs W2 — **resolved:** bundle W1+W2; Phase 0 proves W1-only insufficient for cluster fill.
 - Q2: Phase 0 before code — **agreed and executed.**
+- Q3: Phase 1 spike (W1+W2 factorial A0–A3, A1/A8/A13) — **NULL:** `global_3bk` < 1%, `overlap_pct` ~0.6–0.9%; A0 wins G. Wavefront default OFF.
+- Q4: Overlap hunt on this branch — **closed for M3.** Remaining Path-B+ ROI is G/deploy, not pair metric.
+
+## 10. Phase 1c — working assembly line (production track)
+
+**Date:** 2026-07-01 (post-V4)
+
+### Overlap verdict (honest)
+
+| Question | Answer |
+|----------|--------|
+| More M3 (`overlap_pct >= 5%`) ideas in Path-B+? | **No** — B+8–B+16 + wavefront exhausted; ceiling is architectural (serial split loop + single straggler RPC stage). |
+| One cheap experiment left? | **L1** `GGML_RPC_HASH_DEFER=1` on 5-GPU A1 n=384 — may cut `blocking_events` / SET_TENSOR_HASH ms; expect **G margin**, not M3. |
+| What would actually move multi-backend concurrency? | **Path C** (server-side parallel layer ranges) or **finer graph splits** beyond current layer-split — both out of current branch scope. |
+| Is pair `overlap_pct` the right gate? | **No** — Phase 0 shows `global_multi` 14–23% while pair metric ~0.2%. Production track uses **G + global timeline metrics**. |
+
+**Branch deploy-ready:** 5-GPU 70B+ loads PASS with equal-safe preflight; wavefront ships behind flags (OFF); B+13 gather fixes shipped.
+
+### Redefined "working assembly line"
+
+Production success is **not** M3 on `overlap_pct`. It is:
+
+1. **All cluster GPUs carry layer weight** (L4 equal-safe TS + VRAM reserves) — **DONE** for A8/A13.
+2. **Stable G** on prod topology without OOM or correctness regressions.
+3. **`global_multi_pct` / `serial_dispatch_pct`** tracked via Phase 0 bounds — improvement is nice-to-have, not a ship gate.
+4. **Operator runbook:** preflight -> deploy flags -> smoke -> bench.
+
+### Phase 1c work package (implementation order)
+
+| Step | Item | Gate | Status |
+|------|------|------|--------|
+| 1 | Deploy runbook: `pathb-rpc-vram-preflight.sh --preset b6-5gpu-g-prod --ts-mode equal --phase load` | 70B+ load smoke | **ready** |
+| 2 | L1 spike: `B6_5GPU_HASH_DEFER=1` on A1 n=384 | G delta >= 0%; no correctness regression | **next** |
+| 3 | L4 @ n=384 equal-safe (A8/A13) | load PASS; G recorded | optional confirm |
+| 4 | MoE light offload smoke on big models | gen completes; G vs dense baseline | backlog |
+| 5 | Path C bridge criteria | document when to escalate for true W2 | doc only |
+
+**Explicit OFF:** wavefront (`B6_5GPU_WAVEFRONT=0`), further B+8–B+16 bisects, naive equal TS.
+
+**Prod defaults (`b6-gate-5gpu-production-env.sh`):** dual-socket ON, hash defer OFF, wavefront OFF, pipeline depth 4.
+
+### Commands
+
+```bash
+# Pre-deploy
+bash scripts/pathb-rpc-vram-preflight.sh --preset b6-5gpu-g-prod \
+  --gguf /mnt/models/meta-llama-3-70b-instruct.Q4_K_M.gguf \
+  --ts-mode equal --phase load
+
+# L1 spike (romulus)
+B6_5GPU_HASH_DEFER=1 bash scripts/b6-gate-run-remote.sh b6-5gpu-g-prod \
+  --no-warmup --skip-rpc-validate
+
+# Phase 0 bounds on any bench dir
+python3 scripts/b6-gate-phase0-assembly-bounds.py <out>/telemetry
+```
