@@ -113,8 +113,8 @@ Gate `b6-4gpu-g-triton` n=384, romulus client, proto 4.4 on remus/romulus/triton
 
 1. [x] C-full audit — `scripts/b6-gate-phase12c-blocking-audit.sh` (see `telemetry/blocking-audit-c.json`)
 2. [x] Code audit — [DESIGN-b13-input-wait-audit.md](DESIGN-b13-input-wait-audit.md); trace `reject` labels fixed (B+13a)
-3. [ ] B+13b: issue split-2 deferred GETs before `wait_copy_slot` on gather splits
-4. [ ] B+13c: tighten B+15 prefetch overlap (split 1 end sync vs start issue)
+3. [x] B+13b: issue split-2 deferred GETs before `wait_copy_slot` on gather splits (`rpc_gather_prefetch_early`)
+4. [x] B+13c: skip RPC `event_synchronize` at split-1 end when defer on (`rpc_prefetch_end`)
 5. Re-gate `b6-2gpu-f-triton-n384-romulus-native`; optional 4-GPU if 2-GPU overlap moves
 
 **Trace env:** `GGML_SCHED_TRACE=1`, `GGML_RPC_TRACE=1` (C-full phases in [IMPLEMENTATION.md](IMPLEMENTATION.md)).

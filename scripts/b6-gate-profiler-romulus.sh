@@ -28,7 +28,18 @@ export BENCH_MODEL="${BENCH_MODEL:-/mnt/models/Qwen3.6-35B-A3B-APEX-I-Quality.gg
 export BENCH_GEN_TOKENS="${BENCH_GEN_TOKENS:-384}"
 export BENCH_PROMPT_FILE="${BENCH_PROMPT_FILE:-${ROOT}/benches/path-b-plus/prompts/profiler-reasoning-long.txt}"
 export PROFILER_MODE="${PROFILER_MODE:-trace}"
-export PROFILER_LOCAL=1
+# Run on romulus via SSH when dev host has no local ROCm profiler build.
+if [[ -x "${PROFILER_BIN}" || -f "${PROFILER_BIN}" ]]; then
+    export PROFILER_LOCAL=1
+else
+    export PROFILER_LOCAL=0
+    export PATHB_ROMULUS_SSH="${PATHB_ROMULUS_SSH:-hunter@192.168.8.108}"
+    export PATHB_ROMULUS_REPO="${PATHB_ROMULUS_REPO:-/home/hunter/atomic-llama-cpp-turboquant}"
+    export PATHB_ROMULUS_PROFILER="${PATHB_ROMULUS_PROFILER:-${PATHB_ROMULUS_REPO}/build-rocm-docker/bin/llama-pipeline-profiler}"
+    if [[ -n "${PROFILER_OUT_DIR:-}" ]]; then
+        export PATHB_ROMULUS_OUT="${PATHB_ROMULUS_OUT:-${PATHB_ROMULUS_REPO}/benches/path-b-plus/$(basename "$PROFILER_OUT_DIR")}"
+    fi
+fi
 export BENCH_TRACE=1
 export B6_CLIENT_KIND="${B6_CLIENT_KIND:-rocm-native}"
 

@@ -2093,6 +2093,17 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 break;
             }
         }
+        // B+13b: issue gather RPC GETs before copy-slot wait (overlap wire xfer with event_wait_slot).
+        if (need_copy_slot_wait && !ggml_backend_is_rpc(split_backend) && ggml_sched_rpc_get_tensor_defer()) {
+            const auto pf_t0 = std::chrono::steady_clock::now();
+            const int n_pf = ggml_backend_sched_prefetch_gather_rpc_inputs(
+                sched, split, split_backend_id, split_backend);
+            const auto pf_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - pf_t0).count();
+            if (sched_trace_lvl() && n_pf > 0) {
+                sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "rpc_gather_prefetch_early", pf_us);
+            }
+        }
         if (need_copy_slot_wait) {
             ggml_backend_sched_wait_copy_slot(sched, split_id, split_backend_id, split_backend);
         }
@@ -2468,22 +2479,28 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 sched->barrier_slot_pending[sched->cur_copy] |= (1u << split_backend_id);
             }
         }
-        // B+14/B+15: drain RPC producer event; GETs issued at split start (B+15).
+        // B+14/B+15/B+13c: prefetch next gather split; defer path skips RPC event drain (B+13b early issue).
         if (split_id + 1 < sched->n_splits && ggml_backend_is_rpc(split_backend)) {
             struct ggml_backend_sched_split * next_split = &splits[split_id + 1];
             const int next_bid = next_split->backend_id;
             ggml_backend_t next_backend = sched->backends[next_bid];
             if (next_backend != nullptr && !ggml_backend_is_rpc(next_backend)) {
                 const auto pf_t0 = std::chrono::steady_clock::now();
-                if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
+                if (!ggml_sched_rpc_get_tensor_defer() &&
+                    sched->events[split_backend_id][sched->cur_copy] != NULL) {
                     ggml_backend_event_synchronize(sched->events[split_backend_id][sched->cur_copy]);
                 }
                 g_rpc_producer_ready_mask |= (1u << split_backend_id);
-                (void) ggml_backend_sched_prefetch_gather_rpc_inputs(sched, next_split, next_bid, next_backend);
+                const int n_pf = ggml_backend_sched_prefetch_gather_rpc_inputs(
+                    sched, next_split, next_bid, next_backend);
                 const auto pf_us = std::chrono::duration_cast<std::chrono::microseconds>(
                     std::chrono::steady_clock::now() - pf_t0).count();
                 if (sched_trace_lvl() && pf_us > 0) {
-                    sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "rpc_prefetch_drain", pf_us);
+                    const char * pf_phase = ggml_sched_rpc_get_tensor_defer() ?
+                        "rpc_prefetch_end" : "rpc_prefetch_drain";
+                    if (n_pf > 0 || !ggml_sched_rpc_get_tensor_defer()) {
+                        sched_trace_emit(split_id, split_backend_id, sched->cur_copy, pf_phase, pf_us);
+                    }
                 }
             }
         }
