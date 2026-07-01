@@ -85,7 +85,7 @@ Gate `b6-4gpu-g-triton` n=384, romulus client, proto 4.4 on remus/romulus/triton
 
 **Do not read ON as baseline.** Dual-socket was the experiment; OFF is what ships. Details: [FEATURE-b11-dual-socket-rpc.md](FEATURE-b11-dual-socket-rpc.md), [TRACKING.md](TRACKING.md) B+11 section.
 
-### 2.2 B+13 active (next)
+### 2.2 B+13 result (closed)
 
 **Initial hypothesis:** `sync_copy_fallback` when `cpy_tensor_async` fails blocks the upload path.
 
@@ -116,6 +116,9 @@ Gate `b6-4gpu-g-triton` n=384, romulus client, proto 4.4 on remus/romulus/triton
 3. [x] B+13b: issue split-2 deferred GETs before `wait_copy_slot` on gather splits (`rpc_gather_prefetch_early`)
 4. [x] B+13c: skip RPC `event_synchronize` at split-1 end when defer on (`rpc_prefetch_end`)
 5. [x] Re-gate romulus n=384 — pre-b13b / b13b / b13bc A/B (`199eb1d5e`); overlap 0.3% all arms; G ~204 t/s
+6. [x] B+13d: gather+defer uses producer `event_wait` instead of full copy-slot wait (`event_wait_producer_slot`)
+
+**B+13 closed (NULL on M3 overlap).** Next hunt: B+16 CUDA `leaf_55` (G-only) or structural ceiling doc update.
 
 **Trace env:** `GGML_SCHED_TRACE=1`, `GGML_RPC_TRACE=1` (C-full phases in [IMPLEMENTATION.md](IMPLEMENTATION.md)).
 

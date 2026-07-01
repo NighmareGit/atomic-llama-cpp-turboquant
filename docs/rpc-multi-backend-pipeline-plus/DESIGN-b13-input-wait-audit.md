@@ -77,7 +77,7 @@ Async defer **works**, but overlap fails because:
 | B+13a | Set `g_sched_copy_reject="rpc_download_defer"` on successful defer paths | Correct trace attribution |
 | B+13b | Issue split-2 deferred GETs **before** `wait_copy_slot` when dst is local gather | Hide slot wait behind wire transfer — **implemented** (`rpc_gather_prefetch_early`) |
 | B+13c | B+15: prefetch at split 1 **start** (already partial) + avoid double `event_synchronize` at split 1 end | More overlap window — **implemented** (`rpc_prefetch_end`, defer-only) |
-| B+13d | Pipeline `event_sync_slot` with `event_wait` on producer only (not full slot) for gather splits | Cut ~7 ms steady-state wait |
+| B+13d | Pipeline `event_sync_slot` with `event_wait` on producer only (not full slot) for gather splits | Cut ~7 ms steady-state wait — **implemented** (`event_wait_producer_slot`, defer gather) |
 
 ## Pass criteria (unchanged)
 

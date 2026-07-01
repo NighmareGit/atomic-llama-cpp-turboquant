@@ -296,6 +296,7 @@ Artifacts: `b6-4gpu-g-triton-n384-romulus-native`, `...-no-dual-socket`; logs `b
 - [x] B+12 `GET_TENSOR` deferral bisect on canonical n=384 — NULL overlap (2026-07-01)
 - [x] B+11 bisect on `b6-4gpu-g-triton` n=384 — NULL overlap; HURTS G (2026-07-01)
 - [x] B+13b/c romulus A/B n=384 @ `199eb1d5e` — pre-b13b G=204.2 overlap=0.3%; b13bc G=205.4 overlap=0.2%; M3 NULL (2026-07-01)
+- [x] B+13d producer-slot wait on gather+defer — b13d G=205.9 overlap=0.2%; B+13 ladder closed NULL (2026-07-01)
 
 ## Metrics Dashboard
 
@@ -318,4 +319,4 @@ Artifacts: `b6-4gpu-g-triton-n384-romulus-native`, `...-no-dual-socket`; logs `b
 ---
 
 **Update this file after every profile/profiler run or topology decision.**  
-**Last edit:** 2026-07-01 — B+13b/c shipped @ `199eb1d5e`; romulus A/B NULL on overlap; M3 hunt continues.
+**Last edit:** 2026-07-01 — B+13 ladder closed NULL on M3; shipped b/c/d @ romulus; next B+16 or ceiling doc.
