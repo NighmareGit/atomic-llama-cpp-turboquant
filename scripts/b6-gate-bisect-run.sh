@@ -11,7 +11,7 @@
 #   no-dual-socket    B+11 OFF (GGML_RPC_DUAL_SOCKET=0)
 #   canonical-romulus romulus-native canonical re-bench (all mitigations ON)
 #
-# bisect (4-GPU, set B6_GATE_PRESET=b6-4gpu-g):
+# bisect (4-GPU, set B6_GATE_PRESET=b6-4gpu-g or b6-4gpu-g-triton):
 #   no-flush          B+7a' OFF (GGML_RPC_MULTI_SOCKET_FLUSH=0)
 #   no-dual-socket    B+11 OFF (GGML_RPC_DUAL_SOCKET=0)
 #
@@ -84,6 +84,14 @@ case "$PRESET" in
             OUT_NAME="b6-4gpu-g-n384-romulus-native-${SUFFIX}"
         fi
         OUT_PATTERN='^b6-4gpu-g-n384-romulus-native'
+        ;;
+    b6-4gpu-g-triton)
+        if [[ "$BISECT" == "canonical-romulus" ]]; then
+            OUT_NAME="b6-4gpu-g-triton-n384-romulus-native"
+        else
+            OUT_NAME="b6-4gpu-g-triton-n384-romulus-native-${SUFFIX}"
+        fi
+        OUT_PATTERN='^b6-4gpu-g-triton-n384-romulus-native'
         ;;
     *)
         echo "error: unknown B6_GATE_PRESET: ${PRESET}" >&2
