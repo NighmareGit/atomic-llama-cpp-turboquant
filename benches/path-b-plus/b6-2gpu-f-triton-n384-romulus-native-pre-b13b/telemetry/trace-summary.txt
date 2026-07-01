@@ -1,0 +1,42 @@
+=== trace summary ===
+dir=/home/hunter/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-n384-romulus-native-pre-b13b/telemetry
+
+[rpc] events=3341
+  ALLOC_BUFFER count=8 total_ms=23.66 avg_us=2957
+  GET_ALIGNMENT count=2 total_ms=0.53 avg_us=267
+  GET_MAX_SIZE count=2 total_ms=0.4 avg_us=202
+  BUFFER_GET_BASE count=8 total_ms=0.62 avg_us=77
+  FREE_BUFFER count=8 total_ms=7.42 avg_us=928
+  BUFFER_CLEAR count=4 total_ms=0.48 avg_us=121
+  SET_TENSOR count=1540 total_ms=2.85 avg_us=2
+  SET_TENSOR_HASH count=168 total_ms=5414.93 avg_us=32232
+  GET_TENSOR count=770 total_ms=83.08 avg_us=108
+  GRAPH_COMPUTE count=8 total_ms=11.7 avg_us=1463
+  GET_DEVICE_MEMORY count=6 total_ms=9.72 avg_us=1620
+  GET_ALLOC_SIZE count=48 total_ms=7.26 avg_us=151
+  HELLO count=5 total_ms=0 avg_us=0
+  DEVICE_COUNT count=2 total_ms=0.22 avg_us=112
+  GRAPH_RECOMPUTE count=762 total_ms=1.29 avg_us=2
+  blocking_events=513 blocking_ms=5547.4
+  drain_flush_ms=83.08
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  copy_issue_count=1155 defer_count=1155 peer_copy_count=0
+
+[sched] events=10397
+  split_total_count=1155
+  split_total_ms_sum=2133.46 avg_us=1847
+    backend2 splits=385 ms=4.65
+    backend0 splits=385 ms=1816.88
+    backend1 splits=385 ms=311.92
+  input_wait_copy_ms=215.06
+  graph_compute_async_ms=199.71
+  event_record_ms=1702
+  assembly_overlap_count=1178 pairs=444675 overlap_pct=0.3
+    copy0 splits=291
+    copy1 splits=288
+    copy2 splits=288
+    copy3 splits=288
