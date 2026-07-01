@@ -14,6 +14,7 @@ This is the canonical home for analysis, planning, tracking, and artifacts relat
 - [IMPLEMENTATION.md](IMPLEMENTATION.md) — B+8..B+13, C-full schema, Phase 1.2 work queue
 - [RPC-PROTOCOL.md](RPC-PROTOCOL.md) — wire format, version history, proto 4.4 CHANNEL_BIND
 - [FEATURE-b11-dual-socket-rpc.md](FEATURE-b11-dual-socket-rpc.md) — B+11 cmd/rsp split, bisect, ops
+- [DESIGN-b13-input-wait-audit.md](DESIGN-b13-input-wait-audit.md) — B+13 split-2 gather wait breakdown
 - [FUTURE-EXPANSIONS.md](FUTURE-EXPANSIONS.md) — deferred work (C-full sample API, post-B+15 perf hunt)
 - [ANALYSIS/Path-B-Plus-MultiBackend-RPC-Orchestration-Audit.md](ANALYSIS/Path-B-Plus-MultiBackend-RPC-Orchestration-Audit.md) — Core technical audit of serial workflow and sync blockers
 - [BENCHMARKS/](BENCHMARKS/) — Reference runs, matrix summaries, profile artifacts

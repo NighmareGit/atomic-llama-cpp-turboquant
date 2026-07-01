@@ -1924,6 +1924,7 @@ static bool ggml_backend_sched_try_async_tensor_copy(
     if (ggml_backend_buffer_is_rpc(buf_src) && !ggml_backend_buffer_is_rpc(buf_dst)) {
         const auto rpc_t0 = std::chrono::steady_clock::now();
         if (ggml_backend_rpc_try_download_tensor(split_backend, input, input_cpy)) {
+            g_sched_copy_reject = "rpc_download_defer";
             const auto rpc_us = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - rpc_t0).count();
             sched_trace_emit_hotpath(sched, "rpc_download_issue", rpc_us);
@@ -1933,6 +1934,7 @@ static bool ggml_backend_sched_try_async_tensor_copy(
     }
     if (!ggml_backend_buffer_is_rpc(buf_src) && ggml_backend_buffer_is_rpc(buf_dst)) {
         if (input_backend != nullptr && ggml_backend_rpc_try_upload_tensor(input_backend, input, input_cpy)) {
+            g_sched_copy_reject = "rpc_upload_defer";
             return true;
         }
         for (int i = 0; i < sched->n_backends; i++) {
@@ -1945,6 +1947,7 @@ static bool ggml_backend_sched_try_async_tensor_copy(
                 continue;
             }
             if (ggml_backend_rpc_try_upload_tensor(b, input, input_cpy)) {
+                g_sched_copy_reject = "rpc_upload_defer";
                 return true;
             }
         }
@@ -1954,6 +1957,7 @@ static bool ggml_backend_sched_try_async_tensor_copy(
     if (host_src && !host_dst && split_backend != nullptr && split_backend->iface.cpy_tensor_async != nullptr) {
         const auto h2d_t0 = std::chrono::steady_clock::now();
         if (split_backend->iface.cpy_tensor_async(split_backend, split_backend, input, input_cpy)) {
+            g_sched_copy_reject = "host_h2d_async";
             const auto h2d_us = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - h2d_t0).count();
             sched_trace_emit_hotpath(sched, "host_h2d_issue", h2d_us);
@@ -1964,12 +1968,14 @@ static bool ggml_backend_sched_try_async_tensor_copy(
 
     if (split_backend != nullptr && split_backend->iface.cpy_tensor_async != nullptr) {
         if (split_backend->iface.cpy_tensor_async(input_backend, split_backend, input, input_cpy)) {
+            g_sched_copy_reject = "iface_cpy_async";
             return true;
         }
         g_sched_copy_reject = "iface_cpy_split";
     }
     if (input_backend != nullptr && input_backend->iface.cpy_tensor_async != nullptr) {
         if (input_backend->iface.cpy_tensor_async(input_backend, split_backend, input, input_cpy)) {
+            g_sched_copy_reject = "iface_cpy_async";
             return true;
         }
         g_sched_copy_reject = "iface_cpy_input";
