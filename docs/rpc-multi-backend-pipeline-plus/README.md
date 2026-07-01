@@ -12,6 +12,8 @@ This is the canonical home for analysis, planning, tracking, and artifacts relat
 - [PLAN.md](PLAN.md) — Phased execution plan (Path-B+ → overlap gate → Path-C bridge)
 - [TRACKING.md](TRACKING.md) — Current status, open items, decisions
 - [IMPLEMENTATION.md](IMPLEMENTATION.md) — B+8..B+13, C-full schema, Phase 1.2 work queue
+- [RPC-PROTOCOL.md](RPC-PROTOCOL.md) — wire format, version history, proto 4.4 CHANNEL_BIND
+- [FEATURE-b11-dual-socket-rpc.md](FEATURE-b11-dual-socket-rpc.md) — B+11 cmd/rsp split, bisect, ops
 - [FUTURE-EXPANSIONS.md](FUTURE-EXPANSIONS.md) — deferred work (C-full sample API, post-B+15 perf hunt)
 - [ANALYSIS/Path-B-Plus-MultiBackend-RPC-Orchestration-Audit.md](ANALYSIS/Path-B-Plus-MultiBackend-RPC-Orchestration-Audit.md) — Core technical audit of serial workflow and sync blockers
 - [BENCHMARKS/](BENCHMARKS/) — Reference runs, matrix summaries, profile artifacts
@@ -39,5 +41,6 @@ This is the canonical home for analysis, planning, tracking, and artifacts relat
 ---
 
 **Status:** Active development (`Path-B-Event-Support-Pipeline-Plus` branch)  
+**Protocol:** RPC v4.4.2 (B+11 dual-socket shipped, default OFF)  
 **Last updated:** 2026-07-01  
 **Owner:** NighmareGit (with Grok analysis support)

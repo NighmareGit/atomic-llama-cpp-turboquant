@@ -32,4 +32,4 @@ powershell -NoProfile -File scripts\cuda-windows-5070ti\pathb-rpc-trace-parse.ps
 powershell -NoProfile -File scripts\cuda-windows-5070ti\pathb-trace-runbook.ps1 -Runs trace-f-3gpu-plus,trace-f-2gpu-plus
 ```
 
-Remus deploy: `./rpc-patch/scripts/pathb-remus-rpc.sh rebuild` (proto 4.3.2). See [MULTI-NODE.md](MULTI-NODE.md).
+Remus deploy: `./rpc-patch/scripts/pathb-remus-rpc.sh rebuild` (proto **4.4.2**). Jupiter: `scripts\b6-gate-jupiter-rebuild-rpc.cmd`. Protocol: [RPC-PROTOCOL.md](../rpc-multi-backend-pipeline-plus/RPC-PROTOCOL.md). See [MULTI-NODE.md](MULTI-NODE.md).

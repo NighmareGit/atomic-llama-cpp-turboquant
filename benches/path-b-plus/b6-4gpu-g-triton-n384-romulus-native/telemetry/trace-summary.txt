@@ -1,52 +1,54 @@
 === trace summary ===
 dir=/home/hunter/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-4gpu-g-triton-n384-romulus-native/telemetry
 
-[rpc] events=6248
-  ALLOC_BUFFER count=24 total_ms=20.06 avg_us=836
-  GET_ALIGNMENT count=6 total_ms=1.11 avg_us=185
-  GET_MAX_SIZE count=6 total_ms=0.73 avg_us=121
-  BUFFER_GET_BASE count=24 total_ms=3.31 avg_us=138
-  FREE_BUFFER count=24 total_ms=25.99 avg_us=1083
-  BUFFER_CLEAR count=12 total_ms=30.97 avg_us=2581
-  SET_TENSOR_HASH count=224 total_ms=4197.84 avg_us=18740
-  GET_TENSOR count=2310 total_ms=434.27 avg_us=188
-  GRAPH_COMPUTE count=24 total_ms=4.02 avg_us=168
-  GET_DEVICE_MEMORY count=18 total_ms=33.26 avg_us=1848
-  GET_ALLOC_SIZE count=84 total_ms=12.5 avg_us=149
-  HELLO count=45 total_ms=7.22 avg_us=160
-  DEVICE_COUNT count=6 total_ms=0.92 avg_us=153
-  GRAPH_RECOMPUTE count=2286 total_ms=33.32 avg_us=15
-  EVENT_RECORD count=1155 total_ms=4632.48 avg_us=4011
-  blocking_events=2539 blocking_ms=9374.84
-  drain_flush_ms=4632.48
-  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=
-  hello endpoint=127.0.0.1:50051 minor=3 peer_copy=
-  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
-  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=
-  hello endpoint=127.0.0.1:50051 minor=3 peer_copy=
-  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
-  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=
-  hello endpoint=127.0.0.1:50051 minor=3 peer_copy=
-  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
-  hello endpoint=127.0.0.1:50051 minor=3 peer_copy=
-  hello endpoint=127.0.0.1:50051 minor=3 peer_copy=
-  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=
-  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=
-  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
-  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
+[rpc] events=8913
+  ALLOC_BUFFER count=24 total_ms=13.94 avg_us=581
+  GET_ALIGNMENT count=6 total_ms=2.53 avg_us=421
+  GET_MAX_SIZE count=6 total_ms=0.66 avg_us=110
+  BUFFER_GET_BASE count=24 total_ms=3.54 avg_us=147
+  FREE_BUFFER count=24 total_ms=21.83 avg_us=910
+  BUFFER_CLEAR count=12 total_ms=36.21 avg_us=3018
+  SET_TENSOR count=3080 total_ms=8.25 avg_us=3
+  SET_TENSOR_HASH count=224 total_ms=15896.2 avg_us=70965
+  GET_TENSOR count=2310 total_ms=241.55 avg_us=105
+  GRAPH_COMPUTE count=24 total_ms=6.85 avg_us=286
+  GET_DEVICE_MEMORY count=18 total_ms=39.45 avg_us=2192
+  GET_ALLOC_SIZE count=84 total_ms=13.28 avg_us=158
+  HELLO count=15 total_ms=0 avg_us=0
+  DEVICE_COUNT count=6 total_ms=1.72 avg_us=287
+  GRAPH_RECOMPUTE count=2286 total_ms=22.52 avg_us=10
+  EVENT_RECORD count=770 total_ms=3902.68 avg_us=5068
+  blocking_events=2139 blocking_ms=20165.5
+  drain_flush_ms=3918.39
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  copy_issue_count=1925 defer_count=1925 peer_copy_count=0
 
-[sched] events=7700
+[sched] events=17266
   split_total_count=1925
-  split_total_ms_sum=5577.84 avg_us=2898
-    backend4 splits=385 ms=11.77
-    backend0 splits=385 ms=30.41
-    backend1 splits=385 ms=2609.73
-    backend2 splits=385 ms=923.42
-    backend3 splits=385 ms=2002.51
-  input_wait_copy_ms=5262.54
-  graph_compute_async_ms=283.91
-  event_record_ms=1.19
-  assembly_overlap_count=1504 pairs=1482250 overlap_pct=0.1
+  split_total_ms_sum=6270.31 avg_us=3257
+    backend4 splits=385 ms=10.09
+    backend0 splits=385 ms=45.4
+    backend1 splits=385 ms=3409.17
+    backend2 splits=385 ms=2413.14
+    backend3 splits=385 ms=392.51
+  input_wait_copy_ms=4433.94
+  graph_compute_async_ms=239.95
+  event_record_ms=1553.89
+  assembly_overlap_count=3210 pairs=1482250 overlap_pct=0.2
     copy0 splits=485
     copy1 splits=480
     copy2 splits=480

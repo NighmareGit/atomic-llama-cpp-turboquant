@@ -1,6 +1,6 @@
 # Implementation — B+8..B+13 mitigation flags + C-full hotpath
 
-**Status:** B+8–B+10 ladder exhausted (NULL overlap); **B+11–B+13 active** (grill 2026-07-01). C-full trace shipped `6dc504bce`; re-bench + parsers next.  
+**Status:** B+8–B+12 NULL overlap; **B+11 shipped proto 4.4** (bisect NULL, default OFF); **B+13** next M3 hunt. Phase 1.2 A+B parsers done.
 **Bench gate:** `b6-2gpu-f-triton-n384-romulus-native` per [TRACKING.md](TRACKING.md).
 
 ## Environment flags (default on when `GGML_PIPELINE_PLUS=1`)
@@ -11,6 +11,8 @@
 | `GGML_RPC_EVENT_DEFER_BARRIER` | B+9 defer EVENT recv to barrier | Drain EVENT on every blocking RPC |
 | `GGML_RPC_MULTI_SOCKET_FLUSH` | B+7a′ flush all RPC sockets at synchronize | Per-socket flush only |
 | `GGML_SCHED_MOE_ASYNC_COPY` | B+10 MoE copy-slot event wait | Full `ggml_backend_synchronize` on MoE path |
+| `GGML_RPC_GET_TENSOR_DEFER` | B+12 defer GET recv to graph boundary | Per-op GET drain |
+| `GGML_RPC_DUAL_SOCKET` | B+11 cmd/rsp TCP split (proto 4.4) | Single-socket v3 HELLO (default) |
 
 B+13 (dual-side `cpy_tensor_async` try) is always on in scheduler copy path when Plus is enabled.
 
@@ -22,6 +24,8 @@ B+13 (dual-side `cpy_tensor_async` try) is always on in scheduler copy path when
 | B+9 | `ggml/src/ggml-rpc/ggml-rpc.cpp` | `rpc_event_defer_barrier`, `send_rpc_cmd` blocking path |
 | B+7a′ | `ggml/src/ggml-rpc/ggml-rpc.cpp` | `rpc_drain_all_endpoints_pending`, `ggml_backend_rpc_drain_all_endpoints` |
 | B+10 | `ggml/src/ggml-backend.cpp` | MoE `MUL_MAT_ID` weight path ~1682 |
+| B+11 | `ggml/src/ggml-rpc/ggml-rpc.cpp`, `transport.h` | `RPC_CMD_CHANNEL_BIND`, `rsp_channel`, v3/v4 HELLO |
+| B+12 | `ggml/src/ggml-rpc/ggml-rpc.cpp` | `rpc_get_tensor_defer`, `rpc_defer_flush` |
 | B+13 | `ggml/src/ggml-rpc/ggml-rpc.cpp` | `rpc_issue_upload_tensor` local->RPC deferred SET_TENSOR; `ggml-backend.cpp` async try dst then src |
 
 ## Bisect procedure (G1 — 2-GPU triton n=384)
@@ -100,11 +104,19 @@ RPC rows add optional `decode_id`, `split`, `backend`. Join key for parsers: `(d
 | **B** | Assembly-line Gantt (`decode_id` x split x cmd) | **done** — `scripts/b6-gate-phase12b-gantt.sh` |
 | **7f** | Register hot-path observability in pathb-sync-site-audit | **next** |
 
-### B+11–B+13 implement order (post-C audit)
+### B+11 bisect (4-GPU triton, 2026-07-01)
+
+```bash
+bash scripts/b6-gate-romulus-b11-4gpu-bisect-bg.sh
+# or:
+B6_GATE_PRESET=b6-4gpu-g-triton bash scripts/b6-gate-bisect-run.sh no-dual-socket
+```
+
+**NULL overlap; HURTS G (-9.1%).** See [FEATURE-b11-dual-socket-rpc.md](FEATURE-b11-dual-socket-rpc.md).
+
+### B+13 next (post-B+11)
 
 1. **B+13** — prove/fix `cpy_tensor_async`; stop silent `sync_copy_fallback`
-2. **B+12** — `GET_TENSOR` deferral
-3. **B+11** — dual-socket RPC proto 4.4 — **shipped** (`GGML_RPC_DUAL_SOCKET`); 4-GPU bisect pending
 
 ### Deferred (sample API only)
 

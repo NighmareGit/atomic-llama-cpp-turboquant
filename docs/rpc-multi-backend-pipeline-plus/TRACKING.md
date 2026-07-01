@@ -2,7 +2,7 @@
 
 **Branch:** `Path-B-Event-Support-Pipeline-Plus`  
 **Date:** 2026-07-01  
-**Status:** Phase 1b — 2-GPU triton ladder **exhausted** (partial verdict below); 4-GPU gate run in progress on romulus.
+**Status:** Phase 1b — 2-GPU triton ladder **exhausted**; B+11 dual-socket bisect **NULL** on 4-GPU triton gate (2026-07-01).
 
 Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs/b6-gate/TRACKING.md)
 
@@ -27,6 +27,7 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 | 2026-07-01 | **Validation before next M3 experiment** | B+14/B+15 closed HIP gather gap; CUDA `leaf_55` residual ~1.5ms; M3 still ~0.3% — run MoE + larger-model smoke before picking next hunt step | Lateral todo below; PLAN review after V1+V2 (M3 hunt not postponed) |
 | 2026-07-01 | **V3 plan review: ship B+14/B+15, resume M3 hunt** | V1/V2 PASS; overlap 0.3% @ n=384 canonical unchanged; next experiment B+12 not leaf_55 | TRACKING V3 section; PLAN Phase 2b |
 | 2026-07-01 | **B+12 NULL on M3 overlap** | Canonical bisect ON/OFF: overlap 0.3% both; G +1.8%; drain_flush -52%; defer path shipped | B+12 section; next B+11 |
+| 2026-07-01 | **B+11 NULL on M3 overlap; HURTS G** | 4-GPU triton bisect dual ON/OFF: overlap 0.2% both; G -9.1%; hol_tail_ms +508%; default OFF kept | B+11 section; next B+13 |
 
 ## Current Champion Runs
 
@@ -41,7 +42,8 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 | `b6-4gpu-g` | 4-GPU JUPITER canonical n=384 (2026-06) | 1 | 77.2 | 0.1% | drain 50.4s | Gate FAIL |
 | `b6-4gpu-g-n384-romulus-native` | romulus 4-GPU + JUPITER n=384 | 1 | 69.5 | 0.2% | drain 6.4s; stall 0.96 | Gate FAIL |
 | `b6-4gpu-g-triton` | 4-GPU triton swap n=384 (2026-06) | 1 | 63.1 | 0.1% | drain 5.9s | Gate FAIL |
-| `b6-4gpu-g-triton-n384-romulus-native` | romulus 4-GPU + triton 3090 n=384 | 1 | 73.2 | 0.1% | drain 4.6s; stall 0.94 | Gate FAIL |
+| `b6-4gpu-g-triton-n384-romulus-native` | romulus 4-GPU + triton 3090 n=384 dual OFF | 1 | **80.5** | 0.2% | B+11 bisect OFF arm; drain 3.0s | Gate FAIL |
+| `b6-4gpu-g-triton-n384-romulus-native` (dual ON) | romulus 4-GPU + triton 3090 n=384 dual ON | 1 | 73.2 | 0.2% | B+11 bisect ON arm; hol_tail 864ms spike | Gate FAIL |
 | `trace-g-4gpu-primary` | romulus 4-GPU (no 6600) | 1 | ~43.0 | 0.1% | Stable cluster | Path-C baseline |
 
 ## Partial 2-GPU verdict (2026-07-01)
@@ -57,9 +59,9 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 
 **Conclusion:** B+8, B+9, B+10 do **not** move `overlap_pct` on 2-GPU triton n=384. Stall worsens slightly when each flag is OFF (Δstall +0.046 to +0.048) — mitigations help stability marginally, not pipelining depth. **M1 FAIL** (best overlap 0.9% on guard-n128 only; n=384 canonical stuck at 0.2%). Straggler remains backend 1 (triton RPC) @ ~5.6-8.2 ms/tok depending on client.
 
-**4-GPU summary (2026-07-01):** JUPITER canonical 0.2%/6.4s drain; B+7a′ OFF 0.1%; triton swap 0.1%/4.6s drain, G=73.2. All M1 FAIL.
+**4-GPU summary (2026-07-01):** JUPITER canonical 0.2%/6.4s drain; B+7a′ OFF 0.1%; triton swap 0.2%/3.0s drain, G=80.5 (dual OFF). B+11 dual ON: overlap 0.2%, G=73.2, hol_tail_ms=1036 (864ms spike). All M1 FAIL.
 
-**Next:** Phase 1.2C done; C-full shipped; B+11–B+13 + Phase 1.2 A+B active (grill 2026-07-01).
+**Next:** B+13 next M3 hunt step; dual-socket ships default OFF (proto 4.4 compat retained).
 
 ## Structural ceiling (2026-07-01 — PLAN stop rule)
 
@@ -107,14 +109,14 @@ Romulus-native canonical (`78e8f3c45` ladder):
 
 1. ~~**PR 8** validate-rpc~~ (**done 2026-07-01** — matrix all PASS; RPC handshake fix; `b6-gate-validate-rpc-matrix.sh`)
 2. **Production guard** — `trace-f-2gpu-plus` @ 48.9 t/s; RX6600 excluded for 35B+ A3B MoE
-3. **B+11–B+13** — active (grill 2026-07-01: aim M3; implementation bug not Path C). **Staged analysis D:** 1.2C done → 1.2 A+B next
+3. **B+13** — next M3 hunt (B+11 NULL, B+12 NULL). **Staged analysis D:** 1.2 A+B done
 4. **Comparison matrix** — `BENCHMARKS/2026-07-comparison-matrix.md` when 1.1 data is folded in
 
 ## Open Items / Blockers
 
 ### Primary — B+6 overlap gate (M3 hunt resumed)
 
-V1+V2 validation **PASS** (see Lateral Todo). B+14/B+15 cleared for ship. **B+12 done — NULL on overlap** (see B+12 section). **M3 hunt active** — next experiment **B+11** (dual-socket HOL), gate `b6-4gpu-g` n=384.
+V1+V2 validation **PASS** (see Lateral Todo). B+14/B+15 cleared for ship. **B+11 done — NULL on overlap; HURTS G** (see B+11 section). **M3 hunt active** — next experiment **B+13**, gate `b6-4gpu-g-triton` n=384.
 
 ### Secondary — cluster sync + instrumentation
 
@@ -212,6 +214,8 @@ Validation overlap (0.8–1.3% @ n=128) shows the scheduler **can** overlap more
 2. **Keep M3 as hard complete criterion** — do not downgrade to throughput-only or Path C.
 3. **Resume hunt on canonical bench** — next experiments ordered by overlap leverage, not G alone:
    - ~~B+12 GET_TENSOR deferral~~ — **NULL overlap** (shipped for G/drain)
+   - ~~B+11 dual-socket RPC~~ — **NULL overlap; HURTS G** (default OFF; proto 4.4 ships)
+   - **B+13** — next HOL/overlap hunt on canonical gate
    - **B+17-candidate:** CUDA `leaf_55` MoE weight path — G/stall ROI on CUDA docker; unlikely to move overlap_pct materially
 4. **Dual-track execution:** production ship (`trace-f-2gpu-plus` 48.9 t/s) proceeds in parallel with canonical M3 experiments.
 5. **V2 CUDA gap** — llama-70B blocked on remus 5060 Ti VRAM; not a B+15 regression. Use romulus HIP or larger local GPU for dense 70B+ CUDA validation.
@@ -222,8 +226,8 @@ Validation overlap (0.8–1.3% @ n=128) shows the scheduler **can** overlap more
 - [x] V2 CUDA via `llama-server` + triton `:50054` (remus client, `--fit on`) — PASS 2026-07-01
 - [x] B+12 bisect on canonical n=384 — **NULL overlap** (2026-07-01); see B+12 section
 - [x] B+11 dual-socket RPC scope (`DESIGN-b11-dual-socket.md`)
-- [ ] B+11 bisect on `b6-4gpu-g` n=384 (rebuild all rpc-servers proto 4.4 first)
-- [ ] Phase 1.2 A+B parsers (waterfall/Gantt) before next major bisect
+- [x] B+11 bisect on `b6-4gpu-g-triton` n=384 (proto 4.4 remus/romulus/triton; jupiter still 4.3) — **NULL overlap; HURTS G** (2026-07-01)
+- [x] Phase 1.2 A+B parsers (waterfall/Gantt) before next major bisect
 
 ### B+12 — GET_TENSOR deferral (2026-07-01)
 
@@ -239,13 +243,29 @@ Validation overlap (0.8–1.3% @ n=128) shows the scheduler **can** overlap more
 
 **Trace proof (ON):** `rpc_defer_flush=386`, `rpc_gather_flush=0`, `rpc_early_flush=0`, `decode_max=384`.
 
-**Verdict:** **NULL on M3 overlap** — ship defer path for G/drain/correctness; not the pipelining-depth lever. **Next:** B+11 (HOL).
+**Verdict:** **NULL on M3 overlap** — ship defer path for G/drain/correctness; not the pipelining-depth lever.
 
 Artifacts: `b6-2gpu-f-triton-n384-romulus-native-b12`, `...-no-get-defer`.
 
+### B+11 — dual-socket RPC (2026-07-01)
+
+**Flag:** `GGML_RPC_DUAL_SOCKET=1` (default **OFF**; proto 4.4). Bisect ON: export before `canonical-romulus`; OFF: `no-dual-socket`.
+
+**Gate:** `b6-4gpu-g-triton` n=384 (triton `:50054` swap; jupiter `:50053` still 4.3). Proto 4.4 on remus/romulus/triton.
+
+| Bisect | G (t/s) | overlap_pct | stall_ratio | drain_flush_ms | hol_tail_count | hol_tail_ms |
+|--------|---------|-------------|-------------|----------------|----------------|-------------|
+| B+11 ON (dual) | 73.2 | 0.2% | 0.955 | 3918 | 5 | 1036 (864ms spike) |
+| B+11 OFF (single) | **80.5** | 0.2% | 0.949 | 2985 | 9 | 171 |
+| Delta | **-9.1%** | **0.0** | +0.006 | +31% | -4 | +508% |
+
+**Verdict:** **NULL on M3 overlap; HURTS G** — dual-socket does not meet pass criteria (overlap delta >= 1% or hol_tail -50% with stable G). Keep default OFF; proto 4.4 + `CHANNEL_BIND` ships for future use.
+
+Artifacts: `b6-4gpu-g-triton-n384-romulus-native`, `...-no-dual-socket`; logs `b11-4gpu-bisect-logs/`.
+
 ### Pending M3 experiments (hunt active)
 
-- **B+11** dual-socket RPC (cmd/response split, proto 4.4?) — HOL / tail RTT; gate `b6-4gpu-g` n=384
+- **B+13** — next hunt step on canonical gate (see PLAN Phase 2b)
 - CUDA `leaf_55` MoE weight path (~1.5ms vs HIP ~122us) — G lever only; see FUTURE-EXPANSIONS / B+16
 
 ## Next 7 Days (grill-locked 2026-07-01)
@@ -274,7 +294,7 @@ Artifacts: `b6-2gpu-f-triton-n384-romulus-native-b12`, `...-no-get-defer`.
 - [x] Push B+14/B+15 to gitea; romulus + triton @ `590597110` (2026-07-01)
 - [x] Canonical B+15 re-bench `b6-2gpu-f-triton-n384-romulus-native-b15b` — G=190.2, overlap=0.3%, `input_wait` ~358ms (b15 stale `ggml-base`; rebuild fixed)
 - [x] B+12 `GET_TENSOR` deferral bisect on canonical n=384 — NULL overlap (2026-07-01)
-- [ ] B+11 bisect on `b6-4gpu-g` n=384 (proto 4.4 rpc-server rebuild required)
+- [x] B+11 bisect on `b6-4gpu-g-triton` n=384 — NULL overlap; HURTS G (2026-07-01)
 
 ## Metrics Dashboard
 
@@ -297,4 +317,4 @@ Artifacts: `b6-2gpu-f-triton-n384-romulus-native-b12`, `...-no-get-defer`.
 ---
 
 **Update this file after every profile/profiler run or topology decision.**  
-**Last edit:** 2026-07-01 — B+12 NULL overlap; shipped defer path; next B+11.
+**Last edit:** 2026-07-01 — B+11 NULL overlap HURTS G on 4-GPU triton; default dual OFF; next B+13.

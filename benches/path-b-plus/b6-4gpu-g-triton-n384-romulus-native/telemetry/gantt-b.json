@@ -1,0 +1,101 @@
+{
+  "label": "b6-4gpu-g-triton-n384-romulus-native",
+  "gen_window_us": {
+    "lo": 43789492113,
+    "hi": 43795839539,
+    "span_ms": 6347.43
+  },
+  "gen_tokens": 384,
+  "overlap_pct": 0.2,
+  "assembly_overlap": {
+    "count": 3210,
+    "pairs": 1482250,
+    "overlap_pct": 0.2
+  },
+  "pipeline_gap_ms": {
+    "p50": -4.71,
+    "p95": -4.3,
+    "samples": [
+      -327.5,
+      -12.64,
+      -4.79,
+      -4.74,
+      -5.2,
+      -5.45,
+      -5.48,
+      -5.35
+    ]
+  },
+  "rpc_rtt_ms": {
+    "count": 1946,
+    "p50": 0.36,
+    "p95": 5.96,
+    "p99": 6.47
+  },
+  "hol_tails": {
+    "count": 5,
+    "total_ms": 1036.23,
+    "threshold_mult": 10.0,
+    "top10": [
+      {
+        "backend": "1",
+        "decode_id": 1,
+        "split": 2,
+        "phase": "drain_event",
+        "cmd": "EVENT",
+        "ms": 864.12,
+        "p50_ms": 1.79
+      },
+      {
+        "backend": "2",
+        "decode_id": 1,
+        "split": 3,
+        "phase": "drain_event",
+        "cmd": "EVENT",
+        "ms": 84.24,
+        "p50_ms": 0.14
+      },
+      {
+        "backend": "1",
+        "decode_id": 1,
+        "split": 2,
+        "phase": "drain_event",
+        "cmd": "EVENT",
+        "ms": 60.17,
+        "p50_ms": 1.79
+      },
+      {
+        "backend": "2",
+        "decode_id": 1,
+        "split": 3,
+        "phase": "flush_get",
+        "cmd": "GET",
+        "ms": 14.14,
+        "p50_ms": 0.14
+      },
+      {
+        "backend": "2",
+        "decode_id": 1,
+        "split": 3,
+        "phase": "drain_event",
+        "cmd": "EVENT",
+        "ms": 13.56,
+        "p50_ms": 0.14
+      }
+    ]
+  },
+  "gantt_ascii": [
+    "gantt decode_id 1..24 width=96 span_ms=1776.2",
+    "  CUDA0  |1                                                                             235689ACDEGHIKLMO |",
+    "  RPC    |                                               1111111111111111111111111111111234679ABCEFGIJKMNO|",
+    "  CPU    |                                                             11111111111111    245789BCDFGHJKLNO|",
+    "  host   |                                                                     11111111  245789BCDFGHJKLNO|",
+    "  b4     |1                                                                             235689ACDEGHIKLMO |"
+  ],
+  "segments_count": 1920,
+  "rpc_segments_count": 1937,
+  "verdict_flags": [
+    "LOW_OVERLAP",
+    "HOL_TAIL_RTT"
+  ]
+}

@@ -4,8 +4,8 @@ Entry point for the **Path-B-Event-Support-Pipeline-Plus** branch. Path-B Plus f
 
 **Primary repo (Windows):** `D:\projects\atomic-llama-cpp-5070ti\atomic-llama-cpp-turboquant` -- edit, commit, and push here (not Grok worktrees).
 
-**Status (2026-06-30):** B+6 gate in progress (M3 hard criterion); B+1 production ready on 2-device F. Mission root: [docs/rpc-multi-backend-pipeline-plus/](../../docs/rpc-multi-backend-pipeline-plus/).
-**Protocol:** RPC v4.3.2 (`COPY_TENSOR_PEER`, `peer_copy` HELLO cap)  
+**Status (2026-07-01):** B+11 dual-socket shipped (proto 4.4, default OFF); B+12 NULL; M3 hunt -> B+13. Mission root: [docs/rpc-multi-backend-pipeline-plus/](../../docs/rpc-multi-backend-pipeline-plus/).
+**Protocol:** RPC v4.4.2 (`CHANNEL_BIND` dual-socket; `COPY_TENSOR_PEER`; default single-socket HELLO)  
 **Frozen base:** `Path-B-Event-Support` @ `26a9353`
 
 ---
@@ -61,7 +61,7 @@ Correctness: S4 smoke PASS on gemma-4-E4B (44.2 t/s) and 36B NL (48.9 t/s). Arti
 Verify after deploy:
 
 1. Server log: `pipeline parallelism enabled`, `sched copies = 4`
-2. remus HELLO: `version: 4.3.2`
+2. remus HELLO: `proto 4.4` (4.3.2+ acceptable with dual OFF)
 3. Trace: `assembly_overlap_count > 0`; G ~49 t/s
 
 Ops detail: [rpc-path-b-plus-handover.md](rpc-path-b-plus-handover.md). Windows multi-node: [MULTI-NODE.md](../../docs/cuda-windows-5070ti/MULTI-NODE.md).
@@ -89,6 +89,7 @@ Ops detail: [rpc-path-b-plus-handover.md](rpc-path-b-plus-handover.md). Windows 
 | P3 trace | `ggml-backend.cpp`, `pathb-rpc-trace-parse.ps1` | `copy` field; assembly-line overlap metric |
 | B+2 async COPY | `ggml-rpc.cpp` | `cpy_tensor_async`, deferred COPY drain |
 | B+3 peer COPY | `ggml-rpc.cpp`, rpc-server | `COPY_TENSOR_PEER`, HELLO minor=3 |
+| B+11 dual-socket | `ggml-rpc.cpp`, `transport.h` | `RPC_CMD_CHANNEL_BIND`, optional rsp channel (default OFF) |
 | Deploy sync | `rpc-patch/scripts/pathb-remus-deploy-sync.sh` | Prevent stale remus `GIT_BRANCH` / proto drift |
 
 Env vars:
@@ -98,6 +99,7 @@ Env vars:
 | `GGML_PIPELINE_PLUS` | `1` when pipeline active | P0/P1 narrow sync; `0` = legacy full sync |
 | `GGML_SCHED_TRACE` | `0` | Per-split jsonl trace |
 | `GGML_RPC_TRACE` | `0` | RPC client jsonl trace |
+| `GGML_RPC_DUAL_SOCKET` | `0` | B+11 cmd/rsp split (proto 4.4; bisect NULL) |
 
 ---
 
@@ -162,6 +164,8 @@ Core diagnostic: remus 5060 (`:50051`) vs triton 3090 (`192.168.8.23:50054`) wit
 |----------|---------|
 | **This file** | Project overview and navigation |
 | [rpc-multi-backend-pipeline-plus/](../../docs/rpc-multi-backend-pipeline-plus/) | **Mission doc root** — MISSION, PLAN, TRACKING, orchestration audit |
+| [RPC-PROTOCOL.md](../../docs/rpc-multi-backend-pipeline-plus/RPC-PROTOCOL.md) | Wire format, version table, proto 4.4 |
+| [FEATURE-b11-dual-socket-rpc.md](../../docs/rpc-multi-backend-pipeline-plus/FEATURE-b11-dual-socket-rpc.md) | B+11 feature, bisect, rebuild checklist |
 | [b6-gate/PLAN.md](b6-gate/PLAN.md) | B+6 gate mission plan (Path-B-Plus, no Path C) |
 | [b6-gate/TRACKING.md](b6-gate/TRACKING.md) | B+6 step checklist -- living state |
 | [rpc-path-b-plus-plan.md](rpc-path-b-plus-plan.md) | Technical plan, tiers, success metrics |

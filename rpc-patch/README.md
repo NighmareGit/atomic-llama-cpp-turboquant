@@ -232,8 +232,8 @@ Path B touches RPC protocol and scheduler integration:
 
 ```
 atomic-llama-cpp-turboquant/
-  ggml/include/ggml-rpc.h              # RPC_PROTO_MINOR_VERSION, EVENT_RECORD
-  ggml/src/ggml-rpc/transport.h        # message types
+  ggml/include/ggml-rpc.h              # RPC_PROTO 4.4.2, CHANNEL_BIND, EVENT_RECORD
+  ggml/src/ggml-rpc/transport.h        # message types, rsp_channel (B+11)
   ggml/src/ggml-rpc/ggml-rpc.cpp       # batch, pipeline, events, drain fixes
 ```
 

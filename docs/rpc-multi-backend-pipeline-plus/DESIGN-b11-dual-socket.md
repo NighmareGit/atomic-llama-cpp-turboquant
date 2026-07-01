@@ -3,7 +3,9 @@
 | Field | Value |
 |-------|-------|
 | **Date** | 2026-07-01 |
-| **Status** | Implemented (bisect pending) |
+| **Status** | Implemented; bisect **NULL** (default OFF) |
+| **Feature doc** | [FEATURE-b11-dual-socket-rpc.md](FEATURE-b11-dual-socket-rpc.md) |
+| **Protocol** | [RPC-PROTOCOL.md](RPC-PROTOCOL.md) |
 | **Gate** | `b6-4gpu-g-n384-romulus-native` |
 
 ## Problem
@@ -48,3 +50,14 @@ Or background on romulus: `scripts/b6-gate-romulus-b11-4gpu-bisect-bg.sh`
 ## Rollback
 
 Set `GGML_RPC_DUAL_SOCKET=0` (single-socket fallback; requires proto 4.4 server accepting 32-byte HELLO).
+
+## Bisect result (2026-07-01)
+
+Gate `b6-4gpu-g-triton` n=384 on romulus (proto 4.4 remus/romulus/triton):
+
+| Arm | G (t/s) | overlap_pct | hol_tail_ms |
+|-----|---------|-------------|-------------|
+| dual ON | 73.2 | 0.2% | 1036 (864ms spike) |
+| dual OFF | 80.5 | 0.2% | 171 |
+
+**Verdict:** NULL on overlap; HURTS G (-9.1%). Default OFF retained.

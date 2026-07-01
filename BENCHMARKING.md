@@ -333,8 +333,26 @@ bash scripts/bench-matrix-qwen.sh
 |-----|---------|--------|
 | `LLAMA_PIPELINE_DEPTH2` | unset (on) | `=0` disables prepare_next |
 | `GGML_PIPELINE_PLUS` | on when tracing | `=0` legacy full sync on graph reuse |
+| `GGML_RPC_DUAL_SOCKET` | 0 | B+11 cmd/rsp split; proto 4.4; bisect NULL |
 | `BENCH_TRACE` | 0 | 1 enables sched + rpc jsonl |
 | `BENCH_RUNS` | 3 | Median over N fox runs (plus-ab / rpc bench) |
+
+### B+11 dual-socket bisect (4-GPU triton, 2026-07-01)
+
+Gate preset `b6-4gpu-g-triton` n=384. Compare dual ON vs OFF:
+
+```bash
+B6_GATE_PRESET=b6-4gpu-g-triton bash scripts/b6-gate-bisect-run.sh canonical-romulus   # GGML_RPC_DUAL_SOCKET=1
+B6_GATE_PRESET=b6-4gpu-g-triton bash scripts/b6-gate-bisect-run.sh no-dual-socket
+bash scripts/b6-gate-phase12b-gantt.sh b6-4gpu-g-triton-n384-romulus-native ...
+```
+
+| Arm | G (t/s) | overlap_pct | hol_tail_ms |
+|-----|---------|-------------|-------------|
+| dual ON | 73.2 | 0.2% | 1036 |
+| dual OFF | 80.5 | 0.2% | 171 |
+
+**NULL overlap; default OFF.** Docs: [FEATURE-b11](docs/rpc-multi-backend-pipeline-plus/FEATURE-b11-dual-socket-rpc.md), [RPC-PROTOCOL](docs/rpc-multi-backend-pipeline-plus/RPC-PROTOCOL.md).
 
 ---
 
