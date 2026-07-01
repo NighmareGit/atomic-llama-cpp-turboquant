@@ -2,33 +2,53 @@
   "label": "b6-2gpu-f-triton-n384-romulus-native",
   "gen_window": {
     "lo_us": 8731373522,
-    "hi_us": 8733779476,
+    "hi_us": 12276164245,
     "decode_ids": 384
   },
-  "gen_tokens": 385,
-  "overlap_pct": 0.2,
-  "stall_ratio": 0.8575,
+  "gen_tokens": 770,
+  "overlap_pct": 0.1,
+  "stall_ratio": 0.8805,
   "sched_gen_ms": {
-    "input_wait_copy": 1976.4029999999946,
-    "graph_compute_async": 322.97599999999613,
-    "event_record": 0.22900000000000018,
-    "split_total": 2305.2340000000104
+    "input_wait_copy": 4005.276000000033,
+    "graph_compute_async": 533.0879999999781,
+    "event_record": 0.35600000000000026,
+    "split_total": 4549.412999999992,
+    "sync_copy_fallback": 1973.4959999999955
   },
   "rpc_gen_blocking_ms_by_cmd": {
-    "GET_TENSOR": 138.94,
-    "13": 1.45,
-    "EVENT_RECORD": 1752.2
+    "0": 15.8,
+    "1": 0.48,
+    "2": 0.38,
+    "3": 0.77,
+    "4": 6.27,
+    "5": 0.37,
+    "SET_TENSOR_HASH": 1248.56,
+    "GET_TENSOR": 211.9,
+    "11": 98.38,
+    "13": 8.28,
+    "14": 3.6,
+    "15": 0.4,
+    "EVENT_RECORD": 3563.5
   },
   "copy_issue": {
     "count": 0,
     "defer_count": 0,
     "peer_copy_count": 0
   },
-  "local_sync_gap_ms": 1976.4,
+  "local_sync_gap_ms": 4005.28,
+  "c_full_trace": true,
+  "sync_copy_fallback_ms": 1973.5,
+  "sync_copy_fallback_count": 2310,
+  "sync_copy_fallback_by_backend_ms": {
+    "0": 0.71,
+    "1": 1972.79
+  },
+  "copy_async_ok_count": 0,
   "verdict_flags": [
     "NO_COPY_ISSUE_TRACE",
-    "LOCAL_SYNC_FALLBACK_LIKELY",
+    "SYNC_COPY_FALLBACK_MEASURED",
     "EVENT_RECORD_DOMINATES_DRAIN",
+    "SET_HASH_RPC_HEAVY",
     "GET_TENSOR_GT_COPY",
     "WAIT_DOMINATES_COMPUTE"
   ]

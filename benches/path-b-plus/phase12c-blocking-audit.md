@@ -4,19 +4,18 @@ Staged D step C: existing traces only. Per-dir JSON: `telemetry/blocking-audit-c
 
 ## Results
 
-| label | gen_tokens | overlap_pct | stall_ratio | input_wait_copy_ms | graph_compute_ms | blocking_ms | drain_ms | copy_issue | copy_tensor_rpc | copy_peer_rpc | get_tensor_rpc | set_hash_rpc | event_record_rpc | local_sync_gap_ms | verdict |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| b6-2gpu-f-triton-n384-romulus-native | 385 | 0.2 | 0.8575 | 1976.4 | 323.0 | 1892.6 | 1752.2 | 0 | 0.0 | 0.0 | 138.9 | 0.0 | 1752.2 | 1976.4 | NO_COPY_ISSUE_TRACE,LOCAL_SYNC_FALLBACK_LIKELY,EVENT_RECORD_DOMINATES_DRAIN,GET_TENSOR_GT_COPY,WAIT_DOMINATES_COMPUTE |
-| b6-2gpu-f-triton-guard-n128 | 128 | 0.9 | 0.6357 | 1154.3 | 647.7 | 860.5 | 788.1 | 0 | 0.0 | 0.0 | 70.7 | 0.0 | 788.1 | 1154.3 | NO_COPY_ISSUE_TRACE,LOCAL_SYNC_FALLBACK_LIKELY,EVENT_RECORD_DOMINATES_DRAIN,GET_TENSOR_GT_COPY |
-| b6-2gpu-f-triton-n384-no-partial | 385 | 0.2 | 0.9036 | 1978.8 | 204.8 | 1884.0 | 1740.5 | 0 | 0.0 | 0.0 | 141.9 | 0.0 | 1740.5 | 1978.8 | NO_COPY_ISSUE_TRACE,LOCAL_SYNC_FALLBACK_LIKELY,EVENT_RECORD_DOMINATES_DRAIN,GET_TENSOR_GT_COPY,WAIT_DOMINATES_COMPUTE |
-| b6-2gpu-f-triton-n384-remus-docker | 385 | 0.2 | 0.8674 | 2838.9 | 390.7 | 1873.4 | 1712.8 | 0 | 0.0 | 0.0 | 158.5 | 0.0 | 1712.8 | 2838.9 | NO_COPY_ISSUE_TRACE,LOCAL_SYNC_FALLBACK_LIKELY,EVENT_RECORD_DOMINATES_DRAIN,GET_TENSOR_GT_COPY,WAIT_DOMINATES_COMPUTE |
-| b6-4gpu-g-n384-romulus-native | 385 | 0.2 | 0.9603 | 7033.8 | 271.5 | 6841.5 | 6361.6 | 0 | 0.0 | 0.0 | 476.9 | 0.0 | 6361.6 | 7033.8 | NO_COPY_ISSUE_TRACE,LOCAL_SYNC_FALLBACK_LIKELY,EVENT_RECORD_DOMINATES_DRAIN,GET_TENSOR_GT_COPY,WAIT_DOMINATES_COMPUTE |
-| trace-f-2gpu-plus | 130 | 0.6 | 0.6774 | 0.0 | 0.0 | 30683.6 | 1755.3 | 0 | 0.0 | 0.0 | 212.6 | 26207.0 | 1755.3 | 0.0 | NO_COPY_ISSUE_TRACE,EVENT_RECORD_DOMINATES_DRAIN,SET_HASH_RPC_HEAVY,GET_TENSOR_GT_COPY |
+| label | gen_tokens | overlap_pct | stall_ratio | input_wait_copy_ms | graph_compute_ms | sync_copy_fallback_ms | copy_async_ok_count | blocking_ms | drain_ms | copy_issue | copy_tensor_rpc | copy_peer_rpc | get_tensor_rpc | set_hash_rpc | event_record_rpc | local_sync_gap_ms | c_full | verdict |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| b6-2gpu-f-triton-n384-romulus-native | 385 | 0.2 | 0.8575 | 1976.4 | 323.0 | 0.0 | 0 | 1892.6 | 1752.2 | 0 | 0.0 | 0.0 | 138.9 | 0.0 | 1752.2 | 1976.4 | no | NO_COPY_ISSUE_TRACE,LOCAL_SYNC_FALLBACK_LIKELY,EVENT_RECORD_DOMINATES_DRAIN,GET_TENSOR_GT_COPY,WAIT_DOMINATES_COMPUTE |
 
 ## Interpretation guide
 
 - **NO_COPY_ISSUE_TRACE**: `GGML_RPC_TRACE` copy_issue lines absent; wire-level copy deferral not visible in these artifacts.
-- **LOCAL_SYNC_FALLBACK_LIKELY**: `input_wait_copy_ms` >> on-wire COPY_TENSOR/PEER ms → B+13 sync fallback in `ggml-backend.cpp` (local synchronize + tensor_copy) is prime suspect.
+- **LOCAL_SYNC_FALLBACK_LIKELY**: pre-C-full heuristic; `input_wait_copy_ms` >> wire COPY ms.
+- **SYNC_COPY_FALLBACK_MEASURED**: C-full `sync_copy_fallback` phase present (>50ms gen window) — B+13 local sync path proven.
+- **B13_DOMINATES_INPUT_WAIT**: measured `sync_copy_fallback_ms` > 50% of `input_wait_copy_ms`.
+- **COPY_ASYNC_OK_ONLY**: async copy path succeeded (markers only, no fallback rows).
+- **C_FULL_NO_B13_PHASES**: RPC join present but no B+13 phase rows (check trace env + build SHA).
 - **EVENT_RECORD_DOMINATES_DRAIN**: B+9/B+12 less likely to move overlap until EVENT path shortened.
 - **SET_HASH_RPC_HEAVY**: weight relay still costs gen-window budget (B+4 cache check).
 - **WAIT_DOMINATES_COMPUTE**: assembly line starved regardless of straggler ms/tok.

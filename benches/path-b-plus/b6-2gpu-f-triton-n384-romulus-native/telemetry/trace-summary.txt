@@ -1,47 +1,55 @@
 === trace summary ===
-dir=/home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-n384-romulus-native/telemetry
+dir=/home/hunter/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-n384-romulus-native/telemetry
 
-[rpc] events=2196
-  ALLOC_BUFFER count=8 total_ms=16.93 avg_us=2116.0
-  GET_ALIGNMENT count=2 total_ms=0.43 avg_us=214.0
-  GRAPH_COMPUTE count=8 total_ms=1.92 avg_us=240.0
-  GET_DEVICE_MEMORY count=6 total_ms=9.99 avg_us=1665.0
-  GET_ALLOC_SIZE count=48 total_ms=7.54 avg_us=157.0
-  HELLO count=15 total_ms=3.14 avg_us=209.0
-  DEVICE_COUNT count=2 total_ms=0.4 avg_us=201.0
-  GRAPH_RECOMPUTE count=762 total_ms=1.2 avg_us=2.0
-  EVENT_RECORD count=385 total_ms=1752.2 avg_us=4551.0
-  GET_MAX_SIZE count=2 total_ms=0.32 avg_us=162.0
-  BUFFER_GET_BASE count=8 total_ms=1.28 avg_us=160.0
-  FREE_BUFFER count=8 total_ms=6.29 avg_us=786.0
-  BUFFER_CLEAR count=4 total_ms=0.39 avg_us=98.0
-  SET_TENSOR_HASH count=168 total_ms=1186.29 avg_us=7061.0
-  GET_TENSOR count=770 total_ms=140.68 avg_us=183.0
-  blocking_events=903 blocking_ms=3122.91
-  rpc_rtt_count=518 rpc_rtt_ms=1370.71
-  rpc_rtt_hist=0ms:489 1ms:1 2ms:2 3ms:1 4ms:3 13ms:1 14ms:1 27ms:1 30ms:1 31ms:1 36ms:1 38ms:1
-  rpc_rtt_p50_ms=0.35 rpc_rtt_p95_ms=3.68 rpc_rtt_p99_ms=71.55
-  EVENT_RECORD count=385 total_ms=1752.2
-  drain_flush_ms=1752.2
+[rpc] events=4392
+  ALLOC_BUFFER count=16 total_ms=32.74 avg_us=2046.0
+  GET_ALIGNMENT count=4 total_ms=0.92 avg_us=229.0
+  GRAPH_COMPUTE count=16 total_ms=14.35 avg_us=897.0
+  GET_DEVICE_MEMORY count=12 total_ms=108.39 avg_us=9032.0
+  GET_ALLOC_SIZE count=96 total_ms=14.49 avg_us=151.0
+  HELLO count=30 total_ms=6.78 avg_us=226.0
+  DEVICE_COUNT count=4 total_ms=0.82 avg_us=204.0
+  GRAPH_RECOMPUTE count=1524 total_ms=2.24 avg_us=1.0
+  EVENT_RECORD count=770 total_ms=3563.5 avg_us=4628.0
+  GET_MAX_SIZE count=4 total_ms=0.71 avg_us=176.0
+  BUFFER_GET_BASE count=16 total_ms=2.06 avg_us=129.0
+  FREE_BUFFER count=16 total_ms=13.6 avg_us=850.0
+  BUFFER_CLEAR count=8 total_ms=0.77 avg_us=96.0
+  SET_TENSOR_HASH count=336 total_ms=2435.63 avg_us=7249.0
+  GET_TENSOR count=1540 total_ms=214.31 avg_us=139.0
+  blocking_events=1806 blocking_ms=6390.04
+  rpc_rtt_count=1036 rpc_rtt_ms=2826.55
+  rpc_rtt_hist=0ms:979 1ms:3 2ms:4 3ms:1 4ms:3 5ms:1 13ms:2 14ms:2 27ms:1 30ms:2 31ms:2 35ms:1
+  rpc_rtt_p50_ms=0.27 rpc_rtt_p95_ms=2.27 rpc_rtt_p99_ms=71.84
+  EVENT_RECORD count=770 total_ms=3563.5
+  drain_flush_ms=3563.5
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
   hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
   hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
   hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
   hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
   hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
 
-[sched] events=4620
-  split_total_count=1155
-  split_total_ms_sum=2305.23 avg_us=1996.0
-    backend2 splits=385 ms=4.15
-    backend0 splits=385 ms=13.49
-    backend1 splits=385 ms=2287.59
-  input_wait_copy_ms=1976.4
-  graph_compute_async_ms=322.98
-  event_record_ms=0.23
-  assembly_overlap_count=990 pairs=444675 overlap_pct=0.2
-    copy0 splits=291
-    copy1 splits=288
-    copy2 splits=288
-    copy3 splits=288
+[sched] events=11550
+  split_total_count=2310
+  split_total_ms_sum=4549.41 avg_us=1969.0
+    backend2 splits=770 ms=8.19
+    backend0 splits=770 ms=29.1
+    backend1 splits=770 ms=4512.13
+  input_wait_copy_ms=4005.28
+  graph_compute_async_ms=533.09
+  event_record_ms=0.36
+  sync_copy_fallback_ms=1973.5
+    sync_copy_fallback backend0 count=1155 ms=0.71
+    sync_copy_fallback backend1 count=1155 ms=1972.79
+  assembly_overlap_count=1947 pairs=1778700 overlap_pct=0.1
+    copy0 splits=582
+    copy1 splits=576
+    copy2 splits=576
+    copy3 splits=576
   per_split_rpc_rtt:
-    split=2 backend=1 rpc_rtt_count=432 rpc_rtt_ms=142.16
+    split=2 backend=1 rpc_rtt_count=859 rpc_rtt_ms=208.77
