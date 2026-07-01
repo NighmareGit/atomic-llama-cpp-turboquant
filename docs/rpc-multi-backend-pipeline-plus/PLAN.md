@@ -47,9 +47,9 @@ Navigation: [TRACKING.md](TRACKING.md) | [MISSION.md](MISSION.md) | [rpc-patch/d
 | Milestone | Target | Best measured | Status |
 |-----------|--------|---------------|--------|
 | M1 | overlap ≥ 1% | 0.9% (triton guard-n128) | FAIL |
-| M3 | overlap ≥ 5% | 0.2% (2-GPU triton n=384) | FAIL |
+| M3 | overlap ≥ 5% | 0.3% (2-GPU triton n=384 post-B+15) | FAIL |
 
-**Profiler evidence (b6-2gpu-f):** `stall_ratio=0.95`, `input_wait_copy_ms=4821` vs `graph_compute_async_ms=250`, `EVENT_RECORD` = `drain_flush_ms`. Triton cut drain/straggler but overlap moved 0.2%→0.3% only → **pipelining depth**, not throughput, is the gate lever.
+**2026-07-01 post-B+15:** B+14/B+15 fixed gather stalls (HIP `input_wait` ~355us vs ~4ms pre-fix). Overlap at canonical n=384 still 0.3%. Validation on gemma4/llama-70B hit 0.8–1.3% @ n=128 — graph-dependent, not gate depth. **Pipelining depth** remains the M3 lever; next experiment: **B+12** (`GET_TENSOR` deferral), not CUDA `leaf_55` H2D alone.
 
 ## Phase 2 — Mitigation Experiments (Path-B+ only, no Path C)
 
@@ -67,7 +67,9 @@ Ordered by leverage on `overlap_pct` (profiler-led). One bisect per re-bench.
 
 **Recommended implement order:** B+8 → B+9 → B+10 → B+7a′ (4-GPU drain prerequisite if canonical is gate topology).
 
-**Stop rule:** If M1 not reached after B+8–B+10 + B+7a′ on 2-GPU and 4-GPU, document structural ceiling in TRACKING. **Triggered 2026-07-01** — see TRACKING structural ceiling section.
+**Post-B+15 order (V3 review 2026-07-01):** B+13/B+14/B+15 done → **B+12** (overlap) → B+11 (HOL) → B+16 `leaf_55` (CUDA G only, weak overlap ROI).
+
+**Stop rule:** If M1 not reached after B+8–B+10 + B+7a′ on 2-GPU and 4-GPU, document structural ceiling in TRACKING. **Triggered 2026-07-01** — see TRACKING structural ceiling section. Ceiling coexists with continued B+12/B+11 hunt until M3 PASS or explicit mission revision.
 
 **Path C boundary:** Path C (server-side scheduling / distributed orchestration) is **out of scope** for `rpc-multi-backend-pipeline-plus`. Reference Path C docs for ideas only; do not implement Path C on this branch.
 
@@ -128,4 +130,4 @@ bash scripts/b6-gate-diagnose-runs.sh b6-2gpu-f b6-4gpu-g
 - End of Phase 2: M3 PASS **or** structural ceiling documented with trace proof
 - Phase 3 start: Explicit approval only
 
-**Next action (2026-07-01):** Structural ceiling closed. PR 8 + comparison matrix done. **Grill B+11–B+13** for scope before any further code. Path C out of scope.
+**Next action (2026-07-01):** V3 review done — **ship B+14/B+15**, **resume M3 hunt**. Canonical `b15b` confirmed on romulus. **B+12** next on canonical n=384. Large-model validation (V2 CUDA): use **llama-server + RPC** (remus+triton or remus+romulus), not profiler-on-5060-Ti alone. Details: [TRACKING.md](TRACKING.md) V3 section.

@@ -12,7 +12,7 @@ This is the canonical home for analysis, planning, tracking, and artifacts relat
 - [PLAN.md](PLAN.md) — Phased execution plan (Path-B+ → overlap gate → Path-C bridge)
 - [TRACKING.md](TRACKING.md) — Current status, open items, decisions
 - [IMPLEMENTATION.md](IMPLEMENTATION.md) — B+8..B+13, C-full schema, Phase 1.2 work queue
-- [FUTURE-EXPANSIONS.md](FUTURE-EXPANSIONS.md) — deferred C-full trace sample keep lists only
+- [FUTURE-EXPANSIONS.md](FUTURE-EXPANSIONS.md) — deferred work (C-full sample API, post-B+15 perf hunt)
 - [ANALYSIS/Path-B-Plus-MultiBackend-RPC-Orchestration-Audit.md](ANALYSIS/Path-B-Plus-MultiBackend-RPC-Orchestration-Audit.md) — Core technical audit of serial workflow and sync blockers
 - [BENCHMARKS/](BENCHMARKS/) — Reference runs, matrix summaries, profile artifacts
 - Related mission docs (same branch):

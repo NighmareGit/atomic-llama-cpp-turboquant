@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "trace_dir": "/home/hunter/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-n384-v1-moe-gemma-hip/telemetry",
+  "gen_only": true,
+  "gen_tokens_est": 129,
+  "G_tps": 164.921,
+  "overlap_efficiency": 1.5229,
+  "drain_flush_ms": 89.65,
+  "blocking_ms": 636.08,
+  "gate_s5": "PASS",
+  "gate_b6": "FAIL",
+  "assembly_overlap_count": 417,
+  "overlap_pct": 0.8,
+  "overlap_target_pct": 5.0,
+  "split_ms_per_token": 9.234,
+  "stall_ratio": 0.7584,
+  "stall_ms": 903.42,
+  "compute_ms": 285.03,
+  "backends_ms_per_token": {
+    "0": 6.058,
+    "1": 3.146,
+    "2": 0.03
+  },
+  "straggler_backend": "0",
+  "straggler_ms_per_token": 6.058,
+  "topology_class": "client_split",
+  "rpc_rtt_per_token": 2.26,
+  "graph_submit_count": 258,
+  "blocking_rpc_count": 291,
+  "fire_and_forget_count": 806,
+  "gpu_smell_flags": [
+    "ORCHESTRATION_STALL",
+    "LOW_DUTY_CYCLE"
+  ],
+  "path_c_reserved": {
+    "cross_endpoint_copy_count": null,
+    "server_local_copy_count": null
+  }
+}

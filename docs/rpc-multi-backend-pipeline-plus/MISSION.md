@@ -10,7 +10,7 @@ This manifests as:
 - 7–22+ blocking RPC RTTs per token still present
 - Sub-linear scaling when adding devices (RX6600 third hop actively harmful for 35–36B A3B MoE)
 - Low average `nvidia-smi` utilization despite high VRAM occupancy
-- **`overlap_pct` stuck at 0.1–0.7%** after B+1–B+6 and partial B+7 (B+6 gate FAIL, 2026-06-29)
+- **`overlap_pct` stuck at 0.1–1.3%** after B+1–B+15 (B+6 gate FAIL; 1.3% best on V1 CUDA n=128 only; canonical n=384 @ 0.3%)
 
 The current `Path-B-Event-Support-Pipeline-Plus` state delivers excellent incremental gains (legacy 39.3 t/s → 48.9 t/s on optimal 2-device), but the fundamental orchestration model is still client-serial until copy-slot pipelining stays alive across RPC RTTs.
 
@@ -26,12 +26,13 @@ The current `Path-B-Event-Support-Pipeline-Plus` state delivers excellent increm
 
 ## Success Criteria (measurable)
 
-| Criterion | Target | Current (2026-06-30) | Notes |
+| Criterion | Target | Current (2026-07-01) | Notes |
 |-----------|--------|----------------------|-------|
 | Optimal 36B NL MoE throughput (2-device) | ≥48 t/s sustained | **48.9 t/s** (`trace-f-2gpu-plus`) | **Achieved** |
 | 3-device vs 2-device penalty | <10% regression | +32% uplift by dropping 6600 | **Achieved** — do not use 3-device for this model class |
-| **B+6 M3 overlap gate** | **`overlap_pct >= 5%`** | **0.1–0.7%** (best G2 n=128 only) | **Primary active gap** |
-| B+6 M1 interim | `overlap_pct >= 1%` @ n=384 | 0.7% @ n=128 only | FAIL |
+| **B+6 M3 overlap gate** | **`overlap_pct >= 5%`** | **0.3%** @ canonical n=384; 1.3% best (V1 n=128) | **Primary active gap** — hunt continues (B+12 next) |
+| B+6 M1 interim | `overlap_pct >= 1%` @ n=384 | 0.3% @ n=384; 1.3% @ n=128 | FAIL at gate depth |
+| B+14/B+15 correctness | no regressions on MoE + large | V1/V2 PASS, sync_fb=0 | **Achieved** — safe to ship |
 | GPU power duty cycle @ ≥20% TDP during gen | >15% | 3.8% (best run) | Orchestration stall signature |
 | Per-split / per-RPC timing visibility | Full histogram in scheduler trace | Partial (`llama-pipeline-profiler`, sched trace) | Phase 1.1 |
 | Documentation & runbook completeness | All common topologies covered | This doc root + `rpc-patch/` | **In progress** |
@@ -61,3 +62,5 @@ The current `Path-B-Event-Support-Pipeline-Plus` state delivers excellent increm
 
 **Owner:** NighmareGit  
 **Review cadence:** After every major profile/profiler run or topology change.
+
+**Current focus (2026-07-01):** V3 review complete — **M3 hunt resumed** (B+12 `GET_TENSOR` deferral on canonical n=384). B+14/B+15 shipped for correctness. See [TRACKING.md](TRACKING.md) V3 section.

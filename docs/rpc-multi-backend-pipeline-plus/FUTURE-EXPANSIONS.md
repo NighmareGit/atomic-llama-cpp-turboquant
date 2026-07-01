@@ -38,6 +38,21 @@ This file holds **one** deferred item: extending the post-run trace sample scrip
 
 ---
 
+## Active M3 hunt queue (post-V3 review)
+
+**Date:** 2026-07-01  
+**Status:** V3 review done — hunt **active**. See [TRACKING.md](TRACKING.md) V3 section.
+
+| Priority | Item | Lever | Notes |
+|----------|------|-------|-------|
+| **1 (next)** | B+12 `GET_TENSOR` deferral | overlap / pipelining depth | Addresses serial RPC wait on hot path |
+| 2 | B+11 dual-socket RPC | HOL / tail RTT | After Phase 1.2 A+B parsers |
+| 3 | B+16 CUDA `leaf_55` MoE weight | G / `input_wait` on CUDA | ~1584us vs HIP ~122us; weak overlap ROI |
+
+**Deferred:** Sample API C-full keep lists (above).
+
+---
+
 ## References
 
 - Sample scripts: `scripts/llama-pipeline-trace-sample.sh`, `tools/llama-pipeline-profiler/pipeline-trace-sample.cpp`

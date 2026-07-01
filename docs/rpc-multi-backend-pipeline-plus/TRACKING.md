@@ -24,6 +24,8 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 | 2026-07-01 | **Grill: pursue M3 via B+11–B+13** | Blocking = implementation bug, not Path C; ladder NULL != unfixable | Reactivate B+11–B+13; Phase 1.2 staged D |
 | 2026-07-01 | **C-full instrumentation** | C-min insufficient for B+13 proof | `sync_copy_fallback` + RPC join; see IMPLEMENTATION |
 | 2026-07-01 | **Sample API C-full keep lists deferred** | Emit/parser/re-bench first | [FUTURE-EXPANSIONS.md](FUTURE-EXPANSIONS.md) only |
+| 2026-07-01 | **Validation before next M3 experiment** | B+14/B+15 closed HIP gather gap; CUDA `leaf_55` residual ~1.5ms; M3 still ~0.3% — run MoE + larger-model smoke before picking next hunt step | Lateral todo below; PLAN review after V1+V2 (M3 hunt not postponed) |
+| 2026-07-01 | **V3 plan review: ship B+14/B+15, resume M3 hunt** | V1/V2 PASS; overlap 0.3% @ n=384 canonical unchanged; next experiment B+12 not leaf_55 | TRACKING V3 section; PLAN Phase 2b |
 
 ## Current Champion Runs
 
@@ -109,11 +111,11 @@ Romulus-native canonical (`78e8f3c45` ladder):
 
 ## Open Items / Blockers
 
-### Primary — B+6 overlap gate (M3) — **active via B+11–B+13**
+### Primary — B+6 overlap gate (M3 hunt resumed)
 
-Mitigation ladder B+8–B+10 NULL on overlap; grill 2026-07-01: treat as **implementation bug** (B+13 sync fallback prime suspect). Structural ceiling section retained as ladder evidence; **not** a stop for B+11–B+13.
+V1+V2 validation **PASS** (see Lateral Todo). B+14/B+15 cleared for ship. **M3 hunt active** — next canonical experiment is B+12 (`GET_TENSOR` deferral), not CUDA `leaf_55` alone (G lever, weak overlap lever). See **V3 plan review** in Lateral Todo.
 
-**Execution order:** C-full re-bench -> Phase 1.2 A+B parsers -> B+13 -> B+12 -> B+11. See [IMPLEMENTATION.md](IMPLEMENTATION.md).
+### Secondary — cluster sync + instrumentation
 
 ### Secondary — Instrumentation (Phase 1.1 + 1.2)
 
@@ -145,6 +147,83 @@ Mitigation ladder B+8–B+10 NULL on overlap; grill 2026-07-01: treat as **imple
 - `rpc-multi-backend-pipeline-plus/` doc root incorporated into repo (2026-06-30)
 - Reconciled with B+6 gate, b6-gate/TRACKING, grilling lateral ladder (B+8–B+13)
 - Formalized [Path-B-Plus-MultiBackend-RPC-Orchestration-Audit.md](ANALYSIS/Path-B-Plus-MultiBackend-RPC-Orchestration-Audit.md)
+- B+14 gather prefetch + producer mask; B+15 split-1-start RPC prefetch + MoE ids path (`41a65d963`, `590597110`)
+
+## Lateral Todo (post-B+15 — 2026-07-01)
+
+Side track — not blocking production ship (`trace-f-2gpu-plus` @ 48.9 t/s). Perf-hunt items deferred to [FUTURE-EXPANSIONS.md](FUTURE-EXPANSIONS.md).
+
+### Now — correctness validation
+
+| Step | What | Why | Client(s) |
+|------|------|-----|-----------|
+| V1 | **MoE model** profiler gate / smoke run | `gemma-4-26B-A4B-APEX-I-Compact.gguf` (gemma4 MoE, distinct from canonical Qwen APEX 36B); B+14/B+15 MoE leaf / ids prefetch path | `remus-docker`, `romulus` |
+| V2 | **Larger model** (70B+ class) smoke run | `meta-llama-3-70b-instruct.Q4_K_M.gguf` (40G dense); gather prefetch across deeper graphs | `remus-docker`, `romulus` |
+| V3 | Compare traces vs B+15 baselines | `input_wait_copy`, `leaf_*`, `rpc_prefetch_*` — flag new stalls or sync fallbacks, not just G/overlap | both |
+
+**Pass criteria (validation):** generation completes; no new `sync_copy_fallback` spikes; throughput within prior regression band for that model/topology; no correctness anomalies in sample output.
+
+### Validation results (2026-07-01, B+15 @ rsync to romulus)
+
+| Run | Model | Client | G (t/s) | overlap | sync_fb | Verdict |
+|-----|-------|--------|---------|---------|---------|---------|
+| V1 | gemma4 26B-A4B MoE | romulus HIP | 164.9 | 0.8% | 0 | **PASS** |
+| V1 | gemma4 26B-A4B MoE | remus CUDA docker | 140.8 | 1.3% | 0 | **PASS** |
+| V2 | llama-70B Q4_K_M | romulus HIP | 30.0 | 0.8% | 0 | **PASS** |
+| V2 | llama-70B Q4_K_M | remus CUDA docker (profiler) | — | — | — | **VRAM BLOCKED** (5060 Ti 16GB; profiler loads half locally) |
+| V2 | llama-70B Q4_K_M | romulus HIP (profiler) | 30.0 | 0.8% | 0 | **PASS** |
+
+**V2 CUDA note:** `llama-pipeline-profiler` on remus-docker OOMs on dense 70B — local 5060 Ti cannot hold the client shard. For V2 CUDA validation use **llama-server + RPC worker** topology (`rpc-server-bench.sh pathb`): e.g. remus client + triton `:50054`, or remus + romulus `:50051`, with `GGML_PIPELINE_PLUS=1` and `BENCH_TRACE=1`. Profiler gate presets remain canonical for M3; validation smokes may use server style for large dense models.
+
+Artifacts: `benches/path-b-plus/b6-2gpu-f-triton-n384-v1-moe-gemma-{hip,cuda}`, `b6-2gpu-f-triton-n384-v2-llama70b-hip`, `b6-2gpu-f-triton-n384-romulus-native-b15b`. No `sync_copy_fallback` on any completed run.
+
+### V3 — Plan / mission review (2026-07-01)
+
+**Verdict:** B+14/B+15 **safe to ship** for production paths. M3 hunt **continues** on canonical bench; validation does not change the mission criterion.
+
+#### What B+14/B+15 bought (canonical `b6-2gpu-f-triton-n384`, n=384)
+
+| Signal | Pre-B+15 (baseline) | Post-B+15 | Notes |
+|--------|---------------------|-----------|-------|
+| CUDA G | ~128.8 t/s | ~128.8 t/s | Throughput flat; gains are latency composition |
+| CUDA overlap | ~0.2–0.3% | 0.3% (b14i) | M3 still FAIL |
+| HIP G | ~200.8 t/s | ~190–205 t/s (b14b/b15b) | Modest / stable |
+| HIP overlap | ~0.2% | ~0.3% | M3 still FAIL |
+| HIP split-2 gather | `producer_event_wait` ~4ms | `input_wait` ~358ms | Gather path fixed (rebuild `ggml-base` after git sync) |
+| CUDA residual | `leaf_55` ~2.3ms | ~1.5ms (b15) | MoE weight H2D; not overlap lever |
+
+B+14/B+15 are **implementation fixes** (prefetch, producer mask, split-1-start issue, MoE ids path). They collapse gather stalls and improve G on HIP; they do **not** unlock copy-slot pipelining depth — the structural M3 gap.
+
+#### M3 hunt status (not postponed)
+
+| Milestone | Target | Best post-B+15 | @ n=384 canonical | Status |
+|-----------|--------|----------------|-------------------|--------|
+| M1 | overlap >= 1% | 1.3% (V1 CUDA gemma, n=128) | 0.3% | **FAIL** at gate depth |
+| M3 | overlap >= 5% | 1.3% | 0.3% | **FAIL** |
+
+Validation overlap (0.8–1.3% @ n=128) shows the scheduler **can** overlap more on some graphs, but not at canonical n=384 depth. M3 remains the active mission gap.
+
+#### Decisions (locked)
+
+1. **Ship B+14/B+15** — V1/V2 PASS; zero `sync_copy_fallback`; no MoE leaf regressions on gemma4 or llama-70B HIP.
+2. **Keep M3 as hard complete criterion** — do not downgrade to throughput-only or Path C.
+3. **Resume hunt on canonical bench** — next experiments ordered by overlap leverage, not G alone:
+   - **B+16-candidate:** pipelining-depth / `GET_TENSOR` deferral (B+12) — addresses serial RPC wait, not leaf H2D
+   - **B+17-candidate:** CUDA `leaf_55` MoE weight path — G/stall ROI on CUDA docker; unlikely to move overlap_pct materially
+4. **Dual-track execution:** production ship (`trace-f-2gpu-plus` 48.9 t/s) proceeds in parallel with canonical M3 experiments.
+5. **V2 CUDA gap** — llama-70B blocked on remus 5060 Ti VRAM; not a B+15 regression. Use romulus HIP or larger local GPU for dense 70B+ CUDA validation.
+
+#### Next actions
+
+- [x] Push B+14/B+15 to gitea; canonical `b15b` re-bench (rebuild `ggml-base` after sync)
+- [ ] V2 CUDA via `llama-server` + triton `:50054` (remus client) — profiler OOM insufficient alone
+- [ ] B+12 prototype + bisect on canonical n=384 (overlap lever)
+- [ ] Phase 1.2 A+B parsers (waterfall/Gantt) before next major bisect
+
+### Pending M3 experiments (hunt active)
+
+- CUDA `leaf_55` MoE weight path (~1.5ms vs HIP ~122us) — candidate next experiment; see FUTURE-EXPANSIONS
+- Further overlap / pipelining-depth work — **review in PLAN/MISSION after V1+V2**, not postponed as a mission item
 
 ## Next 7 Days (grill-locked 2026-07-01)
 
@@ -165,6 +244,13 @@ Mitigation ladder B+8–B+10 NULL on overlap; grill 2026-07-01: treat as **imple
 - [x] `b6-4gpu-g-triton-n384-romulus-native` — overlap 0.1%, G=73.2, drain 4.6s (2026-07-01)
 - [x] **Structural ceiling doc** — PLAN stop rule met (2026-07-01)
 - [x] Triton ops scripts + commit/push session work (2026-07-01)
+- [x] B+14/B+15 gather prefetch + split-1-start issue; HIP b14b + CUDA b14i re-bench (2026-07-01)
+- [x] **V1** MoE model validation — gemma4 26B-A4B, n=128 (2026-07-01)
+- [x] **V2** Larger model validation — llama-70B HIP; CUDA ts=50,50 VRAM-blocked on 5060 Ti (2026-07-01)
+- [x] **V3** Plan / mission review after V1+V2 (2026-07-01)
+- [x] Push B+14/B+15 to gitea; romulus + triton @ `590597110` (2026-07-01)
+- [x] Canonical B+15 re-bench `b6-2gpu-f-triton-n384-romulus-native-b15b` — G=190.2, overlap=0.3%, `input_wait` ~358ms (b15 stale `ggml-base`; rebuild fixed)
+- [ ] B+12 `GET_TENSOR` deferral bisect on canonical n=384
 
 ## Metrics Dashboard
 
@@ -187,4 +273,4 @@ Mitigation ladder B+8–B+10 NULL on overlap; grill 2026-07-01: treat as **imple
 ---
 
 **Update this file after every profile/profiler run or topology decision.**  
-**Last edit:** 2026-07-01 — grill session locked execution plan (ADR-0001).
+**Last edit:** 2026-07-01 — V3 review: ship B+14/B+15; M3 hunt resumes (B+12 next).
