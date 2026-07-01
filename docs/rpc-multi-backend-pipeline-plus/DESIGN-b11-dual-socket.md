@@ -28,7 +28,7 @@ Proto bump: **4.4** (`RPC_PROTO_MINOR_VERSION=4`). New cmd: `RPC_CMD_CHANNEL_BIN
 3. Client opens second TCP to same host:port, sends `CHANNEL_BIND` + `session_id`.
 4. Server pairs `rsp_channel` on cmd socket; responses use `send_response()` (rsp socket).
 
-Flag: `GGML_RPC_DUAL_SOCKET=1` (default ON with `GGML_PIPELINE_PLUS=1`). Bisect OFF: `no-dual-socket`.
+Flag: `GGML_RPC_DUAL_SOCKET=1` (default **OFF**; v3 HELLO wire when OFF for 4.3 server compat). Bisect ON: export before `canonical-romulus`; OFF: `no-dual-socket`.
 
 ## Bisect
 
