@@ -464,6 +464,7 @@ struct rpc_pending_hash {
 };
 
 static thread_local std::vector<rpc_pending_hash> tls_pending_hash;
+static thread_local socket_ptr tls_hash_active_sock;
 
 static uint64_t rpc_hash_cache_key(const socket_ptr & sock, uint64_t hash, uint64_t data_ptr, uint64_t offset) {
     const uintptr_t sk = (uintptr_t) sock.get();
@@ -1089,6 +1090,7 @@ static bool negotiate_hello(const std::shared_ptr<socket_t> & sock, const char *
     tls_pending_event = {nullptr, false, nullptr};
     tls_pending_copy = {nullptr, false};
     tls_pending_hash.clear();
+    tls_hash_active_sock.reset();
     return true;
 }
 
@@ -1246,11 +1248,17 @@ static void ggml_backend_rpc_buffer_set_tensor(ggml_backend_buffer_t buffer, ggm
     ggml_backend_rpc_buffer_context * ctx = (ggml_backend_rpc_buffer_context *)buffer->context;
     auto sock = ctx->sock;
     rpc_tensor rpc_tensor = serialize_tensor(tensor);
+    if (ggml_backend_rpc_hash_defer()) {
+        if (tls_hash_active_sock && tls_hash_active_sock != sock) {
+            flush_pending_hash_for_socket(tls_hash_active_sock);
+        }
+        flush_pending_hash_for_socket(sock);
+        tls_hash_active_sock = sock;
+    }
     if (size > HASH_THRESHOLD) {
         if (tls_set_batch.count > 0 && tls_set_batch_sock && tls_set_batch_sock != sock) {
             flush_set_tensor_batch();
         }
-        flush_pending_hash_for_socket(sock);
         flush_set_tensor_batch();
         rpc_msg_set_tensor_hash_req request;
         request.tensor = rpc_tensor;
@@ -1282,8 +1290,6 @@ static void ggml_backend_rpc_buffer_set_tensor(ggml_backend_buffer_t buffer, ggm
             return;
         }
         tls_hash_present[cache_key] = false;
-    } else if (ggml_backend_rpc_hash_defer()) {
-        flush_pending_hash_for_socket(sock);
     }
     rpc_issue_set_tensor_payload(sock, rpc_tensor, offset, data, size);
 }
