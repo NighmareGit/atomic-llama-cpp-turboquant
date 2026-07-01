@@ -63,7 +63,7 @@ The current `Path-B-Event-Support-Pipeline-Plus` state delivers excellent increm
 **Owner:** NighmareGit  
 **Review cadence:** After every major profile/profiler run or topology change.
 
-**Current focus (2026-07-01, V5):** Branch **deploy-ready**. M3 overlap **closed** on Path-B+. **Active:** Phase 1c assembly line production — 5-GPU 70B+ deploy runbook, L1 hash-defer spike, optional n=384 L4. See [DESIGN-b14-parallel-assembly-line.md](DESIGN-b14-parallel-assembly-line.md) section 10 and [PLAN.md](PLAN.md) Phase 1c.
+**Current focus (2026-07-01):** **Phase 1c complete.** Branch **deploy-ready** — use `b6-gate-5gpu-deploy.sh` + equal-safe preflight. M3 overlap closed. MoE deploy: ncmoe=0 only on profiler path. Path C per DESIGN s11 when W2 concurrency required.
 
 ## Future work — VRAM / tensor-split planning
 

@@ -3,13 +3,13 @@
 #
 # usage:
 #   bash scripts/b6-gate-phase1c-assembly-line.sh
-#   B6_PHASE1C_L4=1 bash scripts/b6-gate-phase1c-assembly-line.sh
+#   B6_PHASE1C_SKIP_MOE=1 bash scripts/b6-gate-phase1c-assembly-line.sh
 #   B6_PHASE1C_SKIP_L1=1 bash scripts/b6-gate-phase1c-assembly-line.sh
 #
 # steps:
 #   1. Deploy preflight sanity (A1 + A8 gguf paths on romulus)
 #   2. L1 GGML_RPC_HASH_DEFER bisect @ n=384
-#   3. Optional L4 equal-safe @ n=384 (B6_PHASE1C_L4=1)
+#   3. MoE light CPU expert offload smoke (ncmoe 0/8/16 @ n=128)
 
 set -euo pipefail
 
@@ -47,11 +47,11 @@ else
     echo "--- step 2: L1 skipped (B6_PHASE1C_SKIP_L1=1) ---"
 fi
 
-if [[ "${B6_PHASE1C_L4:-0}" == "1" ]]; then
-    echo "--- step 3: L4 equal-safe @ n=384 ---"
-    bash "${ROOT}/scripts/b6-gate-phase1c-l4-n384-confirm.sh"
+if [[ "${B6_PHASE1C_SKIP_MOE:-0}" != "1" ]]; then
+    echo "--- step 3: MoE light CPU expert offload ---"
+    bash "${ROOT}/scripts/b6-gate-phase1c-moe-light-offload-spike.sh"
 else
-    echo "--- step 3: L4 n384 skipped (set B6_PHASE1C_L4=1 to enable) ---"
+    echo "--- step 3: MoE offload skipped (B6_PHASE1C_SKIP_MOE=1) ---"
 fi
 
 echo "PHASE1C_ASSEMBLY_LINE_DONE stamp=${STAMP}"

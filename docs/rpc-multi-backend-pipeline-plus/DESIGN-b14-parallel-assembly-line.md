@@ -236,7 +236,7 @@ Production success is **not** M3 on `overlap_pct`. It is:
 | 1 | Deploy runbook: `pathb-rpc-vram-preflight.sh --preset b6-5gpu-g-prod --ts-mode equal --phase load` | 70B+ load smoke | **ready** |
 | 2 | L1 spike: `B6_5GPU_HASH_DEFER=1` on A1 n=384 | G delta >= 0%; no correctness regression | **DONE** — G -1.9%; keep OFF |
 | 3 | L4 @ n=384 equal-safe (A8/A13) | load PASS; G recorded | optional confirm |
-| 4 | MoE light offload smoke on big models | gen completes; G vs dense baseline | backlog |
+| 4 | MoE light offload smoke on big models | gen completes; G vs dense baseline | **ncmoe=0 PASS**; ncmoe>0 **crash** on profiler+RPC |
 | 5 | Path C bridge criteria | document when to escalate for true W2 | doc only |
 
 **Explicit OFF:** wavefront (`B6_5GPU_WAVEFRONT=0`), further B+8–B+16 bisects, naive equal TS.

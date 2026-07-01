@@ -365,6 +365,21 @@ Artifacts: `b6-b15-l4-layer-spread-20260701-185902` (romulus). Spike: `scripts/b
 
 Artifact: `b6-phase1c-l1-hashdefer-20260701-191308`.
 
+#### MoE light offload (step 4)
+
+| Model | ncmoe | G @ n=128 | TS (equal-safe) | Verdict |
+|-------|-------|-----------|-----------------|---------|
+| A1 MoE | 0 | **60.7** | 16,25,27,5,27 | **PASS** |
+| A1 MoE | 8, 16 | — | same | **FAIL** segfault @ prefill |
+| A13 72B | 0 | **16.5** | 19,14,30,6,31 | **PASS** |
+| A13 72B | 8, 16 | — | same | **FAIL** abort @ prefill |
+
+**Verdict:** MoE CPU expert offload (`-ncmoe`) **not safe** on 5-GPU profiler+RPC path. Use **ncmoe=0** for deploy. Offload experiments defer to `rpc-server-bench.sh` (llama-server) if needed.
+
+Artifact: `b6-phase1c-moe-offload-20260701-191852`. Profiler `-ncmoe` flag added for future server-style benches.
+
+**Phase 1c complete.** Branch deploy-ready; overlap closed; Path C bridge criteria in DESIGN s11.
+
 ### V5 — Overlap closed; Phase 1c active (2026-07-01)
 
 **Overlap verdict:** No further beneficial M3 ideas within Path-B+. Ladder + wavefront NULL; pair `overlap_pct` is the wrong production gate (`global_multi` 14–23% vs pair ~0.2%). One marginal experiment remains: **L1** `GGML_RPC_HASH_DEFER` (G lever, not M3). True multi-RPC concurrency needs **Path C** or finer server-side splits.
@@ -444,6 +459,7 @@ Artifacts: `b6-2gpu-f-triton-n384-romulus-native-b16` (experiment only; code rev
 - [x] B+14 wavefront factorial + n=384 A0 vs A3 on 5-GPU prod — NULL M3; A0 wins G (2026-07-01)
 - [x] VRAM planning reserves + L4 equal-safe spike (A8/A13 4/4 load PASS) — `a9fbf3a5d`..`d1a049e33` (2026-07-01)
 - [x] **V4** plan review after B+14/B+15 L4 (2026-07-01)
+- [x] Phase 1c deploy scripts + L1 hash-defer spike @ n=384 (2026-07-01)
 
 ## Metrics Dashboard
 

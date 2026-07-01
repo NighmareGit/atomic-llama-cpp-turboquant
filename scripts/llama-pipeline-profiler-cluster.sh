@@ -114,6 +114,7 @@ b6_append_env_audit() {
         echo "GGML_SCHED_PIPELINE_DEPTH=${GGML_SCHED_PIPELINE_DEPTH:-4}"
         echo "BENCH_FIT_TARGET=${BENCH_FIT_TARGET:-}"
         echo "BENCH_NGL=${BENCH_NGL:-}"
+        echo "BENCH_NCMOE=${BENCH_NCMOE:-}"
     } >>"${OUT_DIR}/env.txt"
 }
 
@@ -150,6 +151,9 @@ build_profiler_args() {
     fi
     if [[ -n "${BENCH_NGL:-}" ]]; then
         args+=(-ngl "$BENCH_NGL")
+    fi
+    if [[ -n "${BENCH_NCMOE:-}" ]]; then
+        args+=(-ncmoe "$BENCH_NCMOE")
     fi
     if [[ -n "${BENCH_N_BATCH:-}" ]]; then
         args+=(-b "$BENCH_N_BATCH")

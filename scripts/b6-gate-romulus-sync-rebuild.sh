@@ -148,6 +148,8 @@ rsync_sources() {
         scripts/b6-gate-phase1c-assembly-line.sh
         scripts/b6-gate-phase1c-l1-hash-defer-spike.sh
         scripts/b6-gate-phase1c-l4-n384-confirm.sh
+        scripts/b6-gate-phase1c-moe-light-offload-spike.sh
+        tools/llama-pipeline-profiler/llama-pipeline-profiler.cpp
         scripts/b6-gate-5gpu-production-env.sh
         scripts/b6-gate-phase0-assembly-bounds.py
         scripts/b6-gate-phase0-assembly-bounds.sh

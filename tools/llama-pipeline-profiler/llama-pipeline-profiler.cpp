@@ -59,6 +59,7 @@ struct profiler_config {
     int n_prompt         = 0;
     std::string prompt_file;
     int n_gpu_layers     = 99;
+    int n_cpu_moe        = 0;
     int n_batch          = 512;
     int n_ubatch         = 512;
     int n_threads        = 0;
@@ -252,6 +253,26 @@ static run_result run_session(const profiler_config & cfg, int plus_val) {
         mparams.tensor_split = cfg.tensor_split.data();
     }
 
+    {
+        static std::vector<std::string>              moe_patterns;
+        static std::vector<llama_model_tensor_buft_override> moe_overrides;
+        moe_patterns.clear();
+        moe_overrides.clear();
+        if (cfg.n_cpu_moe > 0) {
+            moe_patterns.reserve((size_t) cfg.n_cpu_moe);
+            moe_overrides.reserve((size_t) cfg.n_cpu_moe + 1);
+            for (int i = 0; i < cfg.n_cpu_moe; ++i) {
+                moe_patterns.push_back(llm_ffn_exps_block_regex(i));
+                moe_overrides.push_back({
+                    moe_patterns.back().c_str(),
+                    ggml_backend_cpu_buffer_type(),
+                });
+            }
+            moe_overrides.push_back({ nullptr, nullptr });
+            mparams.tensor_buft_overrides = moe_overrides.data();
+        }
+    }
+
     llama_model * model = llama_model_load_from_file(cfg.model_path.c_str(), mparams);
     if (!model) {
         throw std::runtime_error("failed to load model: " + cfg.model_path);
@@ -350,6 +371,7 @@ static void write_env_txt(const fs::path & dir, const profiler_config & cfg, con
     f << "TS=" << cfg.tensor_split_str << "\n";
     f << "GGML_PIPELINE_PLUS=" << plus << "\n";
     f << "N_GEN=" << cfg.n_gen << "\n";
+    f << "N_CPU_MOE=" << cfg.n_cpu_moe << "\n";
     f << "N_PROMPT=" << (cfg.prompt_file.empty() ? std::to_string(cfg.n_prompt) : cfg.prompt_file) << "\n";
     f << "SYNC_PER_TOKEN=" << (cfg.sync_per_token ? 1 : 0) << "\n";
     f << "TRACE=" << (cfg.enable_trace ? 1 : 0) << "\n";
@@ -541,6 +563,7 @@ static void usage(const char * argv0) {
         "  -rpc, --rpc <endpoints>  comma-separated RPC servers\n"
         "  -ts, --tensor-split <ts> e.g. 50,50\n"
         "  -ngl, --n-gpu-layers <n> default 99\n"
+        "  -ncmoe, --n-cpu-moe <n>   MoE expert CPU offload for first N layers (0=off)\n"
         "  -sm, --split-mode <none|layer|row|tensor> default layer\n"
         "  -ctk, --cache-type-k <t>  default q4_0\n"
         "  -ctv, --cache-type-v <t>  default q4_0\n"
@@ -614,6 +637,8 @@ int llama_pipeline_profiler(int argc, char ** argv) {
             cfg.tensor_split_str = need(arg.c_str());
         } else if (arg == "-ngl" || arg == "--n-gpu-layers") {
             cfg.n_gpu_layers = std::stoi(need(arg.c_str()));
+        } else if (arg == "-ncmoe" || arg == "--n-cpu-moe") {
+            cfg.n_cpu_moe = std::stoi(need(arg.c_str()));
         } else if (arg == "-sm" || arg == "--split-mode") {
             cfg.split_mode = parse_split_mode(need(arg.c_str()));
         } else if (arg == "-ctk" || arg == "--cache-type-k") {

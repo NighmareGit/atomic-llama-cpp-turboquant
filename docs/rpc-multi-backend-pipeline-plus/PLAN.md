@@ -231,7 +231,7 @@ bash scripts/b6-gate-phase12c-blocking-audit.sh b6-2gpu-f-triton-n384-romulus-na
 - End of Phase 2: M3 PASS **or** structural ceiling documented with trace proof
 - Phase 3 start: Explicit approval only
 
-## Phase 1c — Assembly line production (Active — 2026-07-01)
+## Phase 1c — Assembly line production (Complete — 2026-07-01)
 
 **Goal:** Working 5-GPU assembly line for deploy — all GPUs loaded, stable G, operator runbook. **Not** M3 `overlap_pct` (closed).
 
