@@ -248,12 +248,13 @@ struct rpc_pending_download {
     ggml_backend_t dst_backend;
 };
 
-// Same-host multi-endpoint: deferred GET on src session socket, then SET on dst.
+// Same-host multi-endpoint: queued at copy_issue, flushed sync at split barrier.
 struct rpc_pending_relay {
     socket_ptr src_sock;
     socket_ptr dst_sock;
-    std::vector<uint8_t> staging;
+    const ggml_tensor * src;
     ggml_tensor * dst;
+    std::vector<uint8_t> staging;
 };
 
 static thread_local std::vector<rpc_pending_relay> tls_pending_relays;
@@ -267,7 +268,7 @@ static void drain_pending_copy_response(const socket_ptr & sock);
 static void flush_pending_get_tensor_for_socket(const socket_ptr & sock);
 static void flush_pending_get_tensor();
 static bool rpc_issue_relay_upload(const rpc_pending_relay & relay);
-static void flush_pending_relays_for_socket(const socket_ptr & sock);
+static void flush_pending_relays();
 static void flush_set_tensor_batch();
 static void rpc_register_socket(const socket_ptr & sock);
 static void rpc_drain_all_endpoints_pending();
@@ -403,6 +404,7 @@ static void rpc_drain_all_endpoints_pending() {
     }
     flush_pending_get_tensor();
     flush_set_tensor_batch();
+    flush_pending_relays();
 
     if (!rpc_multi_socket_flush()) {
         return;
@@ -706,7 +708,6 @@ static void flush_pending_get_tensor_for_socket(const socket_ptr & sock) {
         rpc_trace_emit(__func__, "flush_get", RPC_CMD_GET_TENSOR, it->size, true, us);
         it = tls_pending_get_tensor.erase(it);
     }
-    flush_pending_relays_for_socket(sock);
 }
 
 static void flush_pending_get_tensor() {
@@ -1382,11 +1383,11 @@ static bool rpc_pending_download_matches_dst(const rpc_pending_download & pd,
 }
 
 void ggml_backend_rpc_flush_pending_downloads_for_dst(const ggml_tensor * const * dst, size_t n_dst) {
-    if (tls_pending_downloads.empty()) {
+    if (tls_pending_downloads.empty() && tls_pending_relays.empty()) {
         return;
     }
 
-    bool need_flush = n_dst == 0;
+    bool need_flush = n_dst == 0 || !tls_pending_relays.empty();
     if (!need_flush) {
         for (const auto & pd : tls_pending_downloads) {
             if (rpc_pending_download_matches_dst(pd, dst, n_dst)) {
@@ -1426,6 +1427,7 @@ void ggml_backend_rpc_flush_pending_downloads_for_dst(const ggml_tensor * const 
             ++it;
         }
     }
+    flush_pending_relays();
 }
 
 void ggml_backend_rpc_flush_pending_downloads(void) {
@@ -1447,19 +1449,34 @@ static bool rpc_issue_relay_upload(const rpc_pending_relay & relay) {
     return send_rpc_cmd(relay.dst_sock, RPC_CMD_SET_TENSOR, input.data(), input.size());
 }
 
-static void flush_pending_relays_for_socket(const socket_ptr & sock) {
-    for (auto it = tls_pending_relays.begin(); it != tls_pending_relays.end(); ) {
-        if (it->src_sock != sock) {
-            ++it;
-            continue;
-        }
-        if (!rpc_issue_relay_upload(*it)) {
-            GGML_LOG_ERROR("[%s] relay upload failed\n", __func__);
-            ++it;
-            continue;
-        }
-        it = tls_pending_relays.erase(it);
+static void flush_pending_relays() {
+    if (tls_pending_relays.empty()) {
+        return;
     }
+    for (auto & relay : tls_pending_relays) {
+        if (relay.src == nullptr || relay.dst == nullptr) {
+            continue;
+        }
+        const size_t size = ggml_nbytes(relay.src);
+        if (size == 0) {
+            continue;
+        }
+        drain_pending_copy_response(relay.src_sock);
+        drain_pending_copy_response(relay.dst_sock);
+        if (!rpc_event_defer_barrier()) {
+            drain_pending_event_response(relay.src_sock);
+            drain_pending_event_response(relay.dst_sock);
+        }
+        flush_pending_get_tensor_for_socket(relay.src_sock);
+        flush_pending_get_tensor_for_socket(relay.dst_sock);
+        flush_set_tensor_batch();
+        relay.staging.resize(size);
+        ggml_backend_rpc_buffer_get_tensor(relay.src->buffer, relay.src, relay.staging.data(), 0, size);
+        if (!rpc_issue_relay_upload(relay)) {
+            GGML_LOG_ERROR("[%s] relay upload failed\n", __func__);
+        }
+    }
+    tls_pending_relays.clear();
 }
 
 // Same-host isolated RPC endpoints (e.g. triton :50054 + :50055 docker): client pulls
@@ -1499,10 +1516,9 @@ static bool rpc_issue_relay_copy_tensor(const ggml_tensor * src, ggml_tensor * d
         rpc_pending_relay pr;
         pr.src_sock = src_sock;
         pr.dst_sock = dst_sock;
+        pr.src = src;
         pr.dst = dst;
-        pr.staging.resize(size);
         rpc_trace_emit_copy_issue(RPC_CMD_GET_TENSOR, src_ep, dst_ep, false, true);
-        ggml_backend_rpc_buffer_get_tensor_async(src_buffer, src, pr.staging.data(), 0, size, true);
         tls_pending_relays.push_back(std::move(pr));
         return true;
     }
@@ -1512,7 +1528,9 @@ static bool rpc_issue_relay_copy_tensor(const ggml_tensor * src, ggml_tensor * d
     ggml_backend_rpc_buffer_get_tensor(src_buffer, src, relay_staging.data(), 0, size);
 
     rpc_pending_relay pr;
+    pr.src_sock = src_sock;
     pr.dst_sock = dst_sock;
+    pr.src = src;
     pr.dst = dst;
     pr.staging = std::move(relay_staging);
     rpc_trace_emit_copy_issue(RPC_CMD_SET_TENSOR, src_ep, dst_ep, false, false);
