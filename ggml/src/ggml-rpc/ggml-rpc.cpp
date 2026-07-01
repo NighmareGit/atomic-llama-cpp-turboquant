@@ -664,6 +664,10 @@ static bool rpc_same_host(const std::string & a, const std::string & b) {
     return rpc_endpoint_host(a) == rpc_endpoint_host(b);
 }
 
+static bool rpc_same_endpoint(const char * a, const char * b) {
+    return a && b && strcmp(a, b) == 0;
+}
+
 static void flush_pending_get_tensor_for_socket(const socket_ptr & sock) {
     for (auto it = tls_pending_get_tensor.begin(); it != tls_pending_get_tensor.end(); ) {
         if (it->sock != sock) {
@@ -1415,6 +1419,51 @@ void ggml_backend_rpc_flush_pending_downloads(void) {
     ggml_backend_rpc_flush_pending_downloads_for_dst(nullptr, 0);
 }
 
+// Same-host isolated RPC endpoints (e.g. triton :50054 + :50055 docker): client pulls
+// from src worker and pushes to dst. COPY_TENSOR_PEER fails across separate processes.
+static bool rpc_issue_relay_copy_tensor(const ggml_tensor * src, ggml_tensor * dst, bool defer_response) {
+    ggml_backend_buffer_t src_buffer = src->buffer;
+    ggml_backend_buffer_t dst_buffer = dst->buffer;
+    ggml_backend_rpc_buffer_context * src_ctx = (ggml_backend_rpc_buffer_context *) src_buffer->context;
+    ggml_backend_rpc_buffer_context * dst_ctx = (ggml_backend_rpc_buffer_context *) dst_buffer->context;
+    auto src_sock = src_ctx->sock;
+    auto dst_sock = dst_ctx->sock;
+
+    if (!defer_response) {
+        drain_pending_copy_response(dst_sock);
+    }
+    if (!rpc_event_defer_barrier()) {
+        drain_pending_event_response(src_sock);
+        drain_pending_event_response(dst_sock);
+    }
+    flush_pending_get_tensor_for_socket(src_sock);
+    flush_pending_get_tensor_for_socket(dst_sock);
+    flush_set_tensor_batch();
+
+    const size_t size = ggml_nbytes(src);
+    if (size == 0) {
+        return true;
+    }
+
+    thread_local std::vector<uint8_t> relay_staging;
+    relay_staging.resize(size);
+    ggml_backend_rpc_buffer_get_tensor(src_buffer, src, relay_staging.data(), 0, size);
+
+    rpc_tensor rpc_t = serialize_tensor(dst);
+    const size_t input_size = sizeof(rpc_tensor) + sizeof(uint64_t) + size;
+    std::vector<uint8_t> input(input_size, 0);
+    memcpy(input.data(), &rpc_t, sizeof(rpc_tensor));
+    const uint64_t offset = 0;
+    memcpy(input.data() + sizeof(rpc_tensor), &offset, sizeof(offset));
+    memcpy(input.data() + sizeof(rpc_tensor) + sizeof(offset), relay_staging.data(), size);
+
+    const char * src_ep = rpc_buft_endpoint(src_buffer);
+    const char * dst_ep = rpc_buft_endpoint(dst_buffer);
+    rpc_trace_emit_copy_issue(RPC_CMD_SET_TENSOR, src_ep ? src_ep : "", dst_ep ? dst_ep : "", false, defer_response);
+
+    return send_rpc_cmd(dst_sock, RPC_CMD_SET_TENSOR, input.data(), input.size());
+}
+
 static bool rpc_issue_copy_tensor(const ggml_tensor * src, ggml_tensor * dst, bool defer_response) {
     if (!ggml_backend_buffer_is_rpc(src->buffer) || !ggml_backend_buffer_is_rpc(dst->buffer)) {
         return false;
@@ -1428,12 +1477,21 @@ static bool rpc_issue_copy_tensor(const ggml_tensor * src, ggml_tensor * dst, bo
 
     const char * src_ep = rpc_buft_endpoint(src_buffer);
     const char * dst_ep = rpc_buft_endpoint(dst_buffer);
-    const bool peer_copy = src_ctx->sock != dst_ctx->sock
-        && src_ep && dst_ep
-        && rpc_same_host(src_ep, dst_ep)
+    const bool cross_rpc = src_ctx->sock != dst_ctx->sock;
+    const bool same_host = src_ep && dst_ep && rpc_same_host(src_ep, dst_ep);
+    const bool same_endpoint = src_ep && dst_ep && rpc_same_endpoint(src_ep, dst_ep);
+    const bool same_host_diff_endpoint = cross_rpc && same_host && !same_endpoint;
+
+    // Peer copy only for same-endpoint workers (dual-socket single rpc-server).
+    const bool peer_copy = cross_rpc
+        && same_host
+        && same_endpoint
         && sock->server_supports_peer_copy;
 
-    if (src_ctx->sock != dst_ctx->sock && !peer_copy) {
+    if (cross_rpc && !peer_copy) {
+        if (same_host_diff_endpoint) {
+            return rpc_issue_relay_copy_tensor(src, dst, defer_response);
+        }
         return false;
     }
 

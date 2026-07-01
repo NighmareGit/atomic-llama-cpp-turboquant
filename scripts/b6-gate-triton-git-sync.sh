@@ -30,7 +30,9 @@ if ! git_ok; then
     git remote add gitea "$GITEA_URL" 2>/dev/null || git remote set-url gitea "$GITEA_URL"
 fi
 
-git stash push -u -m "b6-gate-triton-sync" 2>/dev/null || true
+if [[ "${B6_TRITON_SKIP_STASH:-}" != "1" ]]; then
+    git stash push -u -m "b6-gate-triton-sync" 2>/dev/null || true
+fi
 
 if ! git remote | grep -q '^gitea$'; then
     git remote add gitea "$GITEA_URL"

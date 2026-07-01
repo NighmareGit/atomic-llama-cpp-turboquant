@@ -69,7 +69,7 @@ case "$ACTION" in
         ;;
     rebuild)
         deploy_sync
-        remote "cd $TRITON_REPO && bash scripts/b6-gate-triton-sync-rebuild.sh --no-restart"
+        remote "cd $TRITON_REPO && B6_TRITON_SKIP_STASH=1 bash scripts/b6-gate-triton-sync-rebuild.sh --no-restart"
         docker_remote "cd $TRITON_DIR && TRITON_REPO=$TRITON_REPO ./build-from-bin.sh"
         stop_native_rpc
         docker_remote "cd $TRITON_DIR && docker compose up -d --force-recreate"
