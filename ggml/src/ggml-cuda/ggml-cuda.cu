@@ -3434,13 +3434,45 @@ static void ggml_backend_cuda_free(ggml_backend_t backend) {
     delete backend;
 }
 
+// Pageable host -> device cudaMemcpyAsync can block the host until the stream drains.
+static void * ggml_cuda_pin_host_staging(size_t nbytes) {
+    static thread_local struct {
+        void * ptr = nullptr;
+        size_t cap = 0;
+    } pin;
+    if (nbytes > pin.cap) {
+        if (pin.ptr != nullptr) {
+            CUDA_CHECK(cudaFreeHost(pin.ptr));
+        }
+        CUDA_CHECK(cudaMallocHost(&pin.ptr, nbytes));
+        pin.cap = nbytes;
+    }
+    return pin.ptr;
+}
+
+// Issue pinned H2D on a side stream so the host does not block on a busy graph/compute stream.
+static void ggml_cuda_issue_pinned_h2d_async(ggml_backend_cuda_context * cuda_ctx, void * dst, const void * src, size_t nbytes) {
+    void * pin = ggml_cuda_pin_host_staging(nbytes);
+    memcpy(pin, src, nbytes);
+    cudaStream_t stream = cuda_ctx->stream();
+    CUDA_CHECK(cudaMemcpyAsync(dst, pin, nbytes, cudaMemcpyHostToDevice, cudaStreamPerThread));
+    if (!cuda_ctx->copy_event) {
+        CUDA_CHECK(cudaEventCreateWithFlags(&cuda_ctx->copy_event, cudaEventDisableTiming));
+    }
+    CUDA_CHECK(cudaEventRecord(cuda_ctx->copy_event, cudaStreamPerThread));
+    CUDA_CHECK(cudaStreamWaitEvent(stream, cuda_ctx->copy_event, 0));
+}
+
 static void ggml_backend_cuda_set_tensor_async(ggml_backend_t backend, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backend->context;
     ggml_backend_buffer_t buf = tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
 
     GGML_ASSERT(buf->buft == ggml_backend_cuda_buffer_type(cuda_ctx->device) && "unsupported buffer type");
 
-    CUDA_CHECK(cudaMemcpyAsync((char *) tensor->data + offset, data, size, cudaMemcpyHostToDevice, cuda_ctx->stream()));
+    if (size == 0) {
+        return;
+    }
+    ggml_cuda_issue_pinned_h2d_async(cuda_ctx, (char *) tensor->data + offset, data, size);
 }
 
 static void ggml_backend_cuda_get_tensor_async(ggml_backend_t backend, const ggml_tensor * tensor, void * data, size_t offset, size_t size) {
@@ -3474,22 +3506,6 @@ static void ggml_backend_cuda_get_tensor_2d_async(ggml_backend_t backend, const 
         data, stride_data, (const char *) tensor->data + offset, stride_tensor, size, n_copies, cudaMemcpyDeviceToHost, cuda_ctx->stream()));
 }
 
-// Pageable host -> device cudaMemcpyAsync can block the host until the stream drains.
-static void * ggml_cuda_pin_host_staging(size_t nbytes) {
-    static thread_local struct {
-        void * ptr = nullptr;
-        size_t cap = 0;
-    } pin;
-    if (nbytes > pin.cap) {
-        if (pin.ptr != nullptr) {
-            CUDA_CHECK(cudaFreeHost(pin.ptr));
-        }
-        CUDA_CHECK(cudaMallocHost(&pin.ptr, nbytes));
-        pin.cap = nbytes;
-    }
-    return pin.ptr;
-}
-
 static bool ggml_backend_cuda_cpy_tensor_async(ggml_backend_t backend_src, ggml_backend_t backend_dst, const ggml_tensor * src, ggml_tensor * dst) {
     ggml_backend_buffer_t buf_src = src->view_src ? src->view_src->buffer : src->buffer;
     ggml_backend_buffer_t buf_dst = dst->view_src ? dst->view_src->buffer : dst->buffer;
@@ -3509,9 +3525,7 @@ static bool ggml_backend_cuda_cpy_tensor_async(ggml_backend_t backend_src, ggml_
         }
         ggml_backend_cuda_context * cuda_ctx_dst = (ggml_backend_cuda_context *) backend_dst->context;
         ggml_cuda_set_device(cuda_ctx_dst->device);
-        void * pin = ggml_cuda_pin_host_staging(nbytes);
-        memcpy(pin, src->data, nbytes);
-        CUDA_CHECK(cudaMemcpyAsync(dst->data, pin, nbytes, cudaMemcpyHostToDevice, cuda_ctx_dst->stream()));
+        ggml_cuda_issue_pinned_h2d_async(cuda_ctx_dst, dst->data, src->data, nbytes);
         return true;
     }
     if (cuda_src && ggml_backend_buffer_is_host(buf_dst)) {
