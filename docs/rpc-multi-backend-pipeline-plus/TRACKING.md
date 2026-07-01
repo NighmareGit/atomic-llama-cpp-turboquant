@@ -343,6 +343,28 @@ Naive equal `20,20,20,20,20` still **OOM** on 3060 (~8 GB alloc vs ~7 GB static 
 
 Artifacts: `b6-b15-l4-layer-spread-20260701-185902` (romulus). Spike: `scripts/b6-gate-b15-l4-layer-spread-spike.sh`.
 
+### Phase 1c — assembly line production (2026-07-01)
+
+**Scripts:** `b6-gate-5gpu-deploy.sh`, `b6-gate-phase1c-assembly-line.sh`, `b6-gate-phase1c-l1-hash-defer-spike.sh`, `b6-gate-phase1c-l4-n384-confirm.sh`
+
+#### Deploy preflight (step 1)
+
+| Model | equal-safe TS | ngl | PASS |
+|-------|---------------|-----|------|
+| A1 Qwen3.6-35B MoE | 16,25,27,5,27 | 30 | OK |
+| A8 llama-70B | 18,13,31,6,32 | 60 | OK |
+
+#### L1 hash-defer @ n=384 (step 2)
+
+| Arm | G (t/s) | overlap | blocking_ms | drain_flush_ms | SET_TENSOR_HASH ms | global_3bk |
+|-----|---------|---------|-------------|----------------|-------------------|------------|
+| hash-off (default) | **58.76** | 0.1% | 34603 | 6059 | 28028 | **1.10%** |
+| hash-on | 57.65 | 0.1% | 14514 | 13959 | 8343 | 1.05% |
+
+**Verdict:** HASH_DEFER **cuts blocking -58%** and hash relay **-70%**, but **drain_flush +130%** and **G -1.9%**. Keep **`B6_5GPU_HASH_DEFER=0`** default @ n=384 romulus-native. Opt-in only when drain budget allows (see b6-gate n=128/+4.8% G on docker).
+
+Artifact: `b6-phase1c-l1-hashdefer-20260701-191308`.
+
 ### V5 — Overlap closed; Phase 1c active (2026-07-01)
 
 **Overlap verdict:** No further beneficial M3 ideas within Path-B+. Ladder + wavefront NULL; pair `overlap_pct` is the wrong production gate (`global_multi` 14–23% vs pair ~0.2%). One marginal experiment remains: **L1** `GGML_RPC_HASH_DEFER` (G lever, not M3). True multi-RPC concurrency needs **Path C** or finer server-side splits.

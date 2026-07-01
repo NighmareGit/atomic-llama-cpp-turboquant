@@ -240,7 +240,7 @@ Overlap hunt on this branch is **done**. See [DESIGN-b14-parallel-assembly-line.
 | Step | Work | Gate |
 |------|------|------|
 | 1 | Deploy runbook + equal-safe preflight | 70B+ load PASS |
-| 2 | L1 `GGML_RPC_HASH_DEFER` spike @ n=384 | G >= 0%; no regression |
+| 2 | L1 `GGML_RPC_HASH_DEFER` spike @ n=384 | **DONE** — G -1.9%; default OFF |
 | 3 | L4 n=384 confirm (A8/A13) | optional |
 | 4 | Path C bridge criteria doc | when to escalate W2 |
 

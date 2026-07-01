@@ -234,7 +234,7 @@ Production success is **not** M3 on `overlap_pct`. It is:
 | Step | Item | Gate | Status |
 |------|------|------|--------|
 | 1 | Deploy runbook: `pathb-rpc-vram-preflight.sh --preset b6-5gpu-g-prod --ts-mode equal --phase load` | 70B+ load smoke | **ready** |
-| 2 | L1 spike: `B6_5GPU_HASH_DEFER=1` on A1 n=384 | G delta >= 0%; no correctness regression | **next** |
+| 2 | L1 spike: `B6_5GPU_HASH_DEFER=1` on A1 n=384 | G delta >= 0%; no correctness regression | **DONE** — G -1.9%; keep OFF |
 | 3 | L4 @ n=384 equal-safe (A8/A13) | load PASS; G recorded | optional confirm |
 | 4 | MoE light offload smoke on big models | gen completes; G vs dense baseline | backlog |
 | 5 | Path C bridge criteria | document when to escalate for true W2 | doc only |
@@ -257,4 +257,19 @@ B6_5GPU_HASH_DEFER=1 bash scripts/b6-gate-run-remote.sh b6-5gpu-g-prod \
 
 # Phase 0 bounds on any bench dir
 python3 scripts/b6-gate-phase0-assembly-bounds.py <out>/telemetry
+
+# Full Phase 1c orchestrator
+bash scripts/b6-gate-phase1c-assembly-line.sh
+B6_PHASE1C_L4=1 bash scripts/b6-gate-phase1c-assembly-line.sh
 ```
+
+## 11. Path C bridge criteria
+
+Escalate to Path C (server-side multi-GPU scheduler) when **all** are true:
+
+1. Phase 1c deploy path stable (70B+ load PASS, preflight runbook in use).
+2. L1 hash-defer and dual-socket G levers exhausted (< 5% cumulative G gain).
+3. `global_3bk_pct` still < 2% @ n=384 on 5-GPU prod after equal-safe L4.
+4. Product requires **concurrent RPC layer compute** (W2 at scale), not just cross-token pipeline.
+
+Path C is **not** implemented on this branch. Reference: `rpc-patch/docs/rpc-path-c-plan.md`.
