@@ -188,6 +188,13 @@ PRESETS: dict[str, PresetSpec] = {
     ),
 }
 
+# Prod labels share topology with base presets (dual-socket env is separate).
+for _alias, _base in (
+    ("b6-5gpu-g-prod", "b6-5gpu-g"),
+    ("b6-6gpu-g-prod", "b6-6gpu-g"),
+):
+    PRESETS[_alias] = PRESETS[_base]
+
 
 def _ssh_user(host: str) -> str:
     if host == JUPITER_HOST:
@@ -325,6 +332,30 @@ def probe_device(dev: DeviceSpec) -> tuple[int, int, str]:
     raise ValueError(f"unknown device kind: {dev.kind}")
 
 
+def ts_layer_spread_equal(n_devices: int, floor_pct: int = 4) -> list[int]:
+    """L4: equal tensor-split to spread layers across all cluster GPUs."""
+    if n_devices <= 0:
+        return []
+    base = max(floor_pct, 100 // n_devices)
+    raw = [base] * n_devices
+    delta = 100 - sum(raw)
+    i = 0
+    while delta > 0:
+        raw[i % n_devices] += 1
+        delta -= 1
+        i += 1
+    i = 0
+    while delta < 0:
+        idx = i % n_devices
+        if raw[idx] > floor_pct:
+            raw[idx] -= 1
+            delta += 1
+        i += 1
+        if i > n_devices * 200:
+            break
+    return raw
+
+
 def ts_from_free_mb(free_mibs: list[int], floor_pct: int = 4) -> list[int]:
     if not free_mibs:
         return []
@@ -383,6 +414,12 @@ def main() -> int:
     p.add_argument("--layers", type=int, default=None)
     p.add_argument("--ctx", type=int, default=8192)
     p.add_argument("--ts", default="", help="override tensor-split to evaluate")
+    p.add_argument(
+        "--ts-mode",
+        choices=("vram", "equal"),
+        default="vram",
+        help="vram=live ratio (default); equal=L4 layer spread across all devices",
+    )
     p.add_argument("--rpc", default="", help="override RPC endpoint list")
     p.add_argument("--live", action="store_true", default=True, help="probe live VRAM (default)")
     p.add_argument("--no-live", action="store_true", help="use static budgets from --config")
@@ -434,8 +471,12 @@ def main() -> int:
 
     free_mibs = [r[1] for r in live_rows] if live_rows else []
     ts_live = ts_from_free_mb(free_mibs) if free_mibs else []
+    n_dev = len(preset.devices) if preset.devices else len(preset.ts_default)
+    ts_equal = ts_layer_spread_equal(n_dev) if n_dev else []
     if args.ts:
         ts_eval = [int(x) for x in args.ts.split(",")]
+    elif args.ts_mode == "equal" and ts_equal:
+        ts_eval = ts_equal
     elif ts_live:
         ts_eval = ts_live
     else:
@@ -453,9 +494,13 @@ def main() -> int:
     print("=== recommended deploy flags ===")
     print(f"  BENCH_RPC_ENDPOINT='{rpc}'")
     print(f"  BENCH_TS={','.join(str(t) for t in ts_eval)}")
+    if ts_equal:
+        print(f"  # L4 equal spread ts: {','.join(str(t) for t in ts_equal)}")
     if ts_live and ts_eval != preset.ts_default:
         print(f"  # live ratio ts: {','.join(str(t) for t in ts_live)}")
         print(f"  # preset default: {','.join(str(t) for t in preset.ts_default)}")
+    if args.ts_mode == "equal":
+        print(f"  # ts-mode: equal (L4 layer spread)")
     ngl_rows = VRAM.ngl_candidates(layers)
     ngl_rec = ngl_rows[1][0] if len(ngl_rows) > 1 else ngl_rows[0][0]
     print(f"  BENCH_NGL={ngl_rec}")

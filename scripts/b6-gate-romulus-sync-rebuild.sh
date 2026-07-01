@@ -141,6 +141,14 @@ rsync_sources() {
         ggml/src/ggml-backend.cpp
         ggml/src/ggml-rpc/ggml-rpc.cpp
         scripts/b6-gate-bisect-run.sh
+        scripts/b6-gate-b14-wavefront-spike.sh
+        scripts/b6-gate-b14-n384-compare.sh
+        scripts/b6-gate-b15-l4-layer-spread-spike.sh
+        scripts/b6-gate-5gpu-production-env.sh
+        scripts/b6-gate-phase0-assembly-bounds.py
+        scripts/b6-gate-phase0-assembly-bounds.sh
+        scripts/b6-gate-overlap-serial-audit.py
+        rpc-patch/scripts/pathb-rpc-vram-preflight.py
         scripts/b6-gate-profiler-romulus.sh
         scripts/b6-gate-romulus-sync-rebuild.sh
         scripts/b6-gate-romulus-b12-bisect-bg.sh

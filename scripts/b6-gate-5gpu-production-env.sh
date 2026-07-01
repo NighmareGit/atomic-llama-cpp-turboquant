@@ -6,8 +6,10 @@
 #   bash scripts/b6-gate-run-remote.sh b6-5gpu-g-prod
 #
 # env overrides:
-#   B6_5GPU_DUAL_SOCKET=0   disable B+11 dual-socket (default 1 on prod label)
-#   B6_5GPU_HASH_DEFER=1    enable GGML_RPC_HASH_DEFER (default 0)
+#   B6_5GPU_DUAL_SOCKET=0        disable B+11 dual-socket (default 1 on prod label)
+#   B6_5GPU_HASH_DEFER=1         enable GGML_RPC_HASH_DEFER (default 0)
+#   B6_5GPU_WAVEFRONT=1          enable B+14 wavefront (default 0 until L4/L1 land)
+#   B6_5GPU_PIPELINE_DEPTH=N     GGML_SCHED_PIPELINE_DEPTH (default 4)
 
 b6_5gpu_base_env() {
     export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051,127.0.0.1:50051,192.168.8.23:50054,192.168.8.23:50055}"
@@ -27,6 +29,12 @@ b6_5gpu_production_env() {
     if [[ "${B6_5GPU_HASH_DEFER:-0}" == "1" ]]; then
         export GGML_RPC_HASH_DEFER=1
     fi
+    if [[ "${B6_5GPU_WAVEFRONT:-0}" == "1" ]]; then
+        export GGML_SCHED_WAVEFRONT_DISPATCH=1
+        export GGML_SCHED_PIPELINE_DEPTH="${B6_5GPU_PIPELINE_DEPTH:-4}"
+    else
+        export GGML_SCHED_WAVEFRONT_DISPATCH=0
+    fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
@@ -36,4 +44,6 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "GGML_PIPELINE_PLUS=${GGML_PIPELINE_PLUS}"
     echo "GGML_RPC_DUAL_SOCKET=${GGML_RPC_DUAL_SOCKET:-0}"
     echo "GGML_RPC_HASH_DEFER=${GGML_RPC_HASH_DEFER:-0}"
+    echo "GGML_SCHED_WAVEFRONT_DISPATCH=${GGML_SCHED_WAVEFRONT_DISPATCH:-0}"
+    echo "GGML_SCHED_PIPELINE_DEPTH=${GGML_SCHED_PIPELINE_DEPTH:-4}"
 fi

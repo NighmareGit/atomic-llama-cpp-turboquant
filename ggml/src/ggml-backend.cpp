@@ -92,6 +92,54 @@ static bool ggml_sched_moe_async_copy_enabled() {
     return v != 0 && ggml_sched_pipeline_plus_enabled();
 }
 
+// B+14: wavefront assembly-line dispatch (W1 intra-token + W2 cross-decode).
+static bool ggml_sched_wavefront_master_enabled() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_SCHED_WAVEFRONT_DISPATCH");
+        v = e ? atoi(e) : 0;
+    }
+    return v != 0 && ggml_sched_pipeline_plus_enabled();
+}
+
+static bool ggml_sched_wavefront_intra_enabled() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_SCHED_WAVEFRONT_INTRA");
+        if (e) {
+            v = atoi(e);
+        } else {
+            v = ggml_sched_wavefront_master_enabled() ? 1 : 0;
+        }
+    }
+    return v != 0 && ggml_sched_pipeline_plus_enabled();
+}
+
+static bool ggml_sched_wavefront_cross_enabled() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_SCHED_WAVEFRONT_CROSS");
+        if (e) {
+            v = atoi(e);
+        } else {
+            v = ggml_sched_wavefront_master_enabled() ? 1 : 0;
+        }
+    }
+    return v != 0 && ggml_sched_pipeline_plus_enabled();
+}
+
+static int ggml_sched_pipeline_depth_cfg() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_SCHED_PIPELINE_DEPTH");
+        v = e ? atoi(e) : 4;
+        if (v < 1) {
+            v = 1;
+        }
+    }
+    return v;
+}
+
 static bool ggml_backend_is_rpc_backend(ggml_backend_t backend) {
     if (!backend || !backend->iface.get_name) {
         return false;
@@ -1054,12 +1102,19 @@ struct ggml_backend_sched {
     uint32_t barrier_copy_src_mask;
     // B+8b: backends that recorded events per copy slot this pipeline cycle
     uint32_t barrier_slot_pending[GGML_SCHED_MAX_COPIES];
+    // B+14 W2: cross-decode wavefront depth guard
+    int wavefront_inflight;
+    int wavefront_oldest_copy;
 };
 
 #define hash_id(tensor) ggml_hash_find_or_insert(&sched->hash_set, tensor)
 #define tensor_backend_id(tensor) sched->hv_tensor_backend_ids[hash_id(tensor)]
 #define tensor_id_copy(id, backend_id, copy_id) sched->hv_tensor_copies[(id) * sched->n_backends * sched->n_copies + (backend_id) * sched->n_copies + (copy_id)]
 #define tensor_copy(tensor, backend_id, copy_id) tensor_id_copy(hash_id(tensor), backend_id, copy_id)
+
+static int ggml_sched_pipeline_depth_limit(ggml_backend_sched_t sched) {
+    return std::min(ggml_sched_pipeline_depth_cfg(), sched->n_copies);
+}
 
 // returns the priority of the backend, lower id is higher priority
 static int ggml_backend_sched_backend_id(ggml_backend_sched_t sched, ggml_backend_t backend) {
@@ -2243,9 +2298,9 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
             }
         }
         if (need_copy_slot_wait) {
-            // B+13d: RPC gather + defer uses producer event_wait, not full gather copy-slot wait.
+            // B+13d/B+14 W1: RPC gather uses producer event_wait, not full copy-slot wait.
             const bool rpc_gather_defer = !ggml_backend_is_rpc(split_backend) &&
-                ggml_sched_rpc_get_tensor_defer() &&
+                (ggml_sched_wavefront_intra_enabled() || ggml_sched_rpc_get_tensor_defer()) &&
                 ggml_backend_sched_split_has_rpc_gather_inputs(sched, split, split_backend_id);
             if (rpc_gather_defer) {
                 ggml_backend_sched_wait_gather_producer_slots(
@@ -2548,7 +2603,11 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
             sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "input_wait_copy", us);
         }
 
-        if (!ggml_backend_is_rpc(split_backend)) {
+        // B+14 W1: with wavefront intra + GET defer, skip blocking gather flush (prefetch + producer wait).
+        const bool wf_skip_gather_flush = ggml_sched_wavefront_intra_enabled() &&
+            ggml_sched_rpc_get_tensor_defer() &&
+            !ggml_backend_is_rpc(split_backend);
+        if (!ggml_backend_is_rpc(split_backend) && !wf_skip_gather_flush) {
             const ggml_tensor * rpc_flush_dsts[GGML_SCHED_MAX_SPLIT_INPUTS];
             int n_rpc_flush_dsts = 0;
             for (int input_id = 0; input_id < split->n_inputs; input_id++) {
@@ -2572,6 +2631,8 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 sched_trace_emit(split_id, split_backend_id, sched->cur_copy,
                     ggml_sched_rpc_get_tensor_defer() ? "rpc_defer_flush" : "rpc_flush_downloads", flush_us);
             }
+        } else if (wf_skip_gather_flush && sched_trace_lvl()) {
+            sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "wf_gather_flush_skip", 0);
         }
 
         ggml_backend_sched_flush_rpc_relays_for_split(
@@ -2776,6 +2837,8 @@ void ggml_backend_sched_reset(ggml_backend_sched_t sched) {
     }
     sched->is_alloc = false;
     memset(sched->barrier_slot_pending, 0, sizeof(sched->barrier_slot_pending));
+    sched->wavefront_inflight = 0;
+    sched->wavefront_oldest_copy = 0;
 }
 
 void ggml_backend_sched_reserve_size(ggml_backend_sched_t sched, struct ggml_cgraph * measure_graph, size_t * sizes) {
@@ -2874,6 +2937,31 @@ void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
         return;
     }
 
+    const bool wf_cross = ggml_sched_wavefront_cross_enabled();
+    const int depth_limit = ggml_sched_pipeline_depth_limit(sched);
+
+    // B+14 W2: depth guard - release oldest copy slot before reusing when at capacity.
+    if (wf_cross && sched->wavefront_inflight >= depth_limit) {
+        const int oldest = sched->wavefront_oldest_copy;
+        for (int i = 0; i < sched->n_backends; i++) {
+            if (sched->events[i][oldest] != NULL) {
+                ggml_backend_event_synchronize(sched->events[i][oldest]);
+            }
+        }
+        if (ggml_sched_rpc_event_defer_barrier()) {
+            for (int i = 0; i < sched->n_backends; i++) {
+                if ((sched->barrier_copy_src_mask & (1u << i)) &&
+                    ggml_backend_is_rpc_backend(sched->backends[i])) {
+                    ggml_backend_synchronize(sched->backends[i]);
+                }
+            }
+        }
+        sched->barrier_slot_pending[oldest] = 0;
+        sched->wavefront_oldest_copy = (oldest + 1) % sched->n_copies;
+        sched->wavefront_inflight--;
+        pipeline_trace_emit("wavefront_depth_release", oldest, sched->cur_copy, sched->n_copies, 0);
+    }
+
     const int new_copy = sched->next_copy;
     const uint32_t pending_mask = sched->barrier_slot_pending[new_copy];
     uint32_t wait_mask = (1u << sched->n_backends) - 1;
@@ -2884,19 +2972,41 @@ void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
         }
     }
     for (int i = 0; i < sched->n_backends; i++) {
-        if ((wait_mask & (1u << i)) && sched->events[i][new_copy] != NULL) {
-            ggml_backend_event_synchronize(sched->events[i][new_copy]);
+        if (!(wait_mask & (1u << i)) || sched->events[i][new_copy] == NULL) {
+            continue;
         }
+        // B+14 W2: non-blocking event_wait on GPU backends when cross wavefront is on.
+        if (wf_cross && !ggml_backend_is_rpc_backend(sched->backends[i])) {
+            ggml_backend_t b = sched->backends[i];
+            if (b->iface.event_wait != NULL) {
+                ggml_backend_event_wait(b, sched->events[i][new_copy]);
+                continue;
+            }
+        }
+        ggml_backend_event_synchronize(sched->events[i][new_copy]);
     }
     sched->barrier_slot_pending[new_copy] = 0;
 
     // B+9: batch-defer RPC EVENT recv until barrier (drain via backend synchronize).
     if (ggml_sched_rpc_event_defer_barrier()) {
-        for (int i = 0; i < sched->n_backends; i++) {
-            if (ggml_backend_is_rpc_backend(sched->backends[i])) {
-                ggml_backend_synchronize(sched->backends[i]);
+        if (wf_cross) {
+            // B+14 W2: drain only RPC backends in wait_mask, not the full cluster.
+            for (int i = 0; i < sched->n_backends; i++) {
+                if ((wait_mask & (1u << i)) && ggml_backend_is_rpc_backend(sched->backends[i])) {
+                    ggml_backend_synchronize(sched->backends[i]);
+                }
+            }
+        } else {
+            for (int i = 0; i < sched->n_backends; i++) {
+                if (ggml_backend_is_rpc_backend(sched->backends[i])) {
+                    ggml_backend_synchronize(sched->backends[i]);
+                }
             }
         }
+    }
+
+    if (wf_cross) {
+        sched->wavefront_inflight++;
     }
 
     const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -2908,8 +3018,10 @@ void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
             out = stderr;
         }
         fprintf(out,
-            "{\"event\":\"pipeline_barrier_mask\",\"copy_to\":%d,\"wait_mask\":%u,\"src_mask\":%u,\"pending_mask\":%u}\n",
-            new_copy, wait_mask, sched->barrier_copy_src_mask, pending_mask);
+            "{\"event\":\"pipeline_barrier_mask\",\"copy_to\":%d,\"wait_mask\":%u,\"src_mask\":%u,\"pending_mask\":%u,"
+            "\"wavefront_inflight\":%d,\"wavefront_depth\":%d,\"wf_cross\":%d}\n",
+            new_copy, wait_mask, sched->barrier_copy_src_mask, pending_mask,
+            sched->wavefront_inflight, depth_limit, wf_cross ? 1 : 0);
         fflush(out);
     }
 
