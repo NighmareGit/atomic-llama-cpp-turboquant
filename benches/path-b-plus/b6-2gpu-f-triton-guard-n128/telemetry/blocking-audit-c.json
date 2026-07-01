@@ -1,0 +1,34 @@
+{
+  "label": "b6-2gpu-f-triton-guard-n128",
+  "gen_window": {
+    "lo_us": 46005372811,
+    "hi_us": 46007223582,
+    "decode_ids": 128
+  },
+  "gen_tokens": 128,
+  "overlap_pct": 0.9,
+  "stall_ratio": 0.6357,
+  "sched_gen_ms": {
+    "input_wait_copy": 1154.321999999999,
+    "graph_compute_async": 647.7419999999973,
+    "event_record": 1.3699999999999986,
+    "split_total": 1818.0410000000013
+  },
+  "rpc_gen_blocking_ms_by_cmd": {
+    "GET_TENSOR": 70.7,
+    "13": 1.7,
+    "EVENT_RECORD": 788.12
+  },
+  "copy_issue": {
+    "count": 0,
+    "defer_count": 0,
+    "peer_copy_count": 0
+  },
+  "local_sync_gap_ms": 1154.32,
+  "verdict_flags": [
+    "NO_COPY_ISSUE_TRACE",
+    "LOCAL_SYNC_FALLBACK_LIKELY",
+    "EVENT_RECORD_DOMINATES_DRAIN",
+    "GET_TENSOR_GT_COPY"
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "label": "b6-2gpu-f-triton-n384-romulus-native",
+  "gen_window": {
+    "lo_us": 8731373522,
+    "hi_us": 8733779476,
+    "decode_ids": 384
+  },
+  "gen_tokens": 385,
+  "overlap_pct": 0.2,
+  "stall_ratio": 0.8575,
+  "sched_gen_ms": {
+    "input_wait_copy": 1976.4029999999946,
+    "graph_compute_async": 322.97599999999613,
+    "event_record": 0.22900000000000018,
+    "split_total": 2305.2340000000104
+  },
+  "rpc_gen_blocking_ms_by_cmd": {
+    "GET_TENSOR": 138.94,
+    "13": 1.45,
+    "EVENT_RECORD": 1752.2
+  },
+  "copy_issue": {
+    "count": 0,
+    "defer_count": 0,
+    "peer_copy_count": 0
+  },
+  "local_sync_gap_ms": 1976.4,
+  "verdict_flags": [
+    "NO_COPY_ISSUE_TRACE",
+    "LOCAL_SYNC_FALLBACK_LIKELY",
+    "EVENT_RECORD_DOMINATES_DRAIN",
+    "GET_TENSOR_GT_COPY",
+    "WAIT_DOMINATES_COMPUTE"
+  ]
+}

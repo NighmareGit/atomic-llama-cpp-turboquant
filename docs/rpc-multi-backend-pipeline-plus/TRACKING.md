@@ -101,7 +101,7 @@ Romulus-native canonical (`78e8f3c45` ladder):
 
 1. ~~**PR 8** validate-rpc~~ (**done 2026-07-01** — matrix all PASS; RPC handshake fix; `b6-gate-validate-rpc-matrix.sh`)
 2. **Production guard** — `trace-f-2gpu-plus` @ 48.9 t/s; RX6600 excluded for 35B+ A3B MoE
-3. **B+11–B+13** — parked unless explicit new scope (proto/cross-cutting; not Path C)
+3. **B+11–B+13** — active (grill 2026-07-01: aim M3; implementation bug not Path C). **Staged analysis D:** 1.2C done → 1.2 A+B next
 4. **Comparison matrix** — `BENCHMARKS/2026-07-comparison-matrix.md` when 1.1 data is folded in
 
 ## Open Items / Blockers
