@@ -275,7 +275,7 @@ static int rpc_event_defer_min_servers() {
     static int v = -1;
     if (v < 0) {
         const char * e = getenv("GGML_RPC_EVENT_DEFER_MIN_SERVERS");
-        v = e ? atoi(e) : 2;
+        v = e ? atoi(e) : 1;
         if (v < 1) {
             v = 1;
         }
@@ -1028,14 +1028,16 @@ static void ggml_backend_rpc_buffer_set_tensor(ggml_backend_buffer_t buffer, ggm
 }
 
 static void ggml_backend_rpc_buffer_get_tensor_async(ggml_backend_buffer_t buffer, const ggml_tensor * tensor,
-                                                     void * data, size_t offset, size_t size) {
+                                                     void * data, size_t offset, size_t size, bool batch_send) {
     ggml_backend_rpc_buffer_context * ctx = (ggml_backend_rpc_buffer_context *)buffer->context;
     auto sock = ctx->sock;
-    if (!rpc_event_defer_barrier()) {
+    if (!batch_send && !rpc_event_defer_barrier()) {
         drain_pending_event_response(sock);
     }
-    flush_pending_get_tensor_for_socket(sock);
-    flush_set_tensor_batch();
+    if (!batch_send) {
+        flush_pending_get_tensor_for_socket(sock);
+        flush_set_tensor_batch();
+    }
     rpc_msg_get_tensor_req request;
     request.tensor = serialize_tensor(tensor);
     request.offset = offset;
@@ -1056,7 +1058,7 @@ static void ggml_backend_rpc_get_tensor_async(ggml_backend_t backend, const ggml
         ggml_backend_tensor_get(tensor, data, offset, size);
         return;
     }
-    ggml_backend_rpc_buffer_get_tensor_async(buffer, tensor, data, offset, size);
+    ggml_backend_rpc_buffer_get_tensor_async(buffer, tensor, data, offset, size, false);
 }
 
 static void ggml_backend_rpc_buffer_get_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * tensor, void * data, size_t offset, size_t size) {
@@ -1154,15 +1156,23 @@ static bool rpc_issue_download_tensor(ggml_backend_t backend_dst, const ggml_ten
     if (!defer_response) {
         drain_pending_copy_response(sock);
     }
-    if (!rpc_event_defer_barrier()) {
+    if (!defer_response && !rpc_event_defer_barrier()) {
         drain_pending_event_response(sock);
     }
-    flush_pending_get_tensor_for_socket(sock);
-    flush_set_tensor_batch();
+    if (!defer_response) {
+        flush_pending_get_tensor_for_socket(sock);
+        flush_set_tensor_batch();
+    }
 
     const size_t size = ggml_nbytes(src);
     if (size == 0) {
         return true;
+    }
+
+    for (const auto & pending : tls_pending_downloads) {
+        if (pending.dst == dst) {
+            return true;
+        }
     }
 
     rpc_pending_download pd;
@@ -1171,7 +1181,7 @@ static bool rpc_issue_download_tensor(ggml_backend_t backend_dst, const ggml_ten
     pd.dst = dst;
     pd.dst_backend = backend_dst;
 
-    ggml_backend_rpc_buffer_get_tensor_async(src->buffer, src, pd.staging.data(), 0, size);
+    ggml_backend_rpc_buffer_get_tensor_async(src->buffer, src, pd.staging.data(), 0, size, defer_response);
 
     const char * src_ep = rpc_buft_endpoint(src->buffer);
     rpc_trace_emit_copy_issue(RPC_CMD_GET_TENSOR, src_ep ? src_ep : "", "", false, defer_response);
@@ -1184,12 +1194,50 @@ bool ggml_backend_rpc_try_download_tensor(ggml_backend_t dst_backend, const ggml
     return rpc_issue_download_tensor(dst_backend, src, dst, true);
 }
 
+bool ggml_backend_rpc_download_pending_for_dst(const ggml_tensor * dst) {
+    if (dst == nullptr) {
+        return false;
+    }
+    for (const auto & pending : tls_pending_downloads) {
+        if (pending.dst == dst) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool ggml_backend_rpc_try_upload_tensor(ggml_backend_t src_backend, const ggml_tensor * src, ggml_tensor * dst) {
     return rpc_issue_upload_tensor(src_backend, src, dst, true);
 }
 
-void ggml_backend_rpc_flush_pending_downloads(void) {
+static bool rpc_pending_download_matches_dst(const rpc_pending_download & pd,
+                                             const ggml_tensor * const * dst, size_t n_dst) {
+    if (n_dst == 0) {
+        return true;
+    }
+    for (size_t i = 0; i < n_dst; i++) {
+        if (pd.dst == dst[i]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void ggml_backend_rpc_flush_pending_downloads_for_dst(const ggml_tensor * const * dst, size_t n_dst) {
     if (tls_pending_downloads.empty()) {
+        return;
+    }
+
+    bool need_flush = n_dst == 0;
+    if (!need_flush) {
+        for (const auto & pd : tls_pending_downloads) {
+            if (rpc_pending_download_matches_dst(pd, dst, n_dst)) {
+                need_flush = true;
+                break;
+            }
+        }
+    }
+    if (!need_flush) {
         return;
     }
 
@@ -1200,12 +1248,25 @@ void ggml_backend_rpc_flush_pending_downloads(void) {
         }
     }
     for (const auto & sock : socks) {
+        if (tls_pending_event.pending && tls_pending_event.sock == sock) {
+            drain_pending_event_response(sock);
+        }
         flush_pending_get_tensor_for_socket(sock);
     }
-    for (const auto & pd : tls_pending_downloads) {
-        ggml_backend_tensor_set_async(pd.dst_backend, pd.dst, pd.staging.data(), 0, pd.staging.size());
+
+    auto it = tls_pending_downloads.begin();
+    while (it != tls_pending_downloads.end()) {
+        if (rpc_pending_download_matches_dst(*it, dst, n_dst)) {
+            ggml_backend_tensor_set_async(it->dst_backend, it->dst, it->staging.data(), 0, it->staging.size());
+            it = tls_pending_downloads.erase(it);
+        } else {
+            ++it;
+        }
     }
-    tls_pending_downloads.clear();
+}
+
+void ggml_backend_rpc_flush_pending_downloads(void) {
+    ggml_backend_rpc_flush_pending_downloads_for_dst(nullptr, 0);
 }
 
 static bool rpc_issue_copy_tensor(const ggml_tensor * src, ggml_tensor * dst, bool defer_response) {

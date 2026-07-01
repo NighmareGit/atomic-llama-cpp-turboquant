@@ -3474,36 +3474,62 @@ static void ggml_backend_cuda_get_tensor_2d_async(ggml_backend_t backend, const 
         data, stride_data, (const char *) tensor->data + offset, stride_tensor, size, n_copies, cudaMemcpyDeviceToHost, cuda_ctx->stream()));
 }
 
+// Pageable host -> device cudaMemcpyAsync can block the host until the stream drains.
+static void * ggml_cuda_pin_host_staging(size_t nbytes) {
+    static thread_local struct {
+        void * ptr = nullptr;
+        size_t cap = 0;
+    } pin;
+    if (nbytes > pin.cap) {
+        if (pin.ptr != nullptr) {
+            CUDA_CHECK(cudaFreeHost(pin.ptr));
+        }
+        CUDA_CHECK(cudaMallocHost(&pin.ptr, nbytes));
+        pin.cap = nbytes;
+    }
+    return pin.ptr;
+}
+
 static bool ggml_backend_cuda_cpy_tensor_async(ggml_backend_t backend_src, ggml_backend_t backend_dst, const ggml_tensor * src, ggml_tensor * dst) {
     ggml_backend_buffer_t buf_src = src->view_src ? src->view_src->buffer : src->buffer;
     ggml_backend_buffer_t buf_dst = dst->view_src ? dst->view_src->buffer : dst->buffer;
-
-    if (!ggml_backend_is_cuda(backend_src) || !ggml_backend_is_cuda(backend_dst)) {
-        return false;
-    }
 
     const size_t nbytes = ggml_nbytes(src);
     if (nbytes == 0) {
         return true;
     }
 
-    ggml_backend_cuda_context * cuda_ctx_src = (ggml_backend_cuda_context *) backend_src->context;
-    ggml_backend_cuda_context * cuda_ctx_dst = (ggml_backend_cuda_context *) backend_dst->context;
-
     const bool cuda_src = ggml_backend_buffer_is_cuda(buf_src);
     const bool cuda_dst = ggml_backend_buffer_is_cuda(buf_dst);
 
-    // B+13 gather: host <-> device on same sched GPU (CPU host buft -> HIP dst, etc.)
+    // B+13 gather: host <-> device before CUDA-backend guard (input_backend may be CPU).
     if (cuda_dst && ggml_backend_buffer_is_host(buf_src)) {
+        if (!ggml_backend_is_cuda(backend_dst)) {
+            return false;
+        }
+        ggml_backend_cuda_context * cuda_ctx_dst = (ggml_backend_cuda_context *) backend_dst->context;
         ggml_cuda_set_device(cuda_ctx_dst->device);
-        CUDA_CHECK(cudaMemcpyAsync(dst->data, src->data, nbytes, cudaMemcpyHostToDevice, cuda_ctx_dst->stream()));
+        void * pin = ggml_cuda_pin_host_staging(nbytes);
+        memcpy(pin, src->data, nbytes);
+        CUDA_CHECK(cudaMemcpyAsync(dst->data, pin, nbytes, cudaMemcpyHostToDevice, cuda_ctx_dst->stream()));
         return true;
     }
     if (cuda_src && ggml_backend_buffer_is_host(buf_dst)) {
+        if (!ggml_backend_is_cuda(backend_src)) {
+            return false;
+        }
+        ggml_backend_cuda_context * cuda_ctx_src = (ggml_backend_cuda_context *) backend_src->context;
         ggml_cuda_set_device(cuda_ctx_src->device);
         CUDA_CHECK(cudaMemcpyAsync(dst->data, src->data, nbytes, cudaMemcpyDeviceToHost, cuda_ctx_src->stream()));
         return true;
     }
+
+    if (!ggml_backend_is_cuda(backend_src) || !ggml_backend_is_cuda(backend_dst)) {
+        return false;
+    }
+
+    ggml_backend_cuda_context * cuda_ctx_src = (ggml_backend_cuda_context *) backend_src->context;
+    ggml_backend_cuda_context * cuda_ctx_dst = (ggml_backend_cuda_context *) backend_dst->context;
 
     if (!cuda_src || !cuda_dst) {
         return false;

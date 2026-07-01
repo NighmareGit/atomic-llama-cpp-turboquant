@@ -153,10 +153,7 @@ void ggml_hotpath_trace_get_sched_ctx(int32_t * split_id, int32_t * backend_id) 
     }
 }
 
-static void sched_trace_emit(int split_id, int backend_id, int copy_id, const char * phase, int64_t elapsed_us) {
-    if (!sched_trace_lvl()) {
-        return;
-    }
+static FILE * sched_trace_file() {
     static FILE * trace_f = nullptr;
     static bool trace_f_init = false;
     if (!trace_f_init) {
@@ -166,7 +163,14 @@ static void sched_trace_emit(int split_id, int backend_id, int copy_id, const ch
             trace_f = fopen(path, "a");
         }
     }
-    FILE * out = trace_f ? trace_f : stderr;
+    return trace_f;
+}
+
+static void sched_trace_emit(int split_id, int backend_id, int copy_id, const char * phase, int64_t elapsed_us) {
+    if (!sched_trace_lvl()) {
+        return;
+    }
+    FILE * out = sched_trace_file() ? sched_trace_file() : stderr;
     const auto ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
     if (pipeline_trace_lvl() && g_pipeline_decode_id >= 0) {
@@ -177,6 +181,63 @@ static void sched_trace_emit(int split_id, int backend_id, int copy_id, const ch
         fprintf(out,
             "{\"ts_us\":%lld,\"split\":%d,\"backend\":%d,\"copy\":%d,\"phase\":\"%s\",\"elapsed_us\":%lld}\n",
             (long long) ts_us, split_id, backend_id, copy_id, phase, (long long) elapsed_us);
+    }
+    fflush(out);
+}
+
+static thread_local const char * g_sched_copy_reject = "unknown";
+static thread_local uint32_t      g_rpc_producer_ready_mask = 0;
+
+static void sched_trace_emit_sync_detail(
+        int split_id, int backend_id, int copy_id, int64_t elapsed_us,
+        const ggml_tensor * input, const ggml_tensor * input_cpy,
+        ggml_backend_t input_backend, ggml_backend_t split_backend,
+        const char * phase) {
+    if (!sched_trace_lvl()) {
+        return;
+    }
+    FILE * out = sched_trace_file() ? sched_trace_file() : stderr;
+    const auto ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+
+    ggml_backend_buffer_t buf_src = input ? (input->view_src ? input->view_src->buffer : input->buffer) : nullptr;
+    ggml_backend_buffer_t buf_dst = input_cpy ? input_cpy->buffer : nullptr;
+    const char * src_buft = buf_src ? ggml_backend_buft_name(buf_src->buft) : "";
+    const char * dst_buft = buf_dst ? ggml_backend_buft_name(buf_dst->buft) : "";
+    const char * input_bname = input_backend ? ggml_backend_name(input_backend) : "NULL";
+    const char * split_bname = split_backend ? ggml_backend_name(split_backend) : "NULL";
+    const char * tname = input ? input->name : "";
+    const size_t nbytes = input ? ggml_nbytes(input) : 0;
+    const int host_src = buf_src ? (int) ggml_backend_buffer_is_host(buf_src) : -1;
+    const int host_dst = buf_dst ? (int) ggml_backend_buffer_is_host(buf_dst) : -1;
+    const int rpc_src  = buf_src ? (int) ggml_backend_buffer_is_rpc(buf_src) : -1;
+    const int rpc_dst  = buf_dst ? (int) ggml_backend_buffer_is_rpc(buf_dst) : -1;
+    const int view     = (input && input->view_src) ? 1 : 0;
+
+    if (pipeline_trace_lvl() && g_pipeline_decode_id >= 0) {
+        fprintf(out,
+            "{\"ts_us\":%lld,\"decode_id\":%d,\"split\":%d,\"backend\":%d,\"copy\":%d,"
+            "\"phase\":\"%s\",\"elapsed_us\":%lld,"
+            "\"tensor\":\"%s\",\"nbytes\":%zu,\"view\":%d,"
+            "\"src_buft\":\"%s\",\"dst_buft\":\"%s\","
+            "\"input_backend\":\"%s\",\"split_backend\":\"%s\","
+            "\"host_src\":%d,\"host_dst\":%d,\"rpc_src\":%d,\"rpc_dst\":%d,"
+            "\"reject\":\"%s\"}\n",
+            (long long) ts_us, g_pipeline_decode_id, split_id, backend_id, copy_id, phase, (long long) elapsed_us,
+            tname, nbytes, view, src_buft, dst_buft, input_bname, split_bname,
+            host_src, host_dst, rpc_src, rpc_dst, g_sched_copy_reject);
+    } else {
+        fprintf(out,
+            "{\"ts_us\":%lld,\"split\":%d,\"backend\":%d,\"copy\":%d,"
+            "\"phase\":\"%s\",\"elapsed_us\":%lld,"
+            "\"tensor\":\"%s\",\"nbytes\":%zu,\"view\":%d,"
+            "\"src_buft\":\"%s\",\"dst_buft\":\"%s\","
+            "\"input_backend\":\"%s\",\"split_backend\":\"%s\","
+            "\"host_src\":%d,\"host_dst\":%d,\"rpc_src\":%d,\"rpc_dst\":%d,"
+            "\"reject\":\"%s\"}\n",
+            (long long) ts_us, split_id, backend_id, copy_id, phase, (long long) elapsed_us,
+            tname, nbytes, view, src_buft, dst_buft, input_bname, split_bname,
+            host_src, host_dst, rpc_src, rpc_dst, g_sched_copy_reject);
     }
     fflush(out);
 }
@@ -1742,84 +1803,186 @@ static bool ggml_backend_share_physical_device(ggml_backend_t a, ggml_backend_t 
     return false;
 }
 
-static ggml_backend_t ggml_backend_sched_backend_from_buft(ggml_backend_sched_t sched, ggml_backend_buffer_type_t buft) {
-    for (int i = 0; i < sched->n_backends; i++) {
-        if (sched->bufts[i] == buft) {
-            return sched->backends[i];
+static bool ggml_backend_sched_try_cpy_tensor_async(
+        ggml_backend_t src_backend, ggml_backend_t dst_backend,
+        const ggml_tensor * src, ggml_tensor * dst) {
+    if (src_backend != nullptr && src_backend->iface.cpy_tensor_async != nullptr) {
+        if (src_backend->iface.cpy_tensor_async(src_backend, dst_backend, src, dst)) {
+            return true;
         }
     }
-    for (int i = 0; i < sched->n_backends; i++) {
-        if (ggml_backend_supports_buft(sched->backends[i], buft)) {
-            return sched->backends[i];
+    if (dst_backend != nullptr && dst_backend->iface.cpy_tensor_async != nullptr) {
+        if (dst_backend->iface.cpy_tensor_async(src_backend, dst_backend, src, dst)) {
+            return true;
         }
     }
-    return nullptr;
+    return false;
 }
 
-// B+13 gather: dst/src cpy_tensor_async, then host<->device async, then same-device retry.
-// Host paths cover CPU sched backends; CUDA/HIP extension covers device<->device same GPU.
+// Pipeline gather: multiple sched backends can share one buft on the same GPU.
+static bool ggml_backend_sched_try_same_device_cpy(
+        ggml_backend_sched_t sched, ggml_backend_t dst_backend,
+        const ggml_tensor * src, ggml_tensor * dst) {
+    for (int i = 0; i < sched->n_backends; i++) {
+        ggml_backend_t b = sched->backends[i];
+        if (!ggml_backend_share_physical_device(b, dst_backend)) {
+            continue;
+        }
+        if (ggml_backend_sched_try_cpy_tensor_async(b, dst_backend, src, dst)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void sched_trace_emit_hotpath(ggml_backend_sched_t sched, const char * phase, int64_t elapsed_us) {
+    int32_t split_id = -1;
+    int32_t backend_id = -1;
+    ggml_hotpath_trace_get_sched_ctx(&split_id, &backend_id);
+    if (split_id < 0 || backend_id < 0) {
+        return;
+    }
+    sched_trace_emit(split_id, backend_id, sched->cur_copy, phase, elapsed_us);
+}
+
+// B+14: stream wait before reusing split input buffers (non-blocking host on GPU backends).
+static void ggml_backend_sched_wait_copy_slot(
+        ggml_backend_sched_t sched, int split_id, int split_backend_id, ggml_backend_t split_backend) {
+    const auto ev_t0 = std::chrono::steady_clock::now();
+    if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
+        if (split_backend->iface.event_wait != NULL) {
+            ggml_backend_event_wait(split_backend, sched->events[split_backend_id][sched->cur_copy]);
+        } else {
+            ggml_backend_event_synchronize(sched->events[split_backend_id][sched->cur_copy]);
+        }
+    } else {
+        ggml_backend_synchronize(split_backend);
+    }
+    const auto ev_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - ev_t0).count();
+    if (sched_trace_lvl() && ev_us > 0) {
+        sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "event_wait_slot", ev_us);
+    }
+}
+
+// B+14: wait for the backend that produced this input (RPC event drain / GPU stream / CPU sync).
+static void ggml_backend_sched_wait_producer(
+        ggml_backend_sched_t sched, int split_id, int split_backend_id, ggml_backend_t split_backend,
+        ggml_backend_t producer_backend, int producer_bid, const ggml_tensor * input_cpy) {
+    if (producer_bid < 0 || producer_bid == split_backend_id || producer_backend == nullptr) {
+        return;
+    }
+    if (ggml_backend_is_rpc(producer_backend)) {
+        if ((g_rpc_producer_ready_mask & (1u << producer_bid)) != 0) {
+            return;
+        }
+        if (input_cpy != nullptr && ggml_backend_rpc_download_pending_for_dst(input_cpy)) {
+            return;
+        }
+    }
+    ggml_backend_event_t ev = sched->events[producer_bid][sched->cur_copy];
+    const auto t0 = std::chrono::steady_clock::now();
+    if (ev != NULL) {
+        if (ggml_backend_is_rpc(producer_backend)) {
+            ggml_backend_event_synchronize(ev);
+        } else if (split_backend->iface.event_wait != NULL) {
+            ggml_backend_event_wait(split_backend, ev);
+        } else {
+            ggml_backend_event_synchronize(ev);
+        }
+    } else {
+        ggml_backend_synchronize(producer_backend);
+    }
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    if (sched_trace_lvl() && us > 0) {
+        sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "producer_event_wait", us);
+    }
+}
+
+// B+13 gather: RPC buffer routing first, then iface cpy, then host/device fallbacks.
 static bool ggml_backend_sched_try_async_tensor_copy(
         ggml_backend_sched_t sched, ggml_backend_t input_backend, ggml_backend_t split_backend,
         const ggml_tensor * input, ggml_tensor * input_cpy) {
-    if (split_backend->iface.cpy_tensor_async != nullptr) {
-        if (split_backend->iface.cpy_tensor_async(input_backend, split_backend, input, input_cpy)) {
-            return true;
-        }
-    }
-    if (input_backend->iface.cpy_tensor_async != nullptr) {
-        if (input_backend->iface.cpy_tensor_async(input_backend, split_backend, input, input_cpy)) {
-            return true;
-        }
-    }
+    g_sched_copy_reject = "unknown";
 
     ggml_backend_buffer_t buf_src = input->view_src ? input->view_src->buffer : input->buffer;
     ggml_backend_buffer_t buf_dst = input_cpy->buffer;
     if (buf_src == nullptr || buf_dst == nullptr) {
+        g_sched_copy_reject = "null_buffer";
         return false;
-    }
-
-    // B+13: sched tensor_backend_id can disagree with src/dst buffer (split-2 gather).
-    if (ggml_backend_buffer_is_rpc(buf_src) && !ggml_backend_buffer_is_rpc(buf_dst)) {
-        if (ggml_backend_rpc_try_download_tensor(split_backend, input, input_cpy)) {
-            return true;
-        }
-    }
-    if (!ggml_backend_buffer_is_rpc(buf_src) && ggml_backend_buffer_is_rpc(buf_dst)) {
-        ggml_backend_t upload_backend = ggml_backend_sched_backend_from_buft(sched, buf_src->buft);
-        if (upload_backend == nullptr) {
-            upload_backend = input_backend;
-        }
-        if (ggml_backend_rpc_try_upload_tensor(upload_backend, input, input_cpy)) {
-            return true;
-        }
     }
 
     const bool host_src = ggml_backend_buffer_is_host(buf_src);
     const bool host_dst = ggml_backend_buffer_is_host(buf_dst);
 
+    // B+13: sched tensor_backend_id can disagree with src/dst buffer (split-2 gather).
+    if (ggml_backend_buffer_is_rpc(buf_src) && !ggml_backend_buffer_is_rpc(buf_dst)) {
+        const auto rpc_t0 = std::chrono::steady_clock::now();
+        if (ggml_backend_rpc_try_download_tensor(split_backend, input, input_cpy)) {
+            const auto rpc_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - rpc_t0).count();
+            sched_trace_emit_hotpath(sched, "rpc_download_issue", rpc_us);
+            return true;
+        }
+        g_sched_copy_reject = "rpc_download_fail";
+    }
+    if (!ggml_backend_buffer_is_rpc(buf_src) && ggml_backend_buffer_is_rpc(buf_dst)) {
+        if (input_backend != nullptr && ggml_backend_rpc_try_upload_tensor(input_backend, input, input_cpy)) {
+            return true;
+        }
+        for (int i = 0; i < sched->n_backends; i++) {
+            ggml_backend_t b = sched->backends[i];
+            if (b == input_backend) {
+                continue;
+            }
+            if (input_backend != nullptr &&
+                !ggml_backend_share_physical_device(b, input_backend)) {
+                continue;
+            }
+            if (ggml_backend_rpc_try_upload_tensor(b, input, input_cpy)) {
+                return true;
+            }
+        }
+        g_sched_copy_reject = "rpc_upload_fail";
+    }
+
+    if (host_src && !host_dst && split_backend != nullptr && split_backend->iface.cpy_tensor_async != nullptr) {
+        const auto h2d_t0 = std::chrono::steady_clock::now();
+        if (split_backend->iface.cpy_tensor_async(split_backend, split_backend, input, input_cpy)) {
+            const auto h2d_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - h2d_t0).count();
+            sched_trace_emit_hotpath(sched, "host_h2d_issue", h2d_us);
+            return true;
+        }
+        g_sched_copy_reject = "host_h2d_split";
+    }
+
+    if (split_backend != nullptr && split_backend->iface.cpy_tensor_async != nullptr) {
+        if (split_backend->iface.cpy_tensor_async(input_backend, split_backend, input, input_cpy)) {
+            return true;
+        }
+        g_sched_copy_reject = "iface_cpy_split";
+    }
+    if (input_backend != nullptr && input_backend->iface.cpy_tensor_async != nullptr) {
+        if (input_backend->iface.cpy_tensor_async(input_backend, split_backend, input, input_cpy)) {
+            return true;
+        }
+        g_sched_copy_reject = "iface_cpy_input";
+    } else if (input_backend == nullptr) {
+        g_sched_copy_reject = "input_backend_null";
+    }
+
     if (!host_src && !host_dst && !ggml_backend_buffer_is_rpc(buf_src) && !ggml_backend_buffer_is_rpc(buf_dst)) {
-        ggml_backend_t src_backend = ggml_backend_sched_backend_from_buft(sched, buf_src->buft);
-        ggml_backend_t dst_backend = ggml_backend_sched_backend_from_buft(sched, buf_dst->buft);
-        if (src_backend == nullptr) {
-            src_backend = input_backend;
+        if (ggml_backend_sched_try_same_device_cpy(sched, split_backend, input, input_cpy)) {
+            return true;
         }
-        if (dst_backend == nullptr) {
-            dst_backend = split_backend;
-        }
-        if (src_backend->iface.cpy_tensor_async != nullptr) {
-            if (src_backend->iface.cpy_tensor_async(src_backend, dst_backend, input, input_cpy)) {
-                return true;
-            }
-        }
-        if (dst_backend->iface.cpy_tensor_async != nullptr) {
-            if (dst_backend->iface.cpy_tensor_async(src_backend, dst_backend, input, input_cpy)) {
-                return true;
-            }
-        }
+        g_sched_copy_reject = "device_cpy_fail";
     }
 
     if (host_src != host_dst) {
         if (ggml_backend_buffer_is_rpc(buf_src) || ggml_backend_buffer_is_rpc(buf_dst)) {
+            g_sched_copy_reject = "host_xfer_rpc";
             return false;
         }
         const size_t nbytes = ggml_nbytes(input);
@@ -1827,32 +1990,39 @@ static bool ggml_backend_sched_try_async_tensor_copy(
             return true;
         }
         if (host_src) {
+            const auto h2d_t0 = std::chrono::steady_clock::now();
             ggml_backend_tensor_set_async(split_backend, input_cpy, input->data, 0, nbytes);
+            const auto h2d_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - h2d_t0).count();
+            sched_trace_emit_hotpath(sched, "host_h2d_issue", h2d_us);
             return true;
         }
-        ggml_backend_tensor_get_async(input_backend, input, input_cpy->data, 0, nbytes);
+        ggml_backend_t get_backend = input_backend;
+        for (int i = 0; i < sched->n_backends; i++) {
+            ggml_backend_t b = sched->backends[i];
+            if (ggml_backend_share_physical_device(b, split_backend)) {
+                get_backend = b;
+                break;
+            }
+        }
+        if (get_backend == nullptr) {
+            g_sched_copy_reject = "host_get_backend_null";
+            return false;
+        }
+        ggml_backend_tensor_get_async(get_backend, input, input_cpy->data, 0, nbytes);
         return true;
     }
 
-    if (!host_src && ggml_backend_share_physical_device(input_backend, split_backend)) {
-        if (split_backend->iface.cpy_tensor_async != nullptr) {
-            if (split_backend->iface.cpy_tensor_async(input_backend, split_backend, input, input_cpy)) {
-                return true;
-            }
-        }
-        if (input_backend->iface.cpy_tensor_async != nullptr) {
-            if (input_backend->iface.cpy_tensor_async(input_backend, split_backend, input, input_cpy)) {
-                return true;
-            }
-        }
+    if (host_src && host_dst) {
+        g_sched_copy_reject = "host_host_no_path";
     }
-
     return false;
 }
 
 static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t sched) {
     GGML_ASSERT(sched);
     struct ggml_backend_sched_split * splits = sched->splits;
+    g_rpc_producer_ready_mask = 0;
 
     ggml_tensor * prev_ids_tensor = nullptr;
     std::vector<int32_t> ids;
@@ -1867,25 +2037,75 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
 
         // copy the input tensors to the split backend
         const auto wait_t0 = std::chrono::steady_clock::now();
+        bool need_copy_slot_wait = false;
         for (int input_id = 0; input_id < split->n_inputs; input_id++) {
+            if (!(split->inputs[input_id]->flags & GGML_TENSOR_FLAG_INPUT)) {
+                need_copy_slot_wait = true;
+                break;
+            }
+        }
+        if (need_copy_slot_wait) {
+            ggml_backend_sched_wait_copy_slot(sched, split_id, split_backend_id, split_backend);
+        }
+
+        for (int input_id = 0; input_id < split->n_inputs; input_id++) {
+            const auto input_t0 = std::chrono::steady_clock::now();
+            ggml_backend_t input_backend = ggml_backend_sched_get_tensor_backend(sched, split->inputs[input_id]);
+            struct ggml_tensor * input = split->inputs[input_id];
+            if (!(input->flags & GGML_TENSOR_FLAG_INPUT)) {
+                continue;
+            }
+            struct ggml_tensor * input_cpy = tensor_copy(input, split_backend_id, sched->cur_copy);
+            // inputs from the user must be copied immediately to prevent the user overwriting the data before the copy is done
+            if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
+                ggml_backend_event_synchronize(sched->events[split_backend_id][sched->cur_copy]);
+            } else {
+                ggml_backend_synchronize(split_backend);
+            }
+            ggml_backend_tensor_copy(input, input_cpy);
+            {
+                const auto input_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - input_t0).count();
+                if (sched_trace_lvl() && input_us > 50) {
+                    sched_trace_emit_sync_detail(
+                        split_id, split_backend_id, sched->cur_copy, input_us,
+                        input, input_cpy, input_backend, split_backend, "input_copy_slow");
+                }
+            }
+        }
+
+        for (int input_pass = 0; input_pass < 2; input_pass++) {
+            const ggml_tensor * rpc_early_flush_dsts[GGML_SCHED_MAX_SPLIT_INPUTS];
+            int n_rpc_early_flush_dsts = 0;
+
+            for (int input_id = 0; input_id < split->n_inputs; input_id++) {
+            const auto input_t0 = std::chrono::steady_clock::now();
             ggml_backend_t input_backend = ggml_backend_sched_get_tensor_backend(sched, split->inputs[input_id]);
             struct ggml_tensor * input = split->inputs[input_id];
             struct ggml_tensor * input_cpy = tensor_copy(input, split_backend_id, sched->cur_copy);
 
             if (input->flags & GGML_TENSOR_FLAG_INPUT) {
-                // inputs from the user must be copied immediately to prevent the user overwriting the data before the copy is done
-                if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
-                    ggml_backend_event_synchronize(sched->events[split_backend_id][sched->cur_copy]);
-                } else {
-                    ggml_backend_synchronize(split_backend);
+                continue;
+            }
+            {
+                ggml_backend_buffer_t buf_src = input->view_src ? input->view_src->buffer : input->buffer;
+                const bool rpc_src = buf_src != nullptr && ggml_backend_buffer_is_rpc(buf_src) &&
+                    !ggml_backend_buffer_is_rpc(input_cpy->buffer);
+                if (input_pass == 0 && !rpc_src) {
+                    continue;
                 }
-                ggml_backend_tensor_copy(input, input_cpy);
-            } else {
-                // wait for the split backend to finish using the input before overwriting it
-                if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
-                    ggml_backend_event_wait(split_backend, sched->events[split_backend_id][sched->cur_copy]);
-                } else {
-                    ggml_backend_synchronize(split_backend);
+                if (input_pass == 1 && rpc_src) {
+                    continue;
+                }
+            }
+            {
+                    ggml_backend_buffer_t prod_buf = input->view_src ? input->view_src->buffer : input->buffer;
+                    if (prod_buf != nullptr && ggml_backend_buffer_is_rpc(prod_buf) &&
+                        !ggml_backend_buffer_is_rpc(input_cpy->buffer)) {
+                        const int producer_bid = ggml_backend_sched_backend_id(sched, input_backend);
+                        ggml_backend_sched_wait_producer(
+                            sched, split_id, split_backend_id, split_backend, input_backend, producer_bid, input_cpy);
+                    }
                 }
 
                 // when offloading MoE weights, we can reduce the amount of data copied by copying only the experts that are used
@@ -1995,9 +2215,15 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                         sched, input_backend, split_backend, input, input_cpy);
                     if (!copied_async) {
                         const auto sync_t0 = std::chrono::steady_clock::now();
-                        ggml_backend_synchronize(input_backend);
+                        if (input_backend != nullptr) {
+                            ggml_backend_synchronize(input_backend);
+                        }
                         if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
-                            ggml_backend_event_synchronize(sched->events[split_backend_id][sched->cur_copy]);
+                            if (split_backend->iface.event_wait != NULL) {
+                                ggml_backend_event_wait(split_backend, sched->events[split_backend_id][sched->cur_copy]);
+                            } else {
+                                ggml_backend_event_synchronize(sched->events[split_backend_id][sched->cur_copy]);
+                            }
                         } else {
                             ggml_backend_synchronize(split_backend);
                         }
@@ -2005,9 +2231,38 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                         const auto sync_us = std::chrono::duration_cast<std::chrono::microseconds>(
                             std::chrono::steady_clock::now() - sync_t0).count();
                         sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "sync_copy_fallback", sync_us);
+                        sched_trace_emit_sync_detail(
+                            split_id, split_backend_id, sched->cur_copy, sync_us,
+                            input, input_cpy, input_backend, split_backend, "sync_copy_detail");
                     } else {
                         sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "copy_async_ok", 0);
                     }
+                }
+            {
+                ggml_backend_buffer_t buf_src = input->view_src ? input->view_src->buffer : input->buffer;
+                if (input_pass == 0 && buf_src != nullptr && ggml_backend_buffer_is_rpc(buf_src) &&
+                    !ggml_backend_buffer_is_rpc(input_cpy->buffer)) {
+                    rpc_early_flush_dsts[n_rpc_early_flush_dsts++] = input_cpy;
+                }
+            }
+            {
+                const auto input_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - input_t0).count();
+                if (sched_trace_lvl() && input_us > 50) {
+                    sched_trace_emit_sync_detail(
+                        split_id, split_backend_id, sched->cur_copy, input_us,
+                        input, input_cpy, input_backend, split_backend, "input_copy_slow");
+                }
+            }
+        }
+
+            if (input_pass == 0 && !ggml_backend_is_rpc(split_backend) && n_rpc_early_flush_dsts > 0) {
+                const auto flush_t0 = std::chrono::steady_clock::now();
+                ggml_backend_rpc_flush_pending_downloads_for_dst(rpc_early_flush_dsts, (size_t) n_rpc_early_flush_dsts);
+                const auto flush_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - flush_t0).count();
+                if (flush_us > 0) {
+                    sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "rpc_early_flush", flush_us);
                 }
             }
         }
@@ -2018,7 +2273,28 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
         }
 
         if (!ggml_backend_is_rpc(split_backend)) {
-            ggml_backend_rpc_flush_pending_downloads();
+            const ggml_tensor * rpc_flush_dsts[GGML_SCHED_MAX_SPLIT_INPUTS];
+            int n_rpc_flush_dsts = 0;
+            for (int input_id = 0; input_id < split->n_inputs; input_id++) {
+                struct ggml_tensor * input = split->inputs[input_id];
+                if (input->flags & GGML_TENSOR_FLAG_INPUT) {
+                    continue;
+                }
+                struct ggml_tensor * input_cpy = tensor_copy(input, split_backend_id, sched->cur_copy);
+                ggml_backend_buffer_t buf_src = input->view_src ? input->view_src->buffer : input->buffer;
+                ggml_backend_buffer_t buf_dst = input_cpy->buffer;
+                if (buf_src != nullptr && buf_dst != nullptr &&
+                    ggml_backend_buffer_is_rpc(buf_src) && !ggml_backend_buffer_is_rpc(buf_dst)) {
+                    rpc_flush_dsts[n_rpc_flush_dsts++] = input_cpy;
+                }
+            }
+            const auto flush_t0 = std::chrono::steady_clock::now();
+            ggml_backend_rpc_flush_pending_downloads_for_dst(rpc_flush_dsts, (size_t) n_rpc_flush_dsts);
+            const auto flush_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - flush_t0).count();
+            if (flush_us > 0) {
+                sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "rpc_flush_downloads", flush_us);
+            }
         }
 
         const auto compute_t0 = std::chrono::steady_clock::now();
@@ -2075,6 +2351,41 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 sched->barrier_slot_pending[sched->cur_copy] |= (1u << split_backend_id);
             }
         }
+        // B+14: after RPC split, drain producer event and prefetch next gather split RPC inputs.
+        if (split_id + 1 < sched->n_splits && ggml_backend_is_rpc(split_backend)) {
+            struct ggml_backend_sched_split * next_split = &splits[split_id + 1];
+            const int next_bid = next_split->backend_id;
+            ggml_backend_t next_backend = sched->backends[next_bid];
+            if (next_backend != nullptr && !ggml_backend_is_rpc(next_backend)) {
+                const auto pf_t0 = std::chrono::steady_clock::now();
+                if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
+                    ggml_backend_event_synchronize(sched->events[split_backend_id][sched->cur_copy]);
+                }
+                g_rpc_producer_ready_mask |= (1u << split_backend_id);
+                int n_prefetch = 0;
+                for (int i = 0; i < next_split->n_inputs; i++) {
+                    struct ggml_tensor * inp = next_split->inputs[i];
+                    if (inp->flags & GGML_TENSOR_FLAG_INPUT) {
+                        continue;
+                    }
+                    struct ggml_tensor * inp_cpy = tensor_copy(inp, next_bid, sched->cur_copy);
+                    ggml_backend_buffer_t buf_src = inp->view_src ? inp->view_src->buffer : inp->buffer;
+                    ggml_backend_buffer_t buf_dst = inp_cpy->buffer;
+                    if (buf_src != nullptr && buf_dst != nullptr &&
+                        ggml_backend_buffer_is_rpc(buf_src) && !ggml_backend_buffer_is_rpc(buf_dst)) {
+                        if (ggml_backend_rpc_try_download_tensor(next_backend, inp, inp_cpy)) {
+                            n_prefetch++;
+                        }
+                    }
+                }
+                const auto pf_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - pf_t0).count();
+                if (n_prefetch > 0) {
+                    sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "rpc_prefetch_issue", pf_us);
+                }
+            }
+        }
+
         {
             const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - record_t0).count();

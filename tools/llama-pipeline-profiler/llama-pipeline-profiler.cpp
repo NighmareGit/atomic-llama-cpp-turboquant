@@ -143,6 +143,10 @@ static void setup_trace_env(const std::string & trace_dir, bool enable) {
     const std::string sched    = trace_dir + "/sched-trace.jsonl";
     const std::string rpc      = trace_dir + "/rpc-trace.jsonl";
     const std::string pipeline = trace_dir + "/pipeline-trace.jsonl";
+    // Truncate so repeated benches do not accumulate sched/rpc rows (append mode in ggml).
+    for (const auto & p : { sched, rpc, pipeline }) {
+        std::ofstream(p).close();
+    }
 #ifdef _WIN32
     _putenv_s("GGML_SCHED_TRACE", "1");
     _putenv_s("GGML_RPC_TRACE", "1");
