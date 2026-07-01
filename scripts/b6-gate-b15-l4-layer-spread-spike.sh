@@ -31,29 +31,42 @@ ssh_romulus() {
     fi
 }
 
-plan_ts() {
+plan_deploy() {
     local mode="$1"
     local path="$2"
-    ssh_romulus "cd ${ROMULUS_REPO} && python3 rpc-patch/scripts/pathb-rpc-vram-preflight.py \\
-      --preset b6-5gpu-g --gguf '${path}' --ts-mode ${mode} --strict 2>/dev/null" \
-      | awk -F= '/^  BENCH_TS=/{print $2; exit}'
+    local out
+    out="$(ssh_romulus "cd ${ROMULUS_REPO} && python3 rpc-patch/scripts/pathb-rpc-vram-preflight.py \\
+      --preset b6-5gpu-g --gguf '${path}' --ts-mode ${mode} 2>/dev/null || true")"
+    local ts ngl
+    ts="$(printf '%s\n' "$out" | awk -F= '/^  BENCH_TS=/{print $2; exit}')"
+    ngl="$(printf '%s\n' "$out" | awk -F= '/^  BENCH_NGL=/{print $2; exit}')"
+    if [[ -z "$ts" ]]; then
+        return 1
+    fi
+    printf '%s %s\n' "$ts" "${ngl:-}"
 }
 
 run_case() {
     local model_id="$1"
     local ts_mode="$2"
     local path="${MODEL_PATH[$model_id]}"
-    local ts
-    ts="$(plan_ts "$ts_mode" "$path")"
+    local ts ngl plan
+    plan="$(plan_deploy "$ts_mode" "$path")" || true
+    ts="$(printf '%s\n' "$plan" | awk 'NR==1{print $1}')"
+    ngl="$(printf '%s\n' "$plan" | awk 'NR==1{print $2}')"
     if [[ -z "$ts" ]]; then
         echo "FAIL ${model_id}-${ts_mode}: no TS from preflight"
         return 1
+    fi
+    local ngl_env=""
+    if [[ -n "$ngl" ]]; then
+        ngl_env="BENCH_NGL=${ngl}"
     fi
     local out="${OUT_BASE}/${model_id}-${ts_mode}-n${GEN}"
     echo "=== L4 ${model_id} ts_mode=${ts_mode} TS=${ts} ==="
     set +e
     ssh_romulus "cd ${ROMULUS_REPO} && \\
-      BENCH_MODEL='${path}' BENCH_GEN_TOKENS=${GEN} BENCH_TS='${ts}' \\
+      BENCH_MODEL='${path}' BENCH_GEN_TOKENS=${GEN} BENCH_TS='${ts}' ${ngl_env} \\
       BENCH_CTK=q8_0 BENCH_CTV=turbo3 \\
       GGML_PIPELINE_PLUS=1 B6_5GPU_WAVEFRONT=0 \\
       GGML_RPC_HASH_DEFER=\${B6_L4_HASH_DEFER:-0} \\
