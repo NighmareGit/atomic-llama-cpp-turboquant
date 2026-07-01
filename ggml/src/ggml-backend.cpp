@@ -34,6 +34,8 @@ static int sched_trace_lvl() {
 }
 
 static thread_local int32_t g_pipeline_decode_id = -1;
+static thread_local int32_t g_hotpath_split_id  = -1;
+static thread_local int32_t g_hotpath_backend_id = -1;
 
 static int pipeline_trace_lvl() {
     static int v = -1;
@@ -135,6 +137,20 @@ void ggml_pipeline_trace_set_decode_id(int32_t decode_id) {
 
 int32_t ggml_pipeline_trace_get_decode_id(void) {
     return g_pipeline_decode_id;
+}
+
+void ggml_hotpath_trace_set_sched_ctx(int32_t split_id, int32_t backend_id) {
+    g_hotpath_split_id   = split_id;
+    g_hotpath_backend_id = backend_id;
+}
+
+void ggml_hotpath_trace_get_sched_ctx(int32_t * split_id, int32_t * backend_id) {
+    if (split_id) {
+        *split_id = g_hotpath_split_id;
+    }
+    if (backend_id) {
+        *backend_id = g_hotpath_backend_id;
+    }
 }
 
 static void sched_trace_emit(int split_id, int backend_id, int copy_id, const char * phase, int64_t elapsed_us) {
@@ -1718,6 +1734,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
         struct ggml_backend_sched_split * split = &splits[split_id];
         int split_backend_id = split->backend_id;
         ggml_backend_t split_backend = sched->backends[split_backend_id];
+        ggml_hotpath_trace_set_sched_ctx(split_id, split_backend_id);
 
         // copy the input tensors to the split backend
         const auto wait_t0 = std::chrono::steady_clock::now();
@@ -1854,6 +1871,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                         copied_async = input_backend->iface.cpy_tensor_async(input_backend, split_backend, input, input_cpy);
                     }
                     if (!copied_async) {
+                        const auto sync_t0 = std::chrono::steady_clock::now();
                         ggml_backend_synchronize(input_backend);
                         if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
                             ggml_backend_event_synchronize(sched->events[split_backend_id][sched->cur_copy]);
@@ -1861,6 +1879,11 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                             ggml_backend_synchronize(split_backend);
                         }
                         ggml_backend_tensor_copy(input, input_cpy);
+                        const auto sync_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::steady_clock::now() - sync_t0).count();
+                        sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "sync_copy_fallback", sync_us);
+                    } else {
+                        sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "copy_async_ok", 0);
                     }
                 }
             }
@@ -1933,6 +1956,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 std::chrono::steady_clock::now() - split_t0).count();
             sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "split_total", split_us);
         }
+        ggml_hotpath_trace_set_sched_ctx(-1, -1);
     }
 
     return GGML_STATUS_SUCCESS;

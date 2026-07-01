@@ -1,5 +1,6 @@
 #include "ggml-rpc.h"
 #include "ggml-impl.h"
+#include "ggml-backend.h"
 #include "ggml-backend-impl.h"
 #include "ggml-cpp.h"
 #include "transport.h"
@@ -53,6 +54,22 @@ static FILE * rpc_trace_file() {
     return trace_f;
 }
 
+static void rpc_trace_emit_hotpath_fields(FILE * out) {
+    const int32_t decode_id = ggml_pipeline_trace_get_decode_id();
+    int32_t split_id = -1;
+    int32_t backend_id = -1;
+    ggml_hotpath_trace_get_sched_ctx(&split_id, &backend_id);
+    if (decode_id >= 0) {
+        fprintf(out, ",\"decode_id\":%d", decode_id);
+    }
+    if (split_id >= 0) {
+        fprintf(out, ",\"split\":%d", split_id);
+    }
+    if (backend_id >= 0) {
+        fprintf(out, ",\"backend\":%d", backend_id);
+    }
+}
+
 static void rpc_trace_emit(const char * fn, const char * phase, int cmd, size_t bytes, bool blocking, int64_t elapsed_us) {
     if (!rpc_trace_lvl()) {
         return;
@@ -65,8 +82,10 @@ static void rpc_trace_emit(const char * fn, const char * phase, int cmd, size_t 
         out = stderr;
     }
     fprintf(out,
-        "{\"ts_us\":%lld,\"fn\":\"%s\",\"phase\":\"%s\",\"cmd\":%d,\"bytes\":%zu,\"blocking\":%s,\"elapsed_us\":%lld}\n",
+        "{\"ts_us\":%lld,\"fn\":\"%s\",\"phase\":\"%s\",\"cmd\":%d,\"bytes\":%zu,\"blocking\":%s,\"elapsed_us\":%lld",
         (long long) ts_us, fn, phase, cmd, bytes, blocking ? "true" : "false", (long long) elapsed_us);
+    rpc_trace_emit_hotpath_fields(out);
+    fprintf(out, "}\n");
     fflush(out);
 }
 
@@ -155,9 +174,11 @@ static void rpc_trace_emit_copy_issue(int cmd, const char * src_ep, const char *
     }
     fprintf(out,
         "{\"ts_us\":%lld,\"fn\":\"rpc_issue_copy_tensor\",\"phase\":\"copy_issue\",\"cmd\":%d,"
-        "\"src_ep\":\"%s\",\"dst_ep\":\"%s\",\"peer_copy\":%s,\"defer\":%s,\"elapsed_us\":0}\n",
+        "\"src_ep\":\"%s\",\"dst_ep\":\"%s\",\"peer_copy\":%s,\"defer\":%s,\"elapsed_us\":0",
         (long long) ts_us, cmd, src_ep ? src_ep : "", dst_ep ? dst_ep : "",
         peer_copy ? "true" : "false", defer ? "true" : "false");
+    rpc_trace_emit_hotpath_fields(out);
+    fprintf(out, "}\n");
     fflush(out);
 }
 

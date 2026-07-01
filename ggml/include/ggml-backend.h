@@ -350,6 +350,10 @@ extern "C" {
     GGML_API void                 ggml_pipeline_trace_set_decode_id(int32_t decode_id);
     GGML_API int32_t              ggml_pipeline_trace_get_decode_id(void);
 
+    // Hot-path trace context (Phase 1.2C-full): correlate RPC rows with sched split/backend.
+    GGML_API void                 ggml_hotpath_trace_set_sched_ctx(int32_t split_id, int32_t backend_id);
+    GGML_API void                 ggml_hotpath_trace_get_sched_ctx(int32_t * split_id, int32_t * backend_id);
+
     // Reset all assignments and allocators - must be called before changing the node backends or allocating a new graph.
     // This in effect deallocates all tensors that were previously allocated and leaves them with dangling pointers.
     // The correct way to use this API is to discard the deallocated tensors and create new ones.

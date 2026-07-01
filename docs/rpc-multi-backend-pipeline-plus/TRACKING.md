@@ -112,10 +112,12 @@ Ladder exhausted; see **Structural ceiling** section above. No further bisect wa
 
 **Remaining hygiene:** PR 8 validate-rpc; regression guard for 48.9 t/s production champion.
 
-### Secondary — Instrumentation (Phase 1.1)
+### Secondary — Instrumentation (Phase 1.1 + 1.2C-full)
 
 - ~~Per-split / per-RPC RTT in trace parsers~~ (**done 2026-07-01** — `pathb-rpc-trace-parse.sh`, `b6-gate-phase11-reparse.sh`)
 - ~~`BENCHMARKS/2026-07-comparison-matrix.md`~~ (**done 2026-07-01**)
+- **C-full hotpath** (grill 2026-07-01) — `sync_copy_fallback` / `copy_async_ok` + RPC `(decode_id,split,backend)` join; schema + deferred live tail in [FUTURE-EXPANSIONS.md](FUTURE-EXPANSIONS.md)
+- Phase 1.2 A+B parsers + instrumented re-bench on `b6-2gpu-f-triton-n384-romulus-native`
 
 ### Ops / hygiene
 
