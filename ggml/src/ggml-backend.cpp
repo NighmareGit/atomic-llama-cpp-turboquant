@@ -1894,6 +1894,10 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
             sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "input_wait_copy", us);
         }
 
+        if (!ggml_backend_is_rpc(split_backend)) {
+            ggml_backend_rpc_flush_pending_downloads();
+        }
+
         const auto compute_t0 = std::chrono::steady_clock::now();
         if (!sched->callback_eval) {
             enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &split->graph);

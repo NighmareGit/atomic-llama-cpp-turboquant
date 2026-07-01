@@ -239,6 +239,16 @@ struct rpc_pending_get_tensor {
 
 static thread_local std::vector<rpc_pending_get_tensor> tls_pending_get_tensor;
 
+// B+13: deferred GET_TENSOR -> local dst (completed at split graph_compute entry).
+struct rpc_pending_download {
+    socket_ptr sock;
+    std::vector<uint8_t> staging;
+    ggml_tensor * dst;
+    ggml_backend_t dst_backend;
+};
+
+static thread_local std::vector<rpc_pending_download> tls_pending_downloads;
+
 static uint64_t fnv_hash(const uint8_t * data, size_t len);
 
 static void drain_pending_event_response(const socket_ptr & sock);
@@ -1126,6 +1136,70 @@ static bool rpc_issue_upload_tensor(ggml_backend_t backend_src, const ggml_tenso
     return send_rpc_cmd(sock, RPC_CMD_SET_TENSOR, input.data(), input.size());
 }
 
+// B+13: RPC src -> local dst via deferred GET_TENSOR + async H2D at graph_compute entry.
+static bool rpc_issue_download_tensor(ggml_backend_t backend_dst, const ggml_tensor * src, ggml_tensor * dst, bool defer_response) {
+    if (src == nullptr || dst == nullptr || src->buffer == nullptr || dst->buffer == nullptr) {
+        return false;
+    }
+    if (!ggml_backend_buffer_is_rpc(src->buffer) || ggml_backend_buffer_is_rpc(dst->buffer)) {
+        return false;
+    }
+    if (!backend_dst) {
+        return false;
+    }
+
+    ggml_backend_rpc_buffer_context * src_ctx = (ggml_backend_rpc_buffer_context *) src->buffer->context;
+    auto sock = src_ctx->sock;
+
+    if (!defer_response) {
+        drain_pending_copy_response(sock);
+    }
+    if (!rpc_event_defer_barrier()) {
+        drain_pending_event_response(sock);
+    }
+    flush_pending_get_tensor_for_socket(sock);
+    flush_set_tensor_batch();
+
+    const size_t size = ggml_nbytes(src);
+    if (size == 0) {
+        return true;
+    }
+
+    rpc_pending_download pd;
+    pd.sock = sock;
+    pd.staging.resize(size);
+    pd.dst = dst;
+    pd.dst_backend = backend_dst;
+
+    ggml_backend_rpc_buffer_get_tensor_async(src->buffer, src, pd.staging.data(), 0, size);
+
+    const char * src_ep = rpc_buft_endpoint(src->buffer);
+    rpc_trace_emit_copy_issue(RPC_CMD_GET_TENSOR, src_ep ? src_ep : "", "", false, defer_response);
+
+    tls_pending_downloads.push_back(std::move(pd));
+    return true;
+}
+
+void ggml_backend_rpc_flush_pending_downloads(void) {
+    if (tls_pending_downloads.empty()) {
+        return;
+    }
+
+    std::vector<socket_ptr> socks;
+    for (const auto & pd : tls_pending_downloads) {
+        if (std::find(socks.begin(), socks.end(), pd.sock) == socks.end()) {
+            socks.push_back(pd.sock);
+        }
+    }
+    for (const auto & sock : socks) {
+        flush_pending_get_tensor_for_socket(sock);
+    }
+    for (const auto & pd : tls_pending_downloads) {
+        ggml_backend_tensor_set_async(pd.dst_backend, pd.dst, pd.staging.data(), 0, pd.staging.size());
+    }
+    tls_pending_downloads.clear();
+}
+
 static bool rpc_issue_copy_tensor(const ggml_tensor * src, ggml_tensor * dst, bool defer_response) {
     if (!ggml_backend_buffer_is_rpc(src->buffer) || !ggml_backend_buffer_is_rpc(dst->buffer)) {
         return false;
@@ -1202,6 +1276,10 @@ static bool ggml_backend_rpc_buffer_cpy_tensor(ggml_backend_buffer_t buffer, con
 
 static bool ggml_backend_rpc_cpy_tensor_async(ggml_backend_t backend_src, ggml_backend_t backend_dst,
                                             const ggml_tensor * src, ggml_tensor * dst) {
+    if (src && src->buffer && ggml_backend_buffer_is_rpc(src->buffer) &&
+        dst && dst->buffer && !ggml_backend_buffer_is_rpc(dst->buffer)) {
+        return rpc_issue_download_tensor(backend_dst, src, dst, true);
+    }
     if (!ggml_backend_is_rpc(backend_dst)) {
         return false;
     }
