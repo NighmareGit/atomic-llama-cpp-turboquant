@@ -18,7 +18,8 @@ if [[ -z "$LABEL" || "$LABEL" == "-h" || "$LABEL" == "--help" ]]; then
     echo "  b6-2gpu-f-triton   triton 3090 RPC (spike, same client)"
     echo "  b6-4gpu-g          4-GPU jupiter :50053 (DEPRECATED — use triton)"
     echo "  b6-4gpu-g-triton   4-GPU canonical gate (triton :50054 as RPC2)"
-    echo "  b6-5gpu-g          5-GPU Linux (remus+romulus+triton 3090/3070, no jupiter)"
+    echo "  b6-5gpu-g          5-GPU Linux profiler (baseline; dual-socket off)"
+    echo "  b6-5gpu-g-prod     5-GPU production preset (dual-socket ON, see b6-gate-5gpu-production-env.sh)"
     echo "  b6-2gpu-f-plus0    2-GPU remus, GGML_PIPELINE_PLUS=0"
     echo "  b6-2gpu-jupiter    2-GPU remus CUDA + JUPITER 5070 :50053"
     echo "  b6-2gpu-jupiter-plus0  same, GGML_PIPELINE_PLUS=0"
@@ -76,12 +77,14 @@ case "$LABEL" in
         export GGML_PIPELINE_PLUS="${GGML_PIPELINE_PLUS:-1}"
         export PROFILER_OUT_DIR="${PROFILER_OUT_DIR:-${ROOT}/benches/path-b-plus/${LABEL}}"
         ;;
-    b6-5gpu-g)
-        # triton: one rpc-server docker per GPU (:50054 3090, :50055 3070)
-        export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051,127.0.0.1:50051,192.168.8.23:50054,192.168.8.23:50055}"
-        # ts order: RPC0 remus 5060, RPC1 romulus 3060, RPC2 triton 3090, RPC3 triton 3070, ROCm0 7900
-        export BENCH_TS="${BENCH_TS:-20,10,30,10,30}"
-        export GGML_PIPELINE_PLUS="${GGML_PIPELINE_PLUS:-1}"
+    b6-5gpu-g|b6-5gpu-g-prod)
+        # shellcheck source=scripts/b6-gate-5gpu-production-env.sh
+        source "${ROOT}/scripts/b6-gate-5gpu-production-env.sh"
+        if [[ "$LABEL" == "b6-5gpu-g-prod" ]]; then
+            b6_5gpu_production_env
+        else
+            b6_5gpu_base_env
+        fi
         export PROFILER_OUT_DIR="${PROFILER_OUT_DIR:-${ROOT}/benches/path-b-plus/${LABEL}}"
         ;;
     b6-2gpu-f-plus0)

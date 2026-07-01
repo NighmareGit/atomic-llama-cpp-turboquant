@@ -20,7 +20,14 @@ B+11 splits each RPC endpoint into two TCP connections after HELLO:
 
 Goal: reduce head-of-line (HOL) blocking when large `GET_TENSOR` / `EVENT_RECORD` responses delay small acks on a single multiplexed socket.
 
-**Bisect verdict (2026-07-01):** NULL on `overlap_pct`; **HURTS G** (-9.1%). Default remains **OFF** (`GGML_RPC_DUAL_SOCKET=0`). Proto 4.4 ships for forward compatibility and optional experiments.
+**Bisect verdict (2026-07-01):** NULL on `overlap_pct`. **Topology-dependent G:**
+
+| Topology | dual=ON G delta | overlap | Production use |
+|----------|-----------------|---------|----------------|
+| 2-GPU / 4-GPU triton n=384 | **-9.1%** | flat | **OFF** |
+| 5-GPU `b6-5gpu-g` n=128 | **+18%** (58.2 -> 68.5) | 0.4% | **ON** via `b6-5gpu-g-prod` |
+
+Global default remains **OFF** (`GGML_RPC_DUAL_SOCKET=0`). Enable on 5-GPU production only (`scripts/b6-gate-5gpu-production-env.sh`).
 
 ## Problem evidence (Phase 1.2B)
 

@@ -54,6 +54,18 @@ Plan: [PLAN.md](PLAN.md)
 | A10 Git commit/push (user-approved) | DONE | `948c6a534` on gitea |
 | A11 Creds/token sync from romulus + gitea PAT (8ca5) on remus/triton | DONE 2026-07-01 | .git-credentials/insteadOf + ~/tokens mirrors; ls-remote verified |
 
+### Phase A ops artifact index (categorized)
+
+| Category | Path | Role | Status |
+|----------|------|------|--------|
+| **Shared build** | `docs/cuda-windows/BUILD.md`, `scripts/cuda-windows/build.ps1` | All Windows CUDA nodes | ACTIVE |
+| **5070 Ti ops** | `docs/cuda-windows-5070ti/`, `scripts/cuda-windows-5070ti/` | Config E/F/G, remus client benches | ACTIVE (2-GPU F legacy) |
+| **Triton ops** | `docs/cuda-windows-triton/`, `scripts/cuda-windows-triton/` | `:50054`/`:50055` rpc-server, 5-GPU workers | ACTIVE (production) |
+| **Linux triton remote** | `scripts/b6-gate-triton-*.sh`, `rpc-patch/scripts/pathb-triton-rpc.sh` | Sync/rebuild triton docker RPC | ACTIVE |
+| **JUPITER legacy** | `scripts/b6-gate-jupiter-*.cmd`, `:50053` | 4-GPU canonical (deprecated) | **ARCHIVE** -- use triton swap |
+| **Gate measurement** | `scripts/b6-gate-*.sh`, `benches/path-b-plus/` | Profiler presets only | MAINTENANCE (Phase 4 closed) |
+| **5-GPU production** | `scripts/b6-gate-5gpu-production-env.sh`, label `b6-5gpu-g-prod` | Dual-socket + cluster defaults | ACTIVE |
+
 ---
 
 ## Phase 0 -- Profiler matrix (measurement runs)
@@ -160,15 +172,36 @@ Throughput/blocking win only; **not gate-moving**. EVENT_RECORD (~28.7s) unchang
 
 | Mission | Status | Notes |
 |---------|--------|-------|
-| Production ship | **ACTIVE** | Tip `a2d63acf1`; 5-GPU triton docker; HASH_DEFER opt-in |
+| Production ship | **ACTIVE** | See **Production ship (1)** below |
 | Overlap gate B+6 | **CLOSED FAIL** | Reopens under grill -- new hypothesis required |
-| Ops / deploy (Phase A) | **MAINTENANCE** | A1-A11 DONE |
+| Ops / deploy (Phase A) | **DONE / MAINTENANCE** | Artifact index above |
+
+## Production ship (1) -- 5-GPU Linux
+
+| Field | Value |
+|-------|-------|
+| Git tip | `a2d63acf1` (+ doc/script commits on branch) |
+| Client | romulus 7900 ROCm (`build-rocm-docker`) |
+| RPC | `192.168.8.176:50051,127.0.0.1:50051,192.168.8.23:50054,192.168.8.23:50055` |
+| `-ts` | `20,10,30,10,30` |
+| Env | `GGML_PIPELINE_PLUS=1`, `GGML_RPC_DUAL_SOCKET=1` (prod preset), `GGML_RPC_HASH_DEFER=0` default |
+| Preset label | `b6-5gpu-g-prod` via `scripts/b6-gate-5gpu-production-env.sh` |
+| Measured G (n=128 dual) | 68.5 t/s (+18% vs single-socket 58.2) |
+| Overlap | Not a ship criterion (0.3-0.4%); gate closed |
+
+```bash
+# profiler smoke on romulus
+bash scripts/b6-gate-run-remote.sh b6-5gpu-g-prod --no-warmup --skip-rpc-validate
+
+# override
+B6_5GPU_DUAL_SOCKET=0 B6_5GPU_HASH_DEFER=1 bash scripts/b6-gate-run-remote.sh b6-5gpu-g-prod ...
+```
 
 ## Post-Phase-4 backlog (optional, executed 2026-07-01)
 
 | ID | Item | Result |
 |----|------|--------|
-| BL-1 | B+11 dual-socket `GGML_RPC_DUAL_SOCKET=1` n=128 5-GPU | G=68.5 (+18% vs v8 58.2), overlap **0.4%** (noise); gate FAIL; `...-bl1-dual-socket` |
+| BL-1 | B+11 dual-socket `GGML_RPC_DUAL_SOCKET=1` 5-GPU | n=128 G=68.5 (+18%); n=2048 G=65.9 (+9.7% vs 60.1), overlap 0%; blocking +46% @ n=2048; **ship ON** via `b6-5gpu-g-prod` |
 | BL-2 | ts shift off 3060 `25,5,30,15,25` n=128 5-GPU | G=56.4 (-3%), overlap 0.4%, straggler 7.73ms (worse); **REJECT** for production; `...-bl2-ts-shift` |
 | BL-3 | B+16 CUDA `leaf_55` | **REJECT** (mission TRACKING); no code |
 

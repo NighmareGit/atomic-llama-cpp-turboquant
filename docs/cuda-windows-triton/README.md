@@ -1,15 +1,15 @@
 # Windows CUDA -- Triton (3090 + 3070)
 
 **Host:** triton @ `192.168.8.23`  
-**Role:** B+6 spike RPC worker (3090 on `:50054`) -- remus 5060 replacement for A/B profiling.  
-**Mission:** [rpc-patch/docs/b6-gate/PLAN.md](../../rpc-patch/docs/b6-gate/PLAN.md)
+**Role:** **Production** 5-GPU RPC workers (`:50054` 3090, `:50055` 3070 docker); was B+6 A/B spike host.  
+**Mission:** Production ship -- [b6-gate/PLAN.md](../../rpc-patch/docs/b6-gate/PLAN.md) split missions
 
 ## Hardware
 
 | GPU | VRAM | Role in spike |
 |-----|------|---------------|
 | RTX 3090 | 24 GB | RPC worker `CUDA0`, port `:50054` |
-| RTX 3070 | 8 GB | **Parked** (insufficient for 35B MoE RPC share) |
+| RTX 3070 | 8 GB | RPC worker `CUDA0`, port `:50055` (isolated docker; 35B MoE ts=10 share) |
 
 ## Build
 

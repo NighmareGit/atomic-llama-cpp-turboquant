@@ -34,9 +34,14 @@ case "$LABEL" in
         export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051,127.0.0.1:50051,192.168.8.23:50054}"
         export BENCH_TS="${BENCH_TS:-22,11,34,33}"
         ;;
-    b6-5gpu-g)
-        export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051,127.0.0.1:50051,192.168.8.23:50054,192.168.8.23:50055}"
-        export BENCH_TS="${BENCH_TS:-20,10,30,10,30}"
+    b6-5gpu-g|b6-5gpu-g-prod)
+        # shellcheck source=scripts/b6-gate-5gpu-production-env.sh
+        source "${ROOT}/scripts/b6-gate-5gpu-production-env.sh"
+        if [[ "$LABEL" == "b6-5gpu-g-prod" ]]; then
+            b6_5gpu_production_env
+        else
+            b6_5gpu_base_env
+        fi
         ;;
     b6-2gpu-f-plus0)
         export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051}"

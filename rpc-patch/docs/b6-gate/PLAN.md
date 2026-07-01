@@ -35,7 +35,15 @@ Best overlap peek: **0.9%** (`b6-2gpu-f-triton-guard-n128`); **0.7%** (4-GPU ts-
 | **B -- Overlap gate (B+6)** | `overlap_pct >= 5%` Path B only | **CLOSED FAIL** | Reopen via grill: new hypotheses only |
 | **C -- Ops / deploy** | Windows CUDA portable, triton :50054 | **MAINTENANCE** | Phase A artifacts (A1-A11 DONE) |
 
-Production cluster (5-GPU Linux): `-rpc remus:50051,romulus:50051,triton:50054,triton:50055` / `-ts 20,10,30,10,30`.
+Production cluster (5-GPU Linux): label `b6-5gpu-g-prod` / `scripts/b6-gate-5gpu-production-env.sh`
+
+| Setting | Value |
+|---------|-------|
+| `--rpc` | `192.168.8.176:50051,127.0.0.1:50051,192.168.8.23:50054,192.168.8.23:50055` |
+| `-ts` | `20,10,30,10,30` |
+| `GGML_PIPELINE_PLUS` | `1` |
+| `GGML_RPC_DUAL_SOCKET` | `1` (5-GPU only; OFF on 2/4-GPU) |
+| `GGML_RPC_HASH_DEFER` | `0` default; opt-in `B6_5GPU_HASH_DEFER=1` |
 
 ---
 
