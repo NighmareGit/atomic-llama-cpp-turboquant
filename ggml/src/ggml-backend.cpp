@@ -1721,6 +1721,81 @@ static void ggml_backend_sched_update_barrier_src_mask(ggml_backend_sched_t sche
     }
 }
 
+// True when two sched backends map to the same PCI device (tensor-split gather).
+static bool ggml_backend_share_physical_device(ggml_backend_t a, ggml_backend_t b) {
+    if (a == b) {
+        return true;
+    }
+    ggml_backend_dev_t dev_a = ggml_backend_get_device(a);
+    ggml_backend_dev_t dev_b = ggml_backend_get_device(b);
+    if (dev_a == nullptr || dev_b == nullptr) {
+        return false;
+    }
+    ggml_backend_dev_props pa;
+    ggml_backend_dev_props pb;
+    ggml_backend_dev_get_props(dev_a, &pa);
+    ggml_backend_dev_get_props(dev_b, &pb);
+    if (pa.device_id != nullptr && pb.device_id != nullptr &&
+        pa.device_id[0] != '\0' && strcmp(pa.device_id, pb.device_id) == 0) {
+        return true;
+    }
+    return false;
+}
+
+// B+13 gather: dst/src cpy_tensor_async, then host<->device async, then same-device retry.
+// Host paths cover CPU sched backends; CUDA/HIP extension covers device<->device same GPU.
+static bool ggml_backend_sched_try_async_tensor_copy(
+        ggml_backend_t input_backend, ggml_backend_t split_backend,
+        const ggml_tensor * input, ggml_tensor * input_cpy) {
+    if (split_backend->iface.cpy_tensor_async != nullptr) {
+        if (split_backend->iface.cpy_tensor_async(input_backend, split_backend, input, input_cpy)) {
+            return true;
+        }
+    }
+    if (input_backend->iface.cpy_tensor_async != nullptr) {
+        if (input_backend->iface.cpy_tensor_async(input_backend, split_backend, input, input_cpy)) {
+            return true;
+        }
+    }
+
+    ggml_backend_buffer_t buf_src = input->view_src ? input->view_src->buffer : input->buffer;
+    ggml_backend_buffer_t buf_dst = input_cpy->buffer;
+    if (buf_src == nullptr || buf_dst == nullptr) {
+        return false;
+    }
+
+    const bool host_src = ggml_backend_buffer_is_host(buf_src);
+    const bool host_dst = ggml_backend_buffer_is_host(buf_dst);
+
+    if (host_src != host_dst) {
+        const size_t nbytes = ggml_nbytes(input);
+        if (nbytes == 0) {
+            return true;
+        }
+        if (host_src) {
+            ggml_backend_tensor_set_async(split_backend, input_cpy, input->data, 0, nbytes);
+            return true;
+        }
+        ggml_backend_tensor_get_async(input_backend, input, input_cpy->data, 0, nbytes);
+        return true;
+    }
+
+    if (!host_src && ggml_backend_share_physical_device(input_backend, split_backend)) {
+        if (split_backend->iface.cpy_tensor_async != nullptr) {
+            if (split_backend->iface.cpy_tensor_async(input_backend, split_backend, input, input_cpy)) {
+                return true;
+            }
+        }
+        if (input_backend->iface.cpy_tensor_async != nullptr) {
+            if (input_backend->iface.cpy_tensor_async(input_backend, split_backend, input, input_cpy)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t sched) {
     GGML_ASSERT(sched);
     struct ggml_backend_sched_split * splits = sched->splits;
@@ -1862,14 +1937,8 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     }
                     copy_experts(first_id, last_id);
                 } else {
-                    // B+13: try async copy on dst then src backend before sync fallback.
-                    bool copied_async = false;
-                    if (split_backend->iface.cpy_tensor_async) {
-                        copied_async = split_backend->iface.cpy_tensor_async(input_backend, split_backend, input, input_cpy);
-                    }
-                    if (!copied_async && input_backend->iface.cpy_tensor_async) {
-                        copied_async = input_backend->iface.cpy_tensor_async(input_backend, split_backend, input, input_cpy);
-                    }
+                    const bool copied_async = ggml_backend_sched_try_async_tensor_copy(
+                        input_backend, split_backend, input, input_cpy);
                     if (!copied_async) {
                         const auto sync_t0 = std::chrono::steady_clock::now();
                         ggml_backend_synchronize(input_backend);

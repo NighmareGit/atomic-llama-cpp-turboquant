@@ -3482,14 +3482,34 @@ static bool ggml_backend_cuda_cpy_tensor_async(ggml_backend_t backend_src, ggml_
         return false;
     }
 
-    if (!ggml_backend_buffer_is_cuda(buf_src) || !ggml_backend_buffer_is_cuda(buf_dst)) {
+    const size_t nbytes = ggml_nbytes(src);
+    if (nbytes == 0) {
+        return true;
+    }
+
+    ggml_backend_cuda_context * cuda_ctx_src = (ggml_backend_cuda_context *) backend_src->context;
+    ggml_backend_cuda_context * cuda_ctx_dst = (ggml_backend_cuda_context *) backend_dst->context;
+
+    const bool cuda_src = ggml_backend_buffer_is_cuda(buf_src);
+    const bool cuda_dst = ggml_backend_buffer_is_cuda(buf_dst);
+
+    // B+13 gather: host <-> device on same sched GPU (CPU host buft -> HIP dst, etc.)
+    if (cuda_dst && ggml_backend_buffer_is_host(buf_src)) {
+        ggml_cuda_set_device(cuda_ctx_dst->device);
+        CUDA_CHECK(cudaMemcpyAsync(dst->data, src->data, nbytes, cudaMemcpyHostToDevice, cuda_ctx_dst->stream()));
+        return true;
+    }
+    if (cuda_src && ggml_backend_buffer_is_host(buf_dst)) {
+        ggml_cuda_set_device(cuda_ctx_src->device);
+        CUDA_CHECK(cudaMemcpyAsync(dst->data, src->data, nbytes, cudaMemcpyDeviceToHost, cuda_ctx_src->stream()));
+        return true;
+    }
+
+    if (!cuda_src || !cuda_dst) {
         return false;
     }
 
     // device -> device copy
-    ggml_backend_cuda_context * cuda_ctx_src = (ggml_backend_cuda_context *) backend_src->context;
-    ggml_backend_cuda_context * cuda_ctx_dst = (ggml_backend_cuda_context *) backend_dst->context;
-
     ggml_backend_cuda_buffer_context * buf_ctx_src = (ggml_backend_cuda_buffer_context *) buf_src->context;
     ggml_backend_cuda_buffer_context * buf_ctx_dst = (ggml_backend_cuda_buffer_context *) buf_dst->context;
 

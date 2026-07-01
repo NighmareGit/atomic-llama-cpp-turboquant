@@ -15133,14 +15133,15 @@ static bool ggml_backend_vk_cpy_tensor_async(ggml_backend_t backend_src, ggml_ba
         return true;
     }
 
-    if (dst->buffer->buft != ggml_backend_vk_get_default_buffer_type(backend_dst)) {
-        return false;
-    }
+    const bool dst_default_buft = dst->buffer->buft == ggml_backend_vk_get_default_buffer_type(backend_dst);
 
     ggml_backend_vk_buffer_context * dst_buf_ctx = (ggml_backend_vk_buffer_context *)dst->buffer->context;
     vk_buffer dst_buf = dst_buf_ctx->dev_buffer;
 
     if (ggml_backend_buffer_is_vk(src->buffer)) {
+        if (!dst_default_buft) {
+            return false;
+        }
         ggml_backend_vk_buffer_context * src_buf_ctx = (ggml_backend_vk_buffer_context *)src->buffer->context;
 
         // Async copy only works within the same device
