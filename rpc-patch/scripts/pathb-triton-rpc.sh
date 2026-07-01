@@ -35,7 +35,7 @@ deploy_sync() {
 }
 
 stop_native_rpc() {
-    remote "pkill -f 'rpc-server.*-p 50054' 2>/dev/null || true; pkill -f 'rpc-server.*-p 50055' 2>/dev/null || true"
+    remote "pkill -f 'rpc-server.*-p 50054' 2>/dev/null || true; pkill -f 'rpc-server.*-p 50055' 2>/dev/null || true; true"
 }
 
 ACTION="${1:-status}"

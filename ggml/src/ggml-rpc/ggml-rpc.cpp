@@ -1445,9 +1445,18 @@ static bool rpc_issue_relay_copy_tensor(const ggml_tensor * src, ggml_tensor * d
         return true;
     }
 
+    const char * src_ep = rpc_buft_endpoint(src_buffer);
+    if (!src_ep) {
+        return false;
+    }
+
     thread_local std::vector<uint8_t> relay_staging;
     relay_staging.resize(size);
-    ggml_backend_rpc_buffer_get_tensor(src_buffer, src, relay_staging.data(), 0, size);
+    // Ephemeral socket: avoid GET_TENSOR on the graph session (desync during compute).
+    if (!rpc_peer_get_tensor(src_ep, serialize_tensor(src), 0, size, relay_staging)) {
+        GGML_LOG_ERROR("[%s] relay get_tensor failed from %s\n", __func__, src_ep);
+        return false;
+    }
 
     rpc_tensor rpc_t = serialize_tensor(dst);
     const size_t input_size = sizeof(rpc_tensor) + sizeof(uint64_t) + size;
@@ -1457,9 +1466,8 @@ static bool rpc_issue_relay_copy_tensor(const ggml_tensor * src, ggml_tensor * d
     memcpy(input.data() + sizeof(rpc_tensor), &offset, sizeof(offset));
     memcpy(input.data() + sizeof(rpc_tensor) + sizeof(offset), relay_staging.data(), size);
 
-    const char * src_ep = rpc_buft_endpoint(src_buffer);
     const char * dst_ep = rpc_buft_endpoint(dst_buffer);
-    rpc_trace_emit_copy_issue(RPC_CMD_SET_TENSOR, src_ep ? src_ep : "", dst_ep ? dst_ep : "", false, defer_response);
+    rpc_trace_emit_copy_issue(RPC_CMD_SET_TENSOR, src_ep, dst_ep ? dst_ep : "", false, defer_response);
 
     return send_rpc_cmd(dst_sock, RPC_CMD_SET_TENSOR, input.data(), input.size());
 }
