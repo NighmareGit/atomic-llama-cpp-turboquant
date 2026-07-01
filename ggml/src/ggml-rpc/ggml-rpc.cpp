@@ -329,7 +329,8 @@ static int rpc_hash_defer_env_enabled() {
     static int v = -1;
     if (v < 0) {
         const char * e = getenv("GGML_RPC_HASH_DEFER");
-        v = e ? atoi(e) : (rpc_pipeline_plus_enabled() ? 1 : 0);
+        // Default OFF until multi-socket defer ordering is proven on 5-GPU load.
+        v = e ? atoi(e) : 0;
     }
     return v;
 }
@@ -870,6 +871,9 @@ static bool parse_endpoint(const std::string & endpoint, std::string & host, int
 // No response
 static bool send_rpc_cmd(socket_ptr sock, enum rpc_cmd cmd, const void * input, size_t input_size) {
     const auto t0 = std::chrono::steady_clock::now();
+    if (!tls_pending_hash.empty()) {
+        flush_pending_hash_all();
+    }
     flush_set_tensor_batch();
     // send header + data in one go to avoid TCP buffering issues on small packets
     std::vector<uint8_t> buf(1 + sizeof(uint64_t) + input_size);
@@ -891,6 +895,9 @@ static bool send_rpc_cmd(socket_ptr sock, enum rpc_cmd cmd, const void * input, 
 // RPC response: | response_size (8 bytes) | response_data (response_size bytes) |
 static bool send_rpc_cmd(socket_ptr sock, enum rpc_cmd cmd, const void * input, size_t input_size, void * output, size_t output_size) {
     const auto t0 = std::chrono::steady_clock::now();
+    if (!tls_pending_hash.empty()) {
+        flush_pending_hash_all();
+    }
     // Socket-scoped drain: protect TCP framing without stalling other RPC sockets.
     // B+9: defer EVENT recv until pipeline_barrier when GGML_RPC_EVENT_DEFER_BARRIER=1.
     if (cmd != RPC_CMD_HELLO && cmd != RPC_CMD_DEVICE_COUNT) {
