@@ -1065,6 +1065,67 @@ static void ggml_backend_rpc_buffer_get_tensor(ggml_backend_buffer_t buffer, con
     RPC_STATUS_ASSERT(status);
 }
 
+// B+13: local/host/CUDA/HIP src -> RPC dst via fire-and-forget SET_TENSOR (no copy response wait).
+static bool rpc_issue_upload_tensor(ggml_backend_t backend_src, const ggml_tensor * src, ggml_tensor * dst, bool defer_response) {
+    if (src == nullptr || dst == nullptr || dst->buffer == nullptr) {
+        return false;
+    }
+    if (!ggml_backend_buffer_is_rpc(dst->buffer)) {
+        return false;
+    }
+    if (ggml_backend_buffer_is_rpc(src->buffer)) {
+        return false;
+    }
+
+    ggml_backend_buffer_t src_buffer = src->view_src ? src->view_src->buffer : src->buffer;
+    if (src_buffer == nullptr) {
+        return false;
+    }
+
+    ggml_backend_rpc_buffer_context * dst_ctx = (ggml_backend_rpc_buffer_context *) dst->buffer->context;
+    auto sock = dst_ctx->sock;
+
+    if (!defer_response) {
+        drain_pending_copy_response(sock);
+    }
+    if (!rpc_event_defer_barrier()) {
+        drain_pending_event_response(sock);
+    }
+    flush_pending_get_tensor_for_socket(sock);
+    flush_set_tensor_batch();
+
+    const size_t size = ggml_nbytes(src);
+    if (size == 0) {
+        return true;
+    }
+
+    const void * data = src->data;
+    thread_local std::vector<uint8_t> tls_upload_staging;
+
+    if (!ggml_backend_buffer_is_host(src_buffer)) {
+        if (!backend_src) {
+            return false;
+        }
+        ggml_backend_synchronize(backend_src);
+        tls_upload_staging.resize(size);
+        ggml_backend_tensor_get(src, tls_upload_staging.data(), 0, size);
+        data = tls_upload_staging.data();
+    }
+
+    rpc_tensor rpc_t = serialize_tensor(dst);
+    const size_t input_size = sizeof(rpc_tensor) + sizeof(uint64_t) + size;
+    std::vector<uint8_t> input(input_size, 0);
+    memcpy(input.data(), &rpc_t, sizeof(rpc_tensor));
+    const uint64_t offset = 0;
+    memcpy(input.data() + sizeof(rpc_tensor), &offset, sizeof(offset));
+    memcpy(input.data() + sizeof(rpc_tensor) + sizeof(offset), data, size);
+
+    const char * dst_ep = rpc_buft_endpoint(dst->buffer);
+    rpc_trace_emit_copy_issue(RPC_CMD_SET_TENSOR, "", dst_ep ? dst_ep : "", false, defer_response);
+
+    return send_rpc_cmd(sock, RPC_CMD_SET_TENSOR, input.data(), input.size());
+}
+
 static bool rpc_issue_copy_tensor(const ggml_tensor * src, ggml_tensor * dst, bool defer_response) {
     if (!ggml_backend_buffer_is_rpc(src->buffer) || !ggml_backend_buffer_is_rpc(dst->buffer)) {
         return false;
@@ -1141,11 +1202,16 @@ static bool ggml_backend_rpc_buffer_cpy_tensor(ggml_backend_buffer_t buffer, con
 
 static bool ggml_backend_rpc_cpy_tensor_async(ggml_backend_t backend_src, ggml_backend_t backend_dst,
                                             const ggml_tensor * src, ggml_tensor * dst) {
-    GGML_UNUSED(backend_src);
     if (!ggml_backend_is_rpc(backend_dst)) {
         return false;
     }
-    return rpc_issue_copy_tensor(src, dst, true);
+    if (!ggml_backend_buffer_is_rpc(dst->buffer)) {
+        return false;
+    }
+    if (ggml_backend_buffer_is_rpc(src->buffer)) {
+        return rpc_issue_copy_tensor(src, dst, true);
+    }
+    return rpc_issue_upload_tensor(backend_src, src, dst, true);
 }
 
 static void ggml_backend_rpc_buffer_clear(ggml_backend_buffer_t buffer, uint8_t value) {

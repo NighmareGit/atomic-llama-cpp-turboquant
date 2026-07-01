@@ -22,7 +22,7 @@ B+13 (dual-side `cpy_tensor_async` try) is always on in scheduler copy path when
 | B+9 | `ggml/src/ggml-rpc/ggml-rpc.cpp` | `rpc_event_defer_barrier`, `send_rpc_cmd` blocking path |
 | B+7a′ | `ggml/src/ggml-rpc/ggml-rpc.cpp` | `rpc_drain_all_endpoints_pending`, `ggml_backend_rpc_drain_all_endpoints` |
 | B+10 | `ggml/src/ggml-backend.cpp` | MoE `MUL_MAT_ID` weight path ~1682 |
-| B+13 | `ggml/src/ggml-backend.cpp` | `input_wait_copy` async try dst then src |
+| B+13 | `ggml/src/ggml-rpc/ggml-rpc.cpp` | `rpc_issue_upload_tensor` local->RPC deferred SET_TENSOR; `ggml-backend.cpp` async try dst then src |
 
 ## Bisect procedure (G1 — 2-GPU triton n=384)
 
