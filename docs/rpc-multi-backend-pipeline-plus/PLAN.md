@@ -1,6 +1,6 @@
 # PLAN — rpc-multi-backend-pipeline-plus
 
-Navigation: [TRACKING.md](TRACKING.md) | [MISSION.md](MISSION.md) | [rpc-patch/docs/b6-gate/PLAN.md](../../rpc-patch/docs/b6-gate/PLAN.md)
+Navigation: [TRACKING.md](TRACKING.md) | [MISSION.md](MISSION.md) | [DESIGN-path-d-layer-pipeline.md](DESIGN-path-d-layer-pipeline.md) | [rpc-patch/docs/b6-gate/PLAN.md](../../rpc-patch/docs/b6-gate/PLAN.md)
 
 ## Phase 0 — Foundation (Complete)
 
@@ -180,13 +180,33 @@ B6_GATE_PRESET=b6-4gpu-g-triton bash scripts/b6-gate-bisect-run.sh no-dual-socke
 - Append `benches/path-b-plus/regression.jsonl`
 - Regression guard for 48.9 t/s 2-device baseline
 
-## Phase 3 — Path-C Bridge (**out of scope**)
+## Phase 3 — Path-C Bridge (superseded by Phase D)
 
-**Not part of path-b-plus.** Structural ceiling is documented; M3 remains FAIL. Path C may be pursued in a separate effort.
+**Not implemented on `Path-B-Event-Support-Pipeline-Plus`.** M3 remains FAIL; structural ceiling documented.
 
-- This mission may **read** [rpc-patch/docs/rpc-path-c-plan.md](../../rpc-patch/docs/rpc-path-c-plan.md) for inspiration
-- **No Path C implementation** on `Path-B-Event-Support-Pipeline-Plus`
-- Production cluster baseline (`trace-g-4gpu-primary` ~43 t/s) remains a throughput reference only
+Path C is now the **D1 stepping stone** inside [DESIGN-path-d-layer-pipeline.md](DESIGN-path-d-layer-pipeline.md) (triton 3090+3070 server-side sched). Full cross-cluster saturation requires **Phase D** GPipe client sched (D2).
+
+- Path C plan: [rpc-patch/docs/rpc-path-c-plan.md](../../rpc-patch/docs/rpc-path-c-plan.md)
+- Bridge criteria (original): [DESIGN-b14-parallel-assembly-line.md](DESIGN-b14-parallel-assembly-line.md) s11 — criteria met; proceed via Phase D
+
+## Phase D — Layer pipeline / assembly-line saturation (Phase D0)
+
+**Branch:** proposed `Path-D-Layer-Pipeline` from Path-B+ deploy tag (same repo).
+
+**Goal:** GPipe-style layer pipeline so cluster GPUs do useful work concurrently (target `global_3bk_pct` >= 25%), without abandoning Path-B+ production deploy.
+
+| Sub-phase | Work | Gate |
+|-----------|------|------|
+| **D0** | Design, grill, split topology map, Path C C1 baseline | Doc + read-only artifacts |
+| **D1** | Path C triton (`GRAPH_COMPUTE_ALL`, server sched) | Server GPU util up; G non-regression |
+| **D2** | `GGML_SCHED_GPIPE=1` client sched (MTP-coupled single-seq first) | `global_3bk` movement; correctness smoke |
+| **D3** | Runbook, upstream merge policy, prod matrix | A8/A13 70B + A1 MoE PASS |
+
+**Path-B+ policy:** freeze overlap hunt; tag and deploy; merge fixes only.
+
+**Next decision (D0):** grill GPipe KV-ordering (D0.3) vs Path C C1 kickoff vs parallel — see DESIGN-path-d s7.
+
+Full design: [DESIGN-path-d-layer-pipeline.md](DESIGN-path-d-layer-pipeline.md).
 
 ## Phase 4 — Production Hardening
 
@@ -241,7 +261,7 @@ Overlap hunt on this branch is **done**. See [DESIGN-b14-parallel-assembly-line.
 |------|------|------|
 | 1 | Deploy runbook + equal-safe preflight | 70B+ load PASS |
 | 2 | L1 `GGML_RPC_HASH_DEFER` spike @ n=384 | **DONE** — G -1.9%; default OFF |
-| 3 | L4 n=384 confirm (A8/A13) | optional |
-| 4 | Path C bridge criteria doc | when to escalate W2 |
+| 3 | MoE light offload (ncmoe 0/8/16 @ n=128) | ncmoe=0 PASS; ncmoe>0 crash on profiler+RPC |
+| 4 | Path C bridge criteria doc | **done** (DESIGN s11) |
 
-**Next action (2026-07-01, V5):** Branch **deploy-ready**. Continue Phase 1c: L1 spike, then optional n=384 L4. Details: [TRACKING.md](TRACKING.md) V4; assembly line: DESIGN-b14 s10.
+**Next action (2026-07-01, V6):** Path-B+ **deploy-ready** (Phase 1c complete). Overlap hunt **closed**. Open **Phase D0** — [DESIGN-path-d-layer-pipeline.md](DESIGN-path-d-layer-pipeline.md). Decide: grill D0.3 vs Path C C1 vs parallel.

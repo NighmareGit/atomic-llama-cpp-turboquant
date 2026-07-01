@@ -40,15 +40,18 @@ This file holds **one** deferred item: extending the post-run trace sample scrip
 
 ## Post-V4 backlog (2026-07-01)
 
-**Status:** M3 hunt **paused** — ladder exhausted. See [TRACKING.md](TRACKING.md) V4 section.
+**Status:** M3 hunt **closed** on Path-B+. Assembly-line saturation moved to **Phase D**: [DESIGN-path-d-layer-pipeline.md](DESIGN-path-d-layer-pipeline.md).
 
 | Priority | Item | Lever | Notes |
 |----------|------|-------|-------|
 | ~~all~~ | ~~B+8–B+16 + B+14 wavefront~~ | overlap | **NULL** on M3 (2026-07-01) |
-| **1** | 5-GPU 70B+ deploy | throughput / VRAM | B+15 L4 equal-safe **PASS**; use preflight |
-| 2 | L4 @ n=384 confirmation | deploy | optional spike on A8/A13 |
-| 3 | VRAM P2/P3 | planning accuracy | MISSION.md future work |
-| 4 | C-full sample keep lists | telemetry | deferred (below) |
+| ~~1~~ | ~~5-GPU 70B+ deploy~~ | throughput / VRAM | **PASS** — Phase 1c complete |
+| **1** | **Phase D0** design + grill / Path C C1 | `global_3bk` | DESIGN-path-d; proposed `Path-D-Layer-Pipeline` branch |
+| 2 | Path C D1 triton (`GRAPH_COMPUTE_ALL`) | server GPU util | [rpc-path-c-plan.md](../../rpc-patch/docs/rpc-path-c-plan.md) C1/C2 |
+| 3 | GPipe D2 (`GGML_SCHED_GPIPE`) | cross-host saturation | MTP-coupled single-seq first |
+| 4 | L4 @ n=384 confirmation | deploy | optional on Path-B+ |
+| 5 | VRAM P2/P3 | planning accuracy | MISSION.md future work |
+| 6 | C-full sample keep lists | telemetry | deferred (below) |
 
 **Deferred:** Sample API C-full keep lists (above).
 

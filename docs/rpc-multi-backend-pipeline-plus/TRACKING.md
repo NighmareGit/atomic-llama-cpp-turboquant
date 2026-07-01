@@ -33,6 +33,7 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 | 2026-07-01 | **VRAM planning reserves (band-aid)** | Static preflight missed compute/RPC surge; 3060 OOM on naive equal TS | `pathb-rpc-vram-preflight.py` `--phase load`; P2/P3 deferred in MISSION.md |
 | 2026-07-01 | **B+14 wavefront NULL on M3** | Factorial W1+W2 @ n=64/n=384: `global_3bk` < 1%; W1-only hurts cluster fill | Default `B6_5GPU_WAVEFRONT=0`; code ships behind flags |
 | 2026-07-01 | **B+15 L4 equal-safe TS PASS** | 70B/72B load on 5-GPU prod with 3060-capped spread; no runtime OOM | Deploy via `pathb-rpc-vram-preflight.sh --ts-mode equal --phase load` |
+| 2026-07-01 | **Phase D0 opened** | Assembly-line saturation needs GPipe + Path C stepping stone; Path-B+ frozen for deploy | [DESIGN-path-d-layer-pipeline.md](DESIGN-path-d-layer-pipeline.md); branch `Path-D-Layer-Pipeline` proposed |
 
 ## Current Champion Runs
 
@@ -481,5 +482,41 @@ Artifacts: `b6-2gpu-f-triton-n384-romulus-native-b16` (experiment only; code rev
 
 ---
 
+## V6 — Path D fork (2026-07-01)
+
+**Verdict:** Path-B+ overlap hunt **closed**. Production deploy **continues** on `Path-B-Event-Support-Pipeline-Plus`. Next architecture: **Phase D** layer pipeline (GPipe-style).
+
+### Grill conclusions (integrated)
+
+| Topic | Conclusion |
+|-------|------------|
+| Handoff unit | Activations (`l_out-*`) per **split**, not tokens/workpackages |
+| Saturation metric | `global_3bk_pct` >= 25% (not pair `overlap_pct`) |
+| RPC0(T+1) \|\| RPC1(T) | Blocked on single-seq by **sample gate** + serial split loop |
+| Path-B+ limit | W1 ~30% ceiling; B+8–B+16 + wavefront NULL |
+| Path forward | Tag Path-B+; branch `Path-D-Layer-Pipeline`; Path C triton D1 then GPipe D2 |
+
+### Path D0 checklist
+
+| Step | Item | Status |
+|------|------|--------|
+| D0.1 | [DESIGN-path-d-layer-pipeline.md](DESIGN-path-d-layer-pipeline.md) | **done** |
+| D0.2 | 5-GPU split topology map (RPC compute splits per token) | pending |
+| D0.3 | GPipe KV-ordering grill | pending |
+| D0.4 | Path C C1 triton baseline (read-only) | pending |
+| D0.5 | Tag `path-b-plus-deploy-*` before D branch | pending |
+
+### Next session fork
+
+| Option | Action |
+|--------|--------|
+| Grill | D0.3 — layer KV write ordering, GPipe mode A + MTP coupling |
+| Path C first | D1 C1 baseline on triton `:50054`+`:50055` |
+| Parallel | **recommended** — C1 read-only while grill D0.3 |
+
+Workload gate: **A1 MoE** dev benches; **A8/A13 70B** prod prove.
+
+---
+
 **Update this file after every profile/profiler run or topology decision.**  
-**Last edit:** 2026-07-01 — V4 review: B+14 wavefront NULL; B+15 L4 + VRAM reserves PASS; 5-GPU 70B+ deploy path locked.
+**Last edit:** 2026-07-01 — V6: Phase D0 design doc; Path-B+ frozen for deploy; grill/Path C fork documented.

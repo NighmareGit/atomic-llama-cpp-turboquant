@@ -51,7 +51,7 @@ The current `Path-B-Event-Support-Pipeline-Plus` state delivers excellent increm
 - **Topology is king** — the right number of devices + correct tensor split beats "more devices".
 - **Honest documentation** — explicitly call out what Path B events + Pipeline-Plus bought us and what they did not.
 - **Incremental & shippable** — small, testable bisects in `ggml-rpc.cpp` / `ggml-backend.cpp`; one fix per profiler re-run.
-- **Path C is last resort** — preserve fork/mother-repo compatibility until M3 fails after B+7–B+13 ladder.
+- **Path C is last resort** — preserve fork/mother-repo compatibility until M3 fails after B+7–B+13 ladder. **Update (2026-07-01):** ladder exhausted; Path C is **D1 stepping stone** inside Phase D ([DESIGN-path-d-layer-pipeline.md](DESIGN-path-d-layer-pipeline.md)), not abandoned.
 
 ## Relationship to Existing Work
 
@@ -63,7 +63,7 @@ The current `Path-B-Event-Support-Pipeline-Plus` state delivers excellent increm
 **Owner:** NighmareGit  
 **Review cadence:** After every major profile/profiler run or topology change.
 
-**Current focus (2026-07-01):** **Phase 1c complete.** Branch **deploy-ready** — use `b6-gate-5gpu-deploy.sh` + equal-safe preflight. M3 overlap closed. MoE deploy: ncmoe=0 only on profiler path. Path C per DESIGN s11 when W2 concurrency required.
+**Current focus (2026-07-01):** **Path-B+ Phase 1c complete** — deploy via `b6-gate-5gpu-deploy.sh` + equal-safe preflight. M3 overlap **closed** on this branch. **Phase D0** opened for assembly-line saturation: [DESIGN-path-d-layer-pipeline.md](DESIGN-path-d-layer-pipeline.md) (GPipe client sched + Path C triton stepping stone). Proposed branch: `Path-D-Layer-Pipeline` from deploy tag.
 
 ## Future work — VRAM / tensor-split planning
 

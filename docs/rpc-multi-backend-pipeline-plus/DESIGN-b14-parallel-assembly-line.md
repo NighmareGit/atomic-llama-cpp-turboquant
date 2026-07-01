@@ -272,4 +272,10 @@ Escalate to Path C (server-side multi-GPU scheduler) when **all** are true:
 3. `global_3bk_pct` still < 2% @ n=384 on 5-GPU prod after equal-safe L4.
 4. Product requires **concurrent RPC layer compute** (W2 at scale), not just cross-token pipeline.
 
-Path C is **not** implemented on this branch. Reference: `rpc-patch/docs/rpc-path-c-plan.md`.
+**Status (2026-07-01):** criteria **1–4 met**. Escalation documented in [DESIGN-path-d-layer-pipeline.md](DESIGN-path-d-layer-pipeline.md):
+
+- Path C = **Phase D1** stepping stone (triton co-located GPUs).
+- Full cross-cluster saturation = **Phase D2** GPipe client sched.
+- Path-B+ branch **frozen** for deploy; implementation on proposed `Path-D-Layer-Pipeline` branch.
+
+Reference: [rpc-path-c-plan.md](../../rpc-patch/docs/rpc-path-c-plan.md).

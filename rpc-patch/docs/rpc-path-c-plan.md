@@ -1,5 +1,7 @@
 # Path C: Multi-GPU RPC Server Aggregation
 
+**Mission context (2026-07-01):** Path C is the **Phase D1 stepping stone** inside [DESIGN-path-d-layer-pipeline.md](../../docs/rpc-multi-backend-pipeline-plus/DESIGN-path-d-layer-pipeline.md). Implement on proposed `Path-D-Layer-Pipeline` branch after Path-B+ deploy tag. Full 5-GPU cross-host saturation still requires Phase D2 GPipe client sched.
+
 ## Why Separate from Path B
 
 Path B (events + pipeline parallelism) enables the scheduler to overlap RPC compute with local GPU compute **across tokens**. But it does NOT eliminate the fundamental sequentialization WITHIN a single token: the RPC server's graph compute and the local GPU's graph compute still execute one after the other for any given token.

@@ -9,13 +9,15 @@ This is the canonical home for analysis, planning, tracking, and artifacts relat
 ## Quick links
 
 - [MISSION.md](MISSION.md) — Goals, success criteria, and problem statement
-- [PLAN.md](PLAN.md) — Phased execution plan (Path-B+ → overlap gate → Path-C bridge)
+- [PLAN.md](PLAN.md) — Phased execution plan (Path-B+ → Phase D layer pipeline)
+- [DESIGN-path-d-layer-pipeline.md](DESIGN-path-d-layer-pipeline.md) — **Phase D0** GPipe + Path C path forward (grill-backed)
 - [TRACKING.md](TRACKING.md) — Current status, open items, decisions
 - [IMPLEMENTATION.md](IMPLEMENTATION.md) — B+8..B+13, C-full schema, Phase 1.2 work queue
 - [RPC-PROTOCOL.md](RPC-PROTOCOL.md) — wire format, version history, proto 4.4 CHANNEL_BIND
 - [FEATURE-b11-dual-socket-rpc.md](FEATURE-b11-dual-socket-rpc.md) — B+11 cmd/rsp split, bisect, ops
 - [DESIGN-b13-input-wait-audit.md](DESIGN-b13-input-wait-audit.md) — B+13 split-2 gather wait breakdown
-- [FUTURE-EXPANSIONS.md](FUTURE-EXPANSIONS.md) — deferred work (C-full sample API, post-B+15 perf hunt)
+- [FUTURE-EXPANSIONS.md](FUTURE-EXPANSIONS.md) — deferred work (C-full sample API, Phase D backlog)
+- Handover: [HANDOVER-SESSION-2026-07-01-phase-d.md](../../rpc-patch/patch/HANDOVER-SESSION-2026-07-01-phase-d.md) — **continue here** for path decision
 - [ANALYSIS/Path-B-Plus-MultiBackend-RPC-Orchestration-Audit.md](ANALYSIS/Path-B-Plus-MultiBackend-RPC-Orchestration-Audit.md) — Core technical audit of serial workflow and sync blockers
 - [BENCHMARKS/](BENCHMARKS/) — Reference runs, matrix summaries, profile artifacts
 - Related mission docs (same branch):
@@ -28,8 +30,9 @@ This is the canonical home for analysis, planning, tracking, and artifacts relat
 - Multi-backend = local CUDA (Windows 5070 Ti or Linux) + 1..N RPC workers (remus 5060 Ti, RX6600, romulus cluster, etc.)
 - Focus: Event-driven RPC (Path B) + pipeline parallelism (`Plus` mode, `graph splits`, `sched_reserve`)
 - Primary concern: Serial RPC critical path and sync blockers that cause burst-idle GPU behavior
-- Active gate: **B+6** — `overlap_pct >= 5%` (M3) without Path C server aggregation
-- Out of scope (for now): Full Path-C server-side aggregation, continuous batching, speculative decoding
+- **Path-B+ gate:** B+6 M3 **closed FAIL** — structural ceiling; branch frozen for production deploy
+- **Active mission:** **Phase D0** — layer pipeline / assembly-line saturation ([DESIGN-path-d-layer-pipeline.md](DESIGN-path-d-layer-pipeline.md))
+- Out of scope on Path-B+ branch: GPipe sched, Path C implementation (pursued on proposed `Path-D-Layer-Pipeline` branch)
 
 ## How to contribute / update
 
@@ -41,7 +44,7 @@ This is the canonical home for analysis, planning, tracking, and artifacts relat
 
 ---
 
-**Status:** Active development (`Path-B-Event-Support-Pipeline-Plus` branch)  
+**Status:** Path-B+ **deploy-ready** (frozen); Phase D0 **active** (design)  
 **Protocol:** RPC v4.4.2 (B+11 dual-socket shipped, default OFF)  
-**Last updated:** 2026-07-01  
+**Last updated:** 2026-07-01 (V6 Path D fork)
 **Owner:** NighmareGit (with Grok analysis support)
