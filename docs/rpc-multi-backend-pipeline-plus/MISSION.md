@@ -64,3 +64,15 @@ The current `Path-B-Event-Support-Pipeline-Plus` state delivers excellent increm
 **Review cadence:** After every major profile/profiler run or topology change.
 
 **Current focus (2026-07-01):** B+11 **NULL** on overlap (-9.1% G when dual ON; default OFF). **M3 hunt continues** — **B+13** `sync_copy_fallback` / async upload on `b6-2gpu-f-triton` n=384. See [PLAN.md](PLAN.md) section 2.2.
+
+## Future work — VRAM / tensor-split planning
+
+Static preflight (`pathb-rpc-vram-preflight.py`) and runtime `--fit` disagree on compute buffers, RPC process overhead, and post-prefill growth. **2026-07-01 band-aid (shipped):** planning reserves subtract fitt + process + load/decode surge + pipeline slots from live free before weights+KV check; `--phase load|decode`; L4 `--ts-mode equal` caps romulus 3060 share.
+
+| ID | Work | Status |
+|----|------|--------|
+| P1 | GGUF metadata KV (`n_embd`, `n_head_kv`, ctk/ctv bytes) in `pathb-72b-vram-calc.py` | optional; improves heuristic KV |
+| **P2** | **`--probe-fit`:** shell `llama-fit-params --fit-print on` (or `common_get_device_memory_data`) on romulus client with prod `-rpc`; parse per-device model/context/compute; feed TS/ngl solver | **deferred** — replaces heuristic `check_split` |
+| **P3** | Post-load calibration: scrape `-lv 4` / `llama_memory_breakdown` from smoke load; tune `_DEVICE_RESERVE_MIB` from OOM telemetry | **deferred** — closes ~1 GB 3060 gap after first real alloc |
+
+Until P2/P3: use `--phase load`, `BENCH_FITT=1024,...`, and L4 3060-safe TS from preflight; do not trust naive equal split or raw `nvidia-smi` free alone.

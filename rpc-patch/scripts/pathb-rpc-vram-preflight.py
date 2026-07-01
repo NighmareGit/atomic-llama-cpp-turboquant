@@ -380,11 +380,11 @@ def max_ts_small_fits(
     ctx: int,
     ngl: int,
     small_idx: int,
-    vrams_gb: list[float],
+    budget_vrams: list[float],
     margins_gb: list[float],
     floor_pct: int = 4,
 ) -> int:
-    n = len(vrams_gb)
+    n = len(budget_vrams)
     best = floor_pct
     lo, hi = floor_pct, 45
     while lo <= hi:
@@ -393,11 +393,11 @@ def max_ts_small_fits(
         ts[small_idx] = mid
         rem = 100 - mid
         others = [i for i in range(n) if i != small_idx]
-        ov = sum(vrams_gb[i] for i in others) or 1.0
+        ov = sum(budget_vrams[i] for i in others) or 1.0
         for i in others:
-            ts[i] = max(floor_pct, int(round(rem * vrams_gb[i] / ov)))
+            ts[i] = max(floor_pct, int(round(rem * budget_vrams[i] / ov)))
         ts = normalize_ts_sum(ts, floor_pct=floor_pct)
-        ok, _, _ = VRAM.check_split(model_gb, layers, ctx, ngl, ts, vrams_gb, margins_gb)
+        ok, _, _ = VRAM.check_split(model_gb, layers, ctx, ngl, ts, budget_vrams, margins_gb)
         if ok:
             best = mid
             lo = mid + 1
@@ -408,7 +408,7 @@ def max_ts_small_fits(
 
 def ts_l4_spread_cap_small(
     preset: PresetSpec,
-    vrams_gb: list[float],
+    budget_vrams: list[float],
     model_gb: float,
     layers: int,
     ctx: int,
@@ -416,19 +416,19 @@ def ts_l4_spread_cap_small(
     margins_gb: list[float],
     floor_pct: int = 4,
 ) -> list[int]:
-    """L4 spread: cap romulus 3060 share, redistribute by VRAM (fitt-aware)."""
-    n = len(vrams_gb)
+    """L4 spread: cap romulus 3060 share, redistribute by planning budget."""
+    n = len(budget_vrams)
     small_idx = small_device_index(preset)
     cap = max_ts_small_fits(
-        model_gb, layers, ctx, ngl, small_idx, vrams_gb, margins_gb, floor_pct=floor_pct
+        model_gb, layers, ctx, ngl, small_idx, budget_vrams, margins_gb, floor_pct=floor_pct
     )
     rem = 100 - cap
     others = [i for i in range(n) if i != small_idx]
-    ov = sum(vrams_gb[i] for i in others) or 1.0
+    ov = sum(budget_vrams[i] for i in others) or 1.0
     ts = [0] * n
     ts[small_idx] = cap
     for i in others:
-        ts[i] = max(floor_pct, int(round(rem * vrams_gb[i] / ov)))
+        ts[i] = max(floor_pct, int(round(rem * budget_vrams[i] / ov)))
     return normalize_ts_sum(ts, floor_pct=floor_pct)
 
 
@@ -520,6 +520,12 @@ def main() -> int:
         default="vram",
         help="vram=live ratio (default); equal=L4 cap romulus 3060 + spread (fitt 1024 MiB)",
     )
+    p.add_argument(
+        "--phase",
+        choices=(VRAM.VRAM_PHASE_LOAD, VRAM.VRAM_PHASE_DECODE),
+        default=VRAM.VRAM_PHASE_LOAD,
+        help="load=conservative (load surge + pipeline); decode=post-prefill steady state",
+    )
     p.add_argument("--rpc", default="", help="override RPC endpoint list")
     p.add_argument("--live", action="store_true", default=True, help="probe live VRAM (default)")
     p.add_argument("--no-live", action="store_true", help="use static budgets from --config")
@@ -573,7 +579,10 @@ def main() -> int:
     ts_live = ts_from_free_mb(free_mibs) if free_mibs else []
     n_dev = len(preset.devices) if preset.devices else len(preset.ts_default)
     fitt_mib = fitt_mib_for_preset(preset)
-    margins_gb = VRAM.margins_gb_from_fitt_mib(fitt_mib, n_dev)
+    budget_vrams, reserve_details = VRAM.budget_vrams_from_live(
+        vrams_gb, free_mibs, fitt_mib, phase=args.phase
+    )
+    margins_gb = [0.0] * n_dev
     ts_equal_naive = ts_layer_spread_equal(n_dev) if n_dev else []
     ngl_rows = VRAM.ngl_candidates(layers)
     ngl_rec = ngl_rows[1][0] if len(ngl_rows) > 1 else ngl_rows[0][0]
@@ -581,10 +590,10 @@ def main() -> int:
     if args.ts_mode == "equal" and n_dev:
         for ngl, _frac in ngl_rows:
             ts_equal_safe = ts_l4_spread_cap_small(
-                preset, vrams_gb, model_gb, layers, args.ctx, ngl, margins_gb
+                preset, budget_vrams, model_gb, layers, args.ctx, ngl, margins_gb
             )
             ok, _, _ = VRAM.check_split(
-                model_gb, layers, args.ctx, ngl, ts_equal_safe, vrams_gb, margins_gb
+                model_gb, layers, args.ctx, ngl, ts_equal_safe, budget_vrams, margins_gb
             )
             if ok:
                 ngl_rec = ngl
@@ -605,8 +614,21 @@ def main() -> int:
         print(model_line)
         print(f"  architecture: {arch}")
     print(f"  weights: {model_gb:.2f} GB  layers: {layers}  ctx: {args.ctx}")
-    print(f"  combined GPU budget: {sum(vrams_gb):.2f} GB")
+    print(f"  combined GPU free: {sum(vrams_gb):.2f} GB")
+    print(f"  combined planning budget ({args.phase}): {sum(budget_vrams):.2f} GB")
     print()
+    if reserve_details and preset.devices:
+        print(f"=== per-device reserve ({args.phase}, fitt + process + surge + pipeline) ===")
+        for i, (dev, rd) in enumerate(zip(preset.devices, reserve_details)):
+            print(
+                f"  dev{i} {dev.label:28s} free={rd['free_gb']:.2f} GB  "
+                f"budget={rd['budget_gb']:.2f} GB  class={rd['class']}  "
+                f"reserve={rd['total_reserve_mib']} MiB "
+                f"(fitt={rd['fitt_mib']} proc={rd['process_mib']} "
+                f"surge={rd['surge_mib']} pipe={rd['pipeline_mib']})"
+            )
+        print("  # future: --probe-fit via llama_memory_breakdown for measured compute/graph")
+        print()
     print("=== recommended deploy flags ===")
     print(f"  BENCH_RPC_ENDPOINT='{rpc}'")
     print(f"  BENCH_TS={','.join(str(t) for t in ts_eval)}")
@@ -634,10 +656,10 @@ def main() -> int:
 
     ok_default = False
     best: tuple[int, list[int], list[float]] | None = None
-    print(f"{'ngl':>4} {'cpu%':>5} {'ts':>16} | per-dev GB (w+KV+fitt) | ok")
+    print(f"{'ngl':>4} {'cpu%':>5} {'ts':>16} | per-dev GB (w+KV vs budget) | ok")
     for ngl, frac in ngl_rows:
         ok, totals, w_cpu = VRAM.check_split(
-            model_gb, layers, args.ctx, ngl, ts_eval, vrams_gb, margins_gb
+            model_gb, layers, args.ctx, ngl, ts_eval, budget_vrams, margins_gb
         )
         ts_s = ",".join(str(t) for t in ts_eval)
         tot_s = " ".join(f"{t:.1f}" for t in totals) if totals else "-"

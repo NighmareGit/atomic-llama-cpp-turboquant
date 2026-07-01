@@ -61,6 +61,58 @@ DEFAULT_MODEL_GB = 38.0
 DEFAULT_LAYERS = 80
 MARGIN_GB = 1.0  # legacy default (~1024 MiB)
 FITT_MIB_DEFAULT = 1024
+
+# Planning reserves (MiB) beyond weights+KV. Conservative for 8 GB RPC cards.
+# Future: optional --probe-fit dry-run via llama_memory_breakdown (common/fit.cpp).
+VRAM_PHASE_LOAD = "load"
+VRAM_PHASE_DECODE = "decode"
+_DEVICE_RESERVE_MIB = {
+    "small": {"process": 384, "load_surge": 1536, "decode_surge": 768, "pipeline": 512},
+    "medium": {"process": 256, "load_surge": 768, "decode_surge": 512, "pipeline": 384},
+    "large": {"process": 128, "load_surge": 512, "decode_surge": 384, "pipeline": 256},
+}
+
+
+def device_class_from_free_mb(free_mb: int) -> str:
+    if free_mb < 9 * 1024:
+        return "small"
+    if free_mb < 18 * 1024:
+        return "medium"
+    return "large"
+
+
+def planning_reserve_gb(
+    free_mb: int,
+    fitt_mib: int = FITT_MIB_DEFAULT,
+    phase: str = VRAM_PHASE_LOAD,
+) -> tuple[float, dict]:
+    """GB reserved on a device before weights+KV (fitt, RPC, load/decode surge, pipeline)."""
+    cls = device_class_from_free_mb(free_mb)
+    row = _DEVICE_RESERVE_MIB[cls]
+    surge_mib = row["load_surge"] if phase == VRAM_PHASE_LOAD else row["decode_surge"]
+    total_mib = fitt_mib + row["process"] + surge_mib + row["pipeline"]
+    detail = {
+        "class": cls,
+        "fitt_mib": fitt_mib,
+        "process_mib": row["process"],
+        "surge_mib": surge_mib,
+        "pipeline_mib": row["pipeline"],
+        "total_reserve_mib": total_mib,
+        "phase": phase,
+    }
+    return total_mib / 1024.0, detail
+
+
+def effective_budget_gb(
+    free_gb: float,
+    free_mb: int,
+    fitt_mib: int = FITT_MIB_DEFAULT,
+    phase: str = VRAM_PHASE_LOAD,
+) -> tuple[float, dict]:
+    reserve_gb, detail = planning_reserve_gb(free_mb, fitt_mib, phase)
+    detail["free_gb"] = round(free_gb, 2)
+    detail["budget_gb"] = round(max(0.25, free_gb - reserve_gb), 2)
+    return max(0.25, free_gb - reserve_gb), detail
 CPU_OFFLOAD_FRACS = (0.25, 0.30, 0.35, 0.40)
 
 
@@ -180,6 +232,24 @@ def margins_gb_from_fitt_mib(fitt_mib: list[int] | None, n: int) -> list[float]:
     return out[:n]
 
 
+def budget_vrams_from_live(
+    free_gbs: list[float],
+    free_mibs: list[int],
+    fitt_mib: list[int],
+    phase: str = VRAM_PHASE_LOAD,
+) -> tuple[list[float], list[dict]]:
+    """Effective per-device GB for weights+KV after planning reserves."""
+    budgets: list[float] = []
+    details: list[dict] = []
+    for i, free_gb in enumerate(free_gbs):
+        free_mb = free_mibs[i] if i < len(free_mibs) else int(free_gb * 1024)
+        fitt = fitt_mib[i] if i < len(fitt_mib) else FITT_MIB_DEFAULT
+        budget, detail = effective_budget_gb(free_gb, free_mb, fitt, phase)
+        budgets.append(budget)
+        details.append(detail)
+    return budgets, details
+
+
 def check_split(
     model_gb: float,
     layers: int,
@@ -192,7 +262,7 @@ def check_split(
     if ngl > layers:
         return False, [], 0.0
     if margins_gb is None:
-        margins_gb = [MARGIN_GB] * len(vrams)
+        margins_gb = [0.0] * len(vrams)
     gpu_frac = ngl / layers
     w_gpu = model_gb * gpu_frac
     w_cpu = model_gb * (1 - gpu_frac)
@@ -202,7 +272,7 @@ def check_split(
         w_i = w_gpu * ts / s
         layers_i = ngl * ts / s
         kv_i = kv_gb(layers_i, ctx)
-        margin = margins_gb[i] if i < len(margins_gb) else MARGIN_GB
+        margin = margins_gb[i] if i < len(margins_gb) else 0.0
         tot = w_i + kv_i + margin
         totals.append(tot)
         if tot > vram:
