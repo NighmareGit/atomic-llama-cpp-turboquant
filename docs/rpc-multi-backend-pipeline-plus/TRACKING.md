@@ -170,7 +170,8 @@ Side track — not blocking production ship (`trace-f-2gpu-plus` @ 48.9 t/s). Pe
 | V1 | gemma4 26B-A4B MoE | romulus HIP | 164.9 | 0.8% | 0 | **PASS** |
 | V1 | gemma4 26B-A4B MoE | remus CUDA docker | 140.8 | 1.3% | 0 | **PASS** |
 | V2 | llama-70B Q4_K_M | romulus HIP | 30.0 | 0.8% | 0 | **PASS** |
-| V2 | llama-70B Q4_K_M | remus CUDA docker (profiler) | — | — | — | **VRAM BLOCKED** (5060 Ti 16GB; profiler loads half locally) |
+| V2 | llama-70B Q4_K_M | remus CUDA docker (profiler) | — | — | — | **VRAM BLOCKED** (profiler holds local shard in-process) |
+| V2 | llama-70B Q4_K_M | remus CUDA `llama-server` + triton | smoke OK | — | — | **PASS** (`--fit on`, ts=50,50; 3 tok gen) |
 | V2 | llama-70B Q4_K_M | romulus HIP (profiler) | 30.0 | 0.8% | 0 | **PASS** |
 
 **V2 CUDA note:** `llama-pipeline-profiler` on remus-docker OOMs on dense 70B — local 5060 Ti cannot hold the client shard. For V2 CUDA validation use **llama-server + RPC worker** topology (`rpc-server-bench.sh pathb`): e.g. remus client + triton `:50054`, or remus + romulus `:50051`, with `GGML_PIPELINE_PLUS=1` and `BENCH_TRACE=1`. Profiler gate presets remain canonical for M3; validation smokes may use server style for large dense models.
@@ -216,7 +217,7 @@ Validation overlap (0.8–1.3% @ n=128) shows the scheduler **can** overlap more
 #### Next actions
 
 - [x] Push B+14/B+15 to gitea; canonical `b15b` re-bench (rebuild `ggml-base` after sync)
-- [ ] V2 CUDA via `llama-server` + triton `:50054` (remus client) — profiler OOM insufficient alone
+- [x] V2 CUDA via `llama-server` + triton `:50054` (remus client, `--fit on`) — PASS 2026-07-01
 - [ ] B+12 prototype + bisect on canonical n=384 (overlap lever)
 - [ ] Phase 1.2 A+B parsers (waterfall/Gantt) before next major bisect
 
