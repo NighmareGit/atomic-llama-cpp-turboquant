@@ -160,9 +160,7 @@ build_profiler_args() {
     if [[ -n "${BENCH_CTX:-}" ]]; then
         args+=(-c "$BENCH_CTX")
     fi
-    if [[ -n "${BENCH_FIT_TARGET:-}" ]]; then
-        args+=(--fit off --fit-target "$BENCH_FIT_TARGET")
-    fi
+    # BENCH_FIT_TARGET is recorded in env.txt only; profiler has no --fit/--fit-target flags.
     if [[ -n "${BENCH_EXTRA:-}" ]]; then
         # shellcheck disable=SC2206
         local extra_parts=(${BENCH_EXTRA})
