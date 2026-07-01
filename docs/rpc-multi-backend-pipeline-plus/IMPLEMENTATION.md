@@ -96,8 +96,8 @@ RPC rows add optional `decode_id`, `split`, `backend`. Join key for parsers: `(d
 | **C-full** | Emit + schema above | **done** — `6dc504bce` |
 | **C audit** | Extend phase12c for `sync_copy_fallback` / `copy_async_ok` | **next** |
 | **Re-bench** | `b6-2gpu-f-triton-n384-romulus-native` with C-full build | **next** |
-| **A** | Per-token blocking waterfall parser | **next** |
-| **B** | Assembly-line Gantt (`decode_id` x split x cmd) | **next** |
+| **A** | Per-token blocking waterfall parser | **done** — `scripts/b6-gate-phase12a-waterfall.sh` |
+| **B** | Assembly-line Gantt (`decode_id` x split x cmd) | **done** — `scripts/b6-gate-phase12b-gantt.sh` |
 | **7f** | Register hot-path observability in pathb-sync-site-audit | **next** |
 
 ### B+11–B+13 implement order (post-C audit)

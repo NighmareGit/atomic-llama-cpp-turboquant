@@ -20,7 +20,8 @@ Staged D step C: existing traces only. Per-dir JSON: `telemetry/blocking-audit-c
 - **SET_HASH_RPC_HEAVY**: weight relay still costs gen-window budget (B+4 cache check).
 - **WAIT_DOMINATES_COMPUTE**: assembly line starved regardless of straggler ms/tok.
 
-## Next: Phase 1.2 A+B
+## Phase 1.2 A+B (done)
 
-Per-token blocking waterfall + assembly-line Gantt (decode_id x split x cmd class).
+- `phase12a-waterfall.md` — per-token blocking waterfall
+- `phase12b-gantt.md` — assembly-line Gantt + HOL tail RTT
 
