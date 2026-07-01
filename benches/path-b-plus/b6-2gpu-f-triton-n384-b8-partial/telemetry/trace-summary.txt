@@ -1,35 +1,39 @@
 === trace summary ===
-dir=/src/benches/path-b-plus/b6-2gpu-f-triton-n384-b8-partial/telemetry
+dir=/home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-n384-b8-partial/telemetry
 
 [rpc] events=2154
-  ALLOC_BUFFER count=8 total_ms=113.45 avg_us=14181
-  GET_ALIGNMENT count=2 total_ms=0.29 avg_us=143
-  GET_MAX_SIZE count=2 total_ms=0.33 avg_us=167
-  BUFFER_GET_BASE count=8 total_ms=1.48 avg_us=184
-  FREE_BUFFER count=8 total_ms=6.89 avg_us=861
-  BUFFER_CLEAR count=4 total_ms=0.62 avg_us=154
-  SET_TENSOR_HASH count=162 total_ms=79.69 avg_us=492
-  GET_TENSOR count=770 total_ms=161.39 avg_us=210
-  GRAPH_COMPUTE count=8 total_ms=7.83 avg_us=978
-  GET_DEVICE_MEMORY count=6 total_ms=9.53 avg_us=1589
-  GET_ALLOC_SIZE count=12 total_ms=3.13 avg_us=261
-  HELLO count=15 total_ms=2.89 avg_us=193
-  DEVICE_COUNT count=2 total_ms=0.41 avg_us=203
-  GRAPH_RECOMPUTE count=762 total_ms=12.29 avg_us=16
-  EVENT_RECORD count=385 total_ms=1716.8 avg_us=4459
+  ALLOC_BUFFER count=8 total_ms=113.45 avg_us=14181.0
+  GET_ALIGNMENT count=2 total_ms=0.28 avg_us=142.0
+  GRAPH_COMPUTE count=8 total_ms=7.83 avg_us=978.0
+  GET_DEVICE_MEMORY count=6 total_ms=9.53 avg_us=1588.0
+  GET_ALLOC_SIZE count=12 total_ms=3.13 avg_us=261.0
+  HELLO count=15 total_ms=2.89 avg_us=193.0
+  DEVICE_COUNT count=2 total_ms=0.41 avg_us=202.0
+  GRAPH_RECOMPUTE count=762 total_ms=12.29 avg_us=16.0
+  EVENT_RECORD count=385 total_ms=1716.8 avg_us=4459.0
+  GET_MAX_SIZE count=2 total_ms=0.33 avg_us=166.0
+  BUFFER_GET_BASE count=8 total_ms=1.48 avg_us=184.0
+  FREE_BUFFER count=8 total_ms=6.89 avg_us=861.0
+  BUFFER_CLEAR count=4 total_ms=0.61 avg_us=154.0
+  SET_TENSOR_HASH count=162 total_ms=79.69 avg_us=492.0
+  GET_TENSOR count=770 total_ms=161.39 avg_us=210.0
   blocking_events=882 blocking_ms=2084.92
+  rpc_rtt_count=497 rpc_rtt_ms=368.12
+  rpc_rtt_hist=0ms:487 1ms:2 2ms:2 3ms:3 18ms:1 27ms:1 109ms:1
+  rpc_rtt_p50_ms=0.35 rpc_rtt_p95_ms=0.85 rpc_rtt_p99_ms=3.4
+  EVENT_RECORD count=385 total_ms=1716.8
   drain_flush_ms=1716.8
-  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
-  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
-  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
-  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
-  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
 
 [sched] events=4620
   split_total_count=1155
-  split_total_ms_sum=3294.15 avg_us=2852
+  split_total_ms_sum=3294.15 avg_us=2852.0
     backend2 splits=385 ms=30.7
-    backend0 splits=385 ms=90.29
+    backend0 splits=385 ms=90.28
     backend1 splits=385 ms=3173.16
   input_wait_copy_ms=2838.56
   graph_compute_async_ms=405.71
@@ -39,3 +43,5 @@ dir=/src/benches/path-b-plus/b6-2gpu-f-triton-n384-b8-partial/telemetry
     copy1 splits=288
     copy2 splits=288
     copy3 splits=288
+  per_split_rpc_rtt:
+    split=2 backend=1 rpc_rtt_count=139 rpc_rtt_ms=46.15

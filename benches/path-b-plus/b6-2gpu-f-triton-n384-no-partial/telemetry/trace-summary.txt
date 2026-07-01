@@ -19,7 +19,9 @@ dir=/home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquan
   GET_TENSOR count=770 total_ms=144.36 avg_us=187.0
   blocking_events=903 blocking_ms=3050.85
   rpc_rtt_count=518 rpc_rtt_ms=1310.31
-  rpc_rtt_hist=0ms:488 1ms:2 2ms:1 3ms:1 4ms:2
+  rpc_rtt_hist=0ms:488 1ms:2 2ms:1 3ms:1 4ms:2 5ms:1 9ms:1 13ms:1 14ms:1 25ms:1 29ms:2 34ms:1
+  rpc_rtt_p50_ms=0.33 rpc_rtt_p95_ms=4.16 rpc_rtt_p99_ms=57.47
+  EVENT_RECORD count=385 total_ms=1740.54
   drain_flush_ms=1740.54
   hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
   hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
@@ -41,3 +43,5 @@ dir=/home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquan
     copy1 splits=288
     copy2 splits=288
     copy3 splits=288
+  per_split_rpc_rtt:
+    split=2 backend=1 rpc_rtt_count=395 rpc_rtt_ms=130.89

@@ -119,16 +119,34 @@ def main() -> None:
                 f"  blocking_events={len(blocking)} blocking_ms={round_ms(sum(bus))}"
             )
 
-            # extend for per-split / RPC RTT histogram when Plus=1 (plan 1.1)
             rtts = [int(row.get("elapsed_us", 0)) for row in rpc_rows if row.get("phase") == "send_recv"]
             if rtts:
                 lines.append(f"  rpc_rtt_count={len(rtts)} rpc_rtt_ms={round_ms(sum(rtts))}")
-                bins = {}
+                bins: dict[int, int] = {}
                 for us in rtts:
-                    b = us // 1000  # ms bins
+                    b = us // 1000
                     bins[b] = bins.get(b, 0) + 1
-                h = " ".join(f"{k}ms:{v}" for k, v in sorted(bins.items())[:5])
+                h = " ".join(f"{k}ms:{v}" for k, v in sorted(bins.items())[:12])
                 lines.append(f"  rpc_rtt_hist={h}")
+                sorted_us = sorted(rtts)
+
+                def pct(p: float) -> float:
+                    if not sorted_us:
+                        return 0.0
+                    idx = min(len(sorted_us) - 1, max(0, int(math.ceil(p * len(sorted_us)) - 1)))
+                    return round(sorted_us[idx] / 1000.0, 2)
+
+                lines.append(
+                    f"  rpc_rtt_p50_ms={pct(0.50)} rpc_rtt_p95_ms={pct(0.95)} "
+                    f"rpc_rtt_p99_ms={pct(0.99)}"
+                )
+
+            event_rec = [row for row in rpc_rows if int(row.get("cmd", -1)) == 18]
+            if event_rec:
+                erus = [int(row.get("elapsed_us", 0)) for row in event_rec]
+                lines.append(
+                    f"  EVENT_RECORD count={len(event_rec)} total_ms={round_ms(sum(erus))}"
+                )
 
             drain = [
                 row
@@ -233,14 +251,83 @@ def main() -> None:
             if len(by_copy) > 1:
                 for copy in copy_order:
                     lines.append(f"    copy{copy} splits={len(by_copy[copy])}")
+
+            split_totals = [row for row in sched_rows if row.get("phase") == "split_total"]
+            send_recv = [
+                row for row in rpc_rows
+                if row.get("phase") == "send_recv" and row.get("ts_us") is not None
+            ]
+            if split_totals and send_recv:
+                lines.append("  per_split_rpc_rtt:")
+                by_split: dict[tuple[int, int], list[int]] = defaultdict(list)
+                for sp in split_totals:
+                    sid = int(sp.get("split", -1))
+                    backend = int(sp.get("backend", -1))
+                    start = int(sp.get("ts_us", 0))
+                    end = start + int(sp.get("elapsed_us", 0))
+                    rtt_us = [
+                        int(r.get("elapsed_us", 0))
+                        for r in send_recv
+                        if start <= int(r.get("ts_us", 0)) < end
+                    ]
+                    if rtt_us:
+                        by_split[(sid, backend)].extend(rtt_us)
+                for (sid, backend) in sorted(by_split):
+                    vals = by_split[(sid, backend)]
+                    lines.append(
+                        f"    split={sid} backend={backend} rpc_rtt_count={len(vals)} "
+                        f"rpc_rtt_ms={round_ms(sum(vals))}"
+                    )
     else:
         lines.append("")
         lines.append(f"[sched] missing {sched_file}")
+
+    extended: dict = {
+        "dir": str(trace_dir),
+        "rpc_events": len(rpc_rows),
+        "sched_events": len(sched_rows),
+    }
+    if rpc_rows:
+        rtts_ext = [int(r.get("elapsed_us", 0)) for r in rpc_rows if r.get("phase") == "send_recv"]
+        if rtts_ext:
+            extended["rpc_rtt"] = {
+                "count": len(rtts_ext),
+                "total_ms": round_ms(sum(rtts_ext)),
+            }
+    if sched_rows:
+        for phase in ("input_wait_copy", "graph_compute_async", "event_record"):
+            phase_rows = [r for r in sched_rows if r.get("phase") == phase]
+            if phase_rows:
+                extended[phase] = round_ms(sum(int(r.get("elapsed_us", 0)) for r in phase_rows))
+        split_ev = [r for r in sched_rows if r.get("phase") == "split_total"]
+        if len(split_ev) >= 2:
+            overlap = 0
+            pairs = 0
+            for i, a in enumerate(split_ev):
+                a_start = int(a.get("ts_us", 0))
+                a_end = a_start + int(a.get("elapsed_us", 0))
+                for j in range(i + 1, len(split_ev)):
+                    b = split_ev[j]
+                    if a.get("backend") == b.get("backend"):
+                        continue
+                    b_start = int(b.get("ts_us", 0))
+                    if a_start <= b_start < a_end:
+                        overlap += 1
+                    pairs += 1
+            extended["assembly_overlap"] = {
+                "count": overlap,
+                "pairs": pairs,
+                "overlap_pct": round(100.0 * overlap / pairs, 1) if pairs else 0.0,
+            }
+
+    ext_file = trace_dir / "trace-parse-extended.json"
+    ext_file.write_text(json.dumps(extended, indent=2) + "\n", encoding="utf-8")
 
     text = "\n".join(lines) + "\n"
     out_file.write_text(text, encoding="utf-8")
     print(text, end="")
     print(f"summary -> {out_file}")
+    print(f"extended -> {ext_file}")
 
 
 if __name__ == "__main__":

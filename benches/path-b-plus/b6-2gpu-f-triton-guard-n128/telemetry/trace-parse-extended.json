@@ -1,0 +1,17 @@
+{
+  "dir": "/home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-guard-n128/telemetry",
+  "rpc_events": 1062,
+  "sched_events": 1548,
+  "rpc_rtt": {
+    "count": 329,
+    "total_ms": 430.7
+  },
+  "input_wait_copy": 1154.32,
+  "graph_compute_async": 647.74,
+  "event_record": 1.37,
+  "assembly_overlap": {
+    "count": 459,
+    "pairs": 49923,
+    "overlap_pct": 0.9
+  }
+}

@@ -35,10 +35,5 @@
   "path_c_reserved": {
     "cross_endpoint_copy_count": null,
     "server_local_copy_count": null
-  },
-  "baseline_delta": {
-    "G_tps": -0.39500000000001023,
-    "overlap_pct": 0.0,
-    "stall_ratio": 0.04830000000000001
   }
 }

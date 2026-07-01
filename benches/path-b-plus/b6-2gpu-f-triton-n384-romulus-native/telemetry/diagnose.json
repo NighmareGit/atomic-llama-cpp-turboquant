@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "trace_dir": "/home/hunter/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-n384-romulus-native/telemetry",
+  "trace_dir": "/home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-n384-romulus-native/telemetry",
   "gen_only": true,
   "gen_tokens_est": 385,
   "G_tps": 200.788,
@@ -17,9 +17,9 @@
   "stall_ms": 1976.63,
   "compute_ms": 322.98,
   "backends_ms_per_token": {
+    "2": 0.011,
     "0": 0.035,
-    "1": 5.942,
-    "2": 0.011
+    "1": 5.942
   },
   "straggler_backend": "1",
   "straggler_ms_per_token": 5.942,

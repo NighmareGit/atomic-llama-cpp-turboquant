@@ -10,4 +10,6 @@ Grill-with-docs session locked the next 1-2 week plan after n=384 triton data sh
 4. **validate-rpc:** Parallel hygiene track; bisects use `PROFILER_SKIP_VALIDATE=1` until strace fix lands.
 5. **After 2-GPU B+8+B+10 OFF if M1 still FAIL:** Write partial 2-GPU verdict in TRACKING, then run 4-GPU (`b6-4gpu-g` on romulus). Structural ceiling doc only after 4-GPU ladder also fails M1.
 
-**Considered:** Skip to ceiling doc after 2-GPU null bisects; jump to Path C. Rejected — PLAN order requires B+7a' on 4-GPU; Path C needs explicit scope approval.
+**Considered:** Skip to ceiling doc after 2-GPU null bisects; jump to Path C. Rejected — PLAN order requires B+7a' on 4-GPU first.
+
+**Update 2026-07-01:** Ladder + 4-GPU complete; structural ceiling documented. **Path C is out of scope** for path-b-plus (reference only, no implementation).

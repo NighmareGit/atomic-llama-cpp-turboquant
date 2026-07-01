@@ -17,7 +17,7 @@ Linux ROCm cluster host at `192.168.8.108`; primary gate **client** (7900XTX) wi
 _Avoid_: cluster, server
 
 **Triton**:
-Windows CUDA spike worker at `192.168.8.23`; RTX 3090 RPC on `:50054` (3070 on `:50055`, parked for 35B MoE).
+Ubuntu 24.04 CUDA spike worker at `192.168.8.23`; RTX 3090 RPC on `:50054` (3070 on `:50055`, parked for 35B MoE). Ops: `scripts/b6-gate-triton-*.sh`.
 _Avoid_: worker, remote GPU
 
 **Mitigation ladder**:
@@ -25,8 +25,12 @@ Ordered B+8 through B+13 code changes tested via OFF-bisects before declaring a 
 _Avoid_: fix list, optimization pass
 
 **Structural ceiling**:
-Documented verdict that M3 overlap cannot be reached within Path-B+ scope after the mitigation ladder is exhausted on 2-GPU and 4-GPU topologies.
+Documented verdict that M3 overlap cannot be reached within Path-B+ scope after the mitigation ladder is exhausted on 2-GPU and 4-GPU topologies. Recorded in TRACKING 2026-07-01.
 _Avoid_: giving up, hard limit
+
+**Path C (out of scope)**:
+Server-side scheduling / distributed orchestration track. **Not implemented** on path-b-plus; may be referenced for ideas only.
+_Avoid_: next step, fallback plan
 
 **Gate client**:
 The host that runs `llama-pipeline-profiler` for a bench gate preset. Today usually romulus (7900XTX); any synced node may serve this role.

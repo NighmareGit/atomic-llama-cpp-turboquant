@@ -1,0 +1,17 @@
+{
+  "dir": "/home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-n384-no-async-copy/telemetry",
+  "rpc_events": 2196,
+  "sched_events": 4620,
+  "rpc_rtt": {
+    "count": 518,
+    "total_ms": 1271.2
+  },
+  "input_wait_copy": 1974.88,
+  "graph_compute_async": 200.21,
+  "event_record": 0.18,
+  "assembly_overlap": {
+    "count": 924,
+    "pairs": 444675,
+    "overlap_pct": 0.2
+  }
+}

@@ -46,8 +46,8 @@ Navigation: [TRACKING.md](TRACKING.md) | [MISSION.md](MISSION.md) | [rpc-patch/d
 
 | Milestone | Target | Best measured | Status |
 |-----------|--------|---------------|--------|
-| M1 | overlap ≥ 1% | 0.7% (G2 n=128) | FAIL |
-| M3 | overlap ≥ 5% | 0.3% (2-GPU triton) | FAIL |
+| M1 | overlap ≥ 1% | 0.9% (triton guard-n128) | FAIL |
+| M3 | overlap ≥ 5% | 0.2% (2-GPU triton n=384) | FAIL |
 
 **Profiler evidence (b6-2gpu-f):** `stall_ratio=0.95`, `input_wait_copy_ms=4821` vs `graph_compute_async_ms=250`, `EVENT_RECORD` = `drain_flush_ms`. Triton cut drain/straggler but overlap moved 0.2%→0.3% only → **pipelining depth**, not throughput, is the gate lever.
 
@@ -67,7 +67,9 @@ Ordered by leverage on `overlap_pct` (profiler-led). One bisect per re-bench.
 
 **Recommended implement order:** B+8 → B+9 → B+10 → B+7a′ (4-GPU drain prerequisite if canonical is gate topology).
 
-**Stop rule:** If M1 not reached after B+8–B+10 + B+7a′ on 2-GPU and 4-GPU, document structural ceiling in TRACKING; Path C bridge requires explicit scope approval.
+**Stop rule:** If M1 not reached after B+8–B+10 + B+7a′ on 2-GPU and 4-GPU, document structural ceiling in TRACKING. **Triggered 2026-07-01** — see TRACKING structural ceiling section.
+
+**Path C boundary:** Path C (server-side scheduling / distributed orchestration) is **out of scope** for `rpc-multi-backend-pipeline-plus`. Reference Path C docs for ideas only; do not implement Path C on this branch.
 
 ### 2.2 Straggler / ops (throughput, not overlap gate)
 
@@ -80,13 +82,13 @@ Ordered by leverage on `overlap_pct` (profiler-led). One bisect per re-bench.
 - Append `benches/path-b-plus/regression.jsonl`
 - Regression guard for 48.9 t/s 2-device baseline
 
-## Phase 3 — Path-C Bridge (Deferred)
+## Phase 3 — Path-C Bridge (**out of scope**)
 
-**Entry criteria:** B+ mitigation ladder complete; M3 still FAIL with trace-proven structural ceiling doc.
+**Not part of path-b-plus.** Structural ceiling is documented; M3 remains FAIL. Path C may be pursued in a separate effort.
 
-- Testbed: `trace-g-4gpu-primary` (~43 t/s)
-- Prototype server-side scheduling only after handoff doc from this mission
-- See [rpc-patch/docs/rpc-path-c-plan.md](../../rpc-patch/docs/rpc-path-c-plan.md)
+- This mission may **read** [rpc-patch/docs/rpc-path-c-plan.md](../../rpc-patch/docs/rpc-path-c-plan.md) for inspiration
+- **No Path C implementation** on `Path-B-Event-Support-Pipeline-Plus`
+- Production cluster baseline (`trace-g-4gpu-primary` ~43 t/s) remains a throughput reference only
 
 ## Phase 4 — Production Hardening
 
@@ -126,4 +128,4 @@ bash scripts/b6-gate-diagnose-runs.sh b6-2gpu-f b6-4gpu-g
 - End of Phase 2: M3 PASS **or** structural ceiling documented with trace proof
 - Phase 3 start: Explicit approval only
 
-**Next action (immediate):** Phase 1.1 trace visibility **in parallel with** B+8 `pipeline_barrier` bisect on `b6-2gpu-f`.
+**Next action (2026-07-01):** Structural ceiling closed. Remaining: PR 8 validate-rpc hygiene, comparison matrix refresh. B+11–B+13 parked (not Path C).

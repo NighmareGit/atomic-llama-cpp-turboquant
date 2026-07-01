@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "trace_dir": "/src/benches/path-b-plus/b6-2gpu-f-triton-n384-no-defer/telemetry",
+  "trace_dir": "/home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-n384-no-defer/telemetry",
   "gen_only": true,
   "gen_tokens_est": 385,
   "G_tps": 128.834,
@@ -17,9 +17,9 @@
   "stall_ms": 2844.3,
   "compute_ms": 382.32,
   "backends_ms_per_token": {
+    "2": 0.077,
     "0": 0.233,
-    "1": 8.186,
-    "2": 0.077
+    "1": 8.186
   },
   "straggler_backend": "1",
   "straggler_ms_per_token": 8.186,
