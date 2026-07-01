@@ -2,7 +2,7 @@
 
 Trace-proven blocking sites for multi-RPC pipeline stalls. Static map: [`RPC-WAIT-MAP.md`](../../docs/cuda-windows-5070ti/RPC-WAIT-MAP.md). Parse tools: `rpc-patch/scripts/pathb-rpc-trace-parse.sh`, `pathb-hotpath-summary.sh`.
 
-**Last updated:** 2026-06-30  
+**Last updated:** 2026-07-01  
 **Mission plan:** [docs/rpc-multi-backend-pipeline-plus/PLAN.md](../../docs/rpc-multi-backend-pipeline-plus/PLAN.md) Phase 2
 **Evidence bench:** `b6-2gpu-f`, `b6-4gpu-g`, `b6-4gpu-g-triton`, `b6-4gpu-ts-sweep` (romulus 4-GPU, 2026-06-29), `trace-f-2gpu-plus` (Windows), `profiler-4gpu-primary-romulus-trace-v2`
 
@@ -64,6 +64,12 @@ Mission tracking: [b6-gate/TRACKING.md](b6-gate/TRACKING.md).
 | B+13 | `cpy_tensor_async` sync fallback | Dst-then-src async try | **SHIPPED** (untested) | (with Plus) |
 | B+11 | Single TCP HOL blocking | Dual-socket proto 4.4 | PENDING | — |
 | B+12 | GET_TENSOR blocking storm | Full Path A2 deferral | PARTIAL | via B+9 barrier drain |
+
+### B+7f — hot-path observability (Phase 1.2C-full, 2026-07-01)
+
+| # | Blocker | Evidence | Fix tier | Status |
+|---|---------|----------|----------|--------|
+| 7f | C-full trace join | Pre-C-full: `LOCAL_SYNC_FALLBACK_LIKELY` with `copy_issue=0`; `input_wait_copy_ms` >> wire COPY | C-full emit: `sync_copy_fallback`, RPC `(decode_id,split,backend)` | **SHIPPED** emit; parsers + B+13 fix **active** |
 
 Bench: `b6-2gpu-f` n=384 first (G1). See [IMPLEMENTATION.md](../../docs/rpc-multi-backend-pipeline-plus/IMPLEMENTATION.md).
 

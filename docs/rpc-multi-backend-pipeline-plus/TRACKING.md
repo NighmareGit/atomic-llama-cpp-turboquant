@@ -21,6 +21,9 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 | 2026-07-01 | **B+9 OFF null on n=384 triton** | DEFER=0 vs canonical: overlap 0.2% both, stall ~0.87 | Next: B+8 OFF bisect; see [ADR-0001](../adr/0001-b6-ladder-execution-post-b9-null.md) |
 | 2026-07-01 | **Topology-agnostic gate client** | Any synced node may run profiler; romulus primary | [CONTEXT.md](CONTEXT.md) |
 | 2026-07-01 | **Structural ceiling + Path C out of scope** | B+8–B+10 + B+7a' exhausted; M1 FAIL 2-GPU + 4-GPU | TRACKING ceiling section; no Path C on this branch |
+| 2026-07-01 | **Grill: pursue M3 via B+11–B+13** | Blocking = implementation bug, not Path C; ladder NULL != unfixable | Reactivate B+11–B+13; Phase 1.2 staged D |
+| 2026-07-01 | **C-full instrumentation** | C-min insufficient for B+13 proof | `sync_copy_fallback` + RPC join; see IMPLEMENTATION |
+| 2026-07-01 | **Sample API C-full keep lists deferred** | Emit/parser/re-bench first | [FUTURE-EXPANSIONS.md](FUTURE-EXPANSIONS.md) only |
 
 ## Current Champion Runs
 
@@ -53,7 +56,7 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 
 **4-GPU summary (2026-07-01):** JUPITER canonical 0.2%/6.4s drain; B+7a′ OFF 0.1%; triton swap 0.1%/4.6s drain, G=73.2. All M1 FAIL.
 
-**Next:** Phase 1.1 complete; B+11–B+13 parked (Path C out of scope for path-b-plus).
+**Next:** Phase 1.2C done; C-full shipped; B+11–B+13 + Phase 1.2 A+B active (grill 2026-07-01).
 
 ## Structural ceiling (2026-07-01 — PLAN stop rule)
 
@@ -106,18 +109,22 @@ Romulus-native canonical (`78e8f3c45` ladder):
 
 ## Open Items / Blockers
 
-### Primary — B+6 overlap gate (M3) — **STRUCTURAL CEILING**
+### Primary — B+6 overlap gate (M3) — **active via B+11–B+13**
 
-Ladder exhausted; see **Structural ceiling** section above. No further bisect waves without explicit new scope.
+Mitigation ladder B+8–B+10 NULL on overlap; grill 2026-07-01: treat as **implementation bug** (B+13 sync fallback prime suspect). Structural ceiling section retained as ladder evidence; **not** a stop for B+11–B+13.
 
-**Remaining hygiene:** PR 8 validate-rpc; regression guard for 48.9 t/s production champion.
+**Execution order:** C-full re-bench -> Phase 1.2 A+B parsers -> B+13 -> B+12 -> B+11. See [IMPLEMENTATION.md](IMPLEMENTATION.md).
 
-### Secondary — Instrumentation (Phase 1.1 + 1.2C-full)
+### Secondary — Instrumentation (Phase 1.1 + 1.2)
 
-- ~~Per-split / per-RPC RTT in trace parsers~~ (**done 2026-07-01** — `pathb-rpc-trace-parse.sh`, `b6-gate-phase11-reparse.sh`)
-- ~~`BENCHMARKS/2026-07-comparison-matrix.md`~~ (**done 2026-07-01**)
-- **C-full hotpath** (grill 2026-07-01) — `sync_copy_fallback` / `copy_async_ok` + RPC `(decode_id,split,backend)` join; schema + deferred live tail in [FUTURE-EXPANSIONS.md](FUTURE-EXPANSIONS.md)
-- Phase 1.2 A+B parsers + instrumented re-bench on `b6-2gpu-f-triton-n384-romulus-native`
+- ~~Per-split / per-RPC RTT in trace parsers~~ (**done 2026-07-01**)
+- ~~Phase 1.2C blocking audit~~ (**done 2026-07-01** — `b6-gate-phase12c-blocking-audit.sh`)
+- ~~C-full hotpath emit~~ (**done 2026-07-01** — `6dc504bce`)
+- Extend phase12c parser for `sync_copy_fallback` / `copy_async_ok`
+- Re-bench `b6-2gpu-f-triton-n384-romulus-native`
+- Phase 1.2 **A** waterfall + **B** Gantt parsers
+- Blocker **7f** in pathb-sync-site-audit
+- Sample API C-full keep lists — **deferred** ([FUTURE-EXPANSIONS.md](FUTURE-EXPANSIONS.md))
 
 ### Ops / hygiene
 
