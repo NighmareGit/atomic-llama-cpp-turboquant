@@ -269,6 +269,9 @@ static void flush_pending_get_tensor_for_socket(const socket_ptr & sock);
 static void flush_pending_get_tensor();
 static bool rpc_issue_relay_upload(const rpc_pending_relay & relay);
 static void flush_pending_relays();
+static bool rpc_pending_relay_matches_dst(const rpc_pending_relay & pr,
+                                          const ggml_tensor * const * dst, size_t n_dst);
+static void flush_pending_relays_for_dst(const ggml_tensor * const * dst, size_t n_dst);
 static void flush_set_tensor_batch();
 static void rpc_register_socket(const socket_ptr & sock);
 static void rpc_drain_all_endpoints_pending();
@@ -1383,11 +1386,11 @@ static bool rpc_pending_download_matches_dst(const rpc_pending_download & pd,
 }
 
 void ggml_backend_rpc_flush_pending_downloads_for_dst(const ggml_tensor * const * dst, size_t n_dst) {
-    if (tls_pending_downloads.empty() && tls_pending_relays.empty()) {
+    if (tls_pending_downloads.empty()) {
         return;
     }
 
-    bool need_flush = n_dst == 0 || !tls_pending_relays.empty();
+    bool need_flush = n_dst == 0;
     if (!need_flush) {
         for (const auto & pd : tls_pending_downloads) {
             if (rpc_pending_download_matches_dst(pd, dst, n_dst)) {
@@ -1427,7 +1430,74 @@ void ggml_backend_rpc_flush_pending_downloads_for_dst(const ggml_tensor * const 
             ++it;
         }
     }
-    flush_pending_relays();
+}
+
+bool ggml_backend_rpc_relay_pending_for_dst(const ggml_tensor * dst) {
+    if (dst == nullptr) {
+        return false;
+    }
+    for (const auto & relay : tls_pending_relays) {
+        if (relay.dst == dst) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool rpc_pending_relay_matches_dst(const rpc_pending_relay & pr,
+                                          const ggml_tensor * const * dst, size_t n_dst) {
+    if (n_dst == 0) {
+        return true;
+    }
+    for (size_t i = 0; i < n_dst; i++) {
+        if (pr.dst == dst[i]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void flush_one_pending_relay(rpc_pending_relay & relay) {
+    if (relay.src == nullptr || relay.dst == nullptr) {
+        return;
+    }
+    const size_t size = ggml_nbytes(relay.src);
+    if (size == 0) {
+        return;
+    }
+    drain_pending_copy_response(relay.src_sock);
+    drain_pending_copy_response(relay.dst_sock);
+    if (!rpc_event_defer_barrier()) {
+        drain_pending_event_response(relay.src_sock);
+        drain_pending_event_response(relay.dst_sock);
+    }
+    flush_pending_get_tensor_for_socket(relay.src_sock);
+    flush_pending_get_tensor_for_socket(relay.dst_sock);
+    flush_set_tensor_batch();
+    relay.staging.resize(size);
+    ggml_backend_rpc_buffer_get_tensor(relay.src->buffer, relay.src, relay.staging.data(), 0, size);
+    if (!rpc_issue_relay_upload(relay)) {
+        GGML_LOG_ERROR("[%s] relay upload failed\n", __func__);
+    }
+}
+
+static void flush_pending_relays_for_dst(const ggml_tensor * const * dst, size_t n_dst) {
+    if (tls_pending_relays.empty()) {
+        return;
+    }
+    auto it = tls_pending_relays.begin();
+    while (it != tls_pending_relays.end()) {
+        if (rpc_pending_relay_matches_dst(*it, dst, n_dst)) {
+            flush_one_pending_relay(*it);
+            it = tls_pending_relays.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void ggml_backend_rpc_flush_pending_relays_for_dst(const ggml_tensor * const * dst, size_t n_dst) {
+    flush_pending_relays_for_dst(dst, n_dst);
 }
 
 void ggml_backend_rpc_flush_pending_downloads(void) {
@@ -1450,33 +1520,7 @@ static bool rpc_issue_relay_upload(const rpc_pending_relay & relay) {
 }
 
 static void flush_pending_relays() {
-    if (tls_pending_relays.empty()) {
-        return;
-    }
-    for (auto & relay : tls_pending_relays) {
-        if (relay.src == nullptr || relay.dst == nullptr) {
-            continue;
-        }
-        const size_t size = ggml_nbytes(relay.src);
-        if (size == 0) {
-            continue;
-        }
-        drain_pending_copy_response(relay.src_sock);
-        drain_pending_copy_response(relay.dst_sock);
-        if (!rpc_event_defer_barrier()) {
-            drain_pending_event_response(relay.src_sock);
-            drain_pending_event_response(relay.dst_sock);
-        }
-        flush_pending_get_tensor_for_socket(relay.src_sock);
-        flush_pending_get_tensor_for_socket(relay.dst_sock);
-        flush_set_tensor_batch();
-        relay.staging.resize(size);
-        ggml_backend_rpc_buffer_get_tensor(relay.src->buffer, relay.src, relay.staging.data(), 0, size);
-        if (!rpc_issue_relay_upload(relay)) {
-            GGML_LOG_ERROR("[%s] relay upload failed\n", __func__);
-        }
-    }
-    tls_pending_relays.clear();
+    flush_pending_relays_for_dst(nullptr, 0);
 }
 
 // Same-host isolated RPC endpoints (e.g. triton :50054 + :50055 docker): client pulls

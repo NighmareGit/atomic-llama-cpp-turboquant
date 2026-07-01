@@ -1872,7 +1872,8 @@ static void ggml_backend_sched_wait_copy_slot(
 // B+14: wait for the backend that produced this input (RPC event drain / GPU stream / CPU sync).
 static void ggml_backend_sched_wait_producer(
         ggml_backend_sched_t sched, int split_id, int split_backend_id, ggml_backend_t split_backend,
-        ggml_backend_t producer_backend, int producer_bid, const ggml_tensor * input_cpy) {
+        ggml_backend_t producer_backend, int producer_bid, const ggml_tensor * input_cpy,
+        bool defer_rpc_pending) {
     if (producer_bid < 0 || producer_bid == split_backend_id || producer_backend == nullptr) {
         return;
     }
@@ -1880,8 +1881,13 @@ static void ggml_backend_sched_wait_producer(
         if ((g_rpc_producer_ready_mask & (1u << producer_bid)) != 0) {
             return;
         }
-        if (input_cpy != nullptr && ggml_backend_rpc_download_pending_for_dst(input_cpy)) {
-            return;
+        if (defer_rpc_pending) {
+            if (input_cpy != nullptr && ggml_backend_rpc_download_pending_for_dst(input_cpy)) {
+                return;
+            }
+            if (input_cpy != nullptr && ggml_backend_rpc_relay_pending_for_dst(input_cpy)) {
+                return;
+            }
         }
     }
     ggml_backend_event_t ev = sched->events[producer_bid][sched->cur_copy];
@@ -2055,6 +2061,42 @@ static bool ggml_backend_sched_split_has_rpc_gather_inputs(
         }
     }
     return false;
+}
+
+// Same-host multi-endpoint relay: wait producer then sync GET+SET before graph_compute.
+static void ggml_backend_sched_flush_rpc_relays_for_split(
+        ggml_backend_sched_t sched, int split_id, int split_backend_id, ggml_backend_t split_backend,
+        struct ggml_backend_sched_split * split) {
+    const ggml_tensor * relay_dsts[GGML_SCHED_MAX_SPLIT_INPUTS];
+    int n_relay_dsts = 0;
+
+    for (int input_id = 0; input_id < split->n_inputs; input_id++) {
+        struct ggml_tensor * input = split->inputs[input_id];
+        if (input->flags & GGML_TENSOR_FLAG_INPUT) {
+            continue;
+        }
+        struct ggml_tensor * input_cpy = tensor_copy(input, split_backend_id, sched->cur_copy);
+        if (!ggml_backend_rpc_relay_pending_for_dst(input_cpy)) {
+            continue;
+        }
+        ggml_backend_t producer_backend = ggml_backend_sched_get_tensor_backend(sched, input);
+        const int producer_bid = ggml_backend_sched_backend_id(sched, producer_backend);
+        ggml_backend_sched_wait_producer(
+            sched, split_id, split_backend_id, split_backend, producer_backend, producer_bid, input_cpy, false);
+        relay_dsts[n_relay_dsts++] = input_cpy;
+    }
+
+    if (n_relay_dsts == 0) {
+        return;
+    }
+
+    const auto flush_t0 = std::chrono::steady_clock::now();
+    ggml_backend_rpc_flush_pending_relays_for_dst(relay_dsts, (size_t) n_relay_dsts);
+    const auto flush_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - flush_t0).count();
+    if (sched_trace_lvl() && flush_us > 0) {
+        sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "rpc_relay_flush", flush_us);
+    }
 }
 
 // B+13d: producer event_wait on gather stream instead of full copy-slot wait.
@@ -2324,11 +2366,13 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
             }
             {
                     ggml_backend_buffer_t prod_buf = input->view_src ? input->view_src->buffer : input->buffer;
-                    if (prod_buf != nullptr && ggml_backend_buffer_is_rpc(prod_buf) &&
-                        !ggml_backend_buffer_is_rpc(input_cpy->buffer)) {
+                    if (prod_buf != nullptr && ggml_backend_buffer_is_rpc(prod_buf)) {
                         const int producer_bid = ggml_backend_sched_backend_id(sched, input_backend);
-                        ggml_backend_sched_wait_producer(
-                            sched, split_id, split_backend_id, split_backend, input_backend, producer_bid, input_cpy);
+                        if (!ggml_backend_buffer_is_rpc(input_cpy->buffer) ||
+                            ggml_backend_rpc_relay_pending_for_dst(input_cpy)) {
+                            ggml_backend_sched_wait_producer(
+                                sched, split_id, split_backend_id, split_backend, input_backend, producer_bid, input_cpy, true);
+                        }
                     }
                 }
 
@@ -2529,6 +2573,9 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     ggml_sched_rpc_get_tensor_defer() ? "rpc_defer_flush" : "rpc_flush_downloads", flush_us);
             }
         }
+
+        ggml_backend_sched_flush_rpc_relays_for_split(
+            sched, split_id, split_backend_id, split_backend, split);
 
         const auto compute_t0 = std::chrono::steady_clock::now();
         if (!sched->callback_eval) {
