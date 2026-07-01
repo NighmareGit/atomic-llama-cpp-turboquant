@@ -86,6 +86,16 @@ WAIT_MAP = {
         "ggml/src/ggml-backend.cpp:1562-1590",
         "RPC-WAIT-MAP: split loop input drain",
     ),
+    "sync_copy_fallback": (
+        "B+13 local synchronize + tensor_copy (async copy failed)",
+        "ggml/src/ggml-backend.cpp:1865-1884",
+        "C-full: measured sync fallback",
+    ),
+    "copy_async_ok": (
+        "B+13 cpy_tensor_async succeeded",
+        "ggml/src/ggml-backend.cpp:1885-1887",
+        "C-full: async copy marker",
+    ),
     "graph_compute_async": (
         "GRAPH_RECOMPUTE / local graph_compute_async",
         "ggml/src/ggml-rpc/ggml-rpc.cpp:944-979",
@@ -166,7 +176,9 @@ def parse_summary_kv(summary_text: str) -> dict[str, str]:
         for key in (
             "blocking_events", "drain_flush_ms", "drain_copy_ms",
             "split_total_count", "input_wait_copy_ms",
-            "graph_compute_async_ms", "event_record_ms", "assembly_overlap_count",
+            "graph_compute_async_ms", "event_record_ms",
+            "sync_copy_fallback_ms", "copy_async_ok_count",
+            "assembly_overlap_count",
             "pairs",
         ):
             mkey = re.search(rf"(?:^|\s){re.escape(key)}=([\d.]+)", line)
@@ -244,7 +256,7 @@ def main() -> None:
             f"  |-- backend{bid} ({role}) "
             f"total_ms={ms} splits={splits} ms_per_token={ms_per_token(ms_f, gen_tokens)}"
         )
-    for phase in ("input_wait_copy", "graph_compute_async", "event_record"):
+    for phase in ("input_wait_copy", "sync_copy_fallback", "graph_compute_async", "event_record"):
         key = f"{phase}_ms"
         if key in summary_kv:
             ms_f = float(summary_kv[key])
@@ -254,12 +266,17 @@ def main() -> None:
                 f"({ms_per_token(ms_f, gen_tokens)} ms/tok) -> {site}"
             )
             lines.append(f"      ref={ref} ({note})")
+    if "copy_async_ok_count" in summary_kv:
+        lines.append(
+            f"  |-- sched copy_async_ok_count={summary_kv['copy_async_ok_count']} "
+            f"(C-full async copy markers)"
+        )
     lines.append("")
 
     # --- RPC-WAIT-MAP mapping ---
     lines.append("[rpc-wait-map] trace buckets -> static wait sites")
     mapping_rows = []
-    for phase in ("input_wait_copy", "graph_compute_async", "event_record"):
+    for phase in ("input_wait_copy", "sync_copy_fallback", "graph_compute_async", "event_record"):
         key = f"{phase}_ms"
         if key in summary_kv:
             site, ref, note = WAIT_MAP[phase]
@@ -340,6 +357,27 @@ def main() -> None:
         )
     lines.append("")
 
+    # --- C-full B+13 (measured) ---
+    lines.append("[c-full-b13] sync fallback vs async copy (requires C-full build)")
+    if "sync_copy_fallback_ms" in summary_kv or "copy_async_ok_count" in summary_kv:
+        fb_ms = float(summary_kv.get("sync_copy_fallback_ms", "0") or 0)
+        ok_n = int(float(summary_kv.get("copy_async_ok_count", "0") or 0))
+        iw_ms = float(summary_kv.get("input_wait_copy_ms", "0") or 0)
+        lines.append(f"  sync_copy_fallback_ms={fb_ms} copy_async_ok_count={ok_n}")
+        if iw_ms > 0 and fb_ms > 0:
+            lines.append(
+                f"  sync_fallback_pct_of_input_wait={round(100.0 * fb_ms / iw_ms, 1)}"
+            )
+        if fb_ms > 50:
+            lines.append("  verdict=SYNC_COPY_FALLBACK_MEASURED (B+13 fix target)")
+        elif ok_n > 0 and fb_ms == 0:
+            lines.append("  verdict=COPY_ASYNC_OK_ONLY")
+        else:
+            lines.append("  verdict=C_FULL_PHASES_PRESENT")
+    else:
+        lines.append("  (no C-full phases; rebuild with 6dc504bce+ and re-bench)")
+    lines.append("")
+
     # --- top blockers ---
     lines.append("[top-blockers] ranked RPC/sched wall-time (load+gen window)")
     blockers: list[tuple[float, str]] = []
@@ -347,7 +385,7 @@ def main() -> None:
         key = f"rpc:{name}:total_ms"
         if key in summary_kv:
             blockers.append((float(summary_kv[key]), f"rpc {name}"))
-    for phase in ("input_wait_copy", "graph_compute_async", "event_record"):
+    for phase in ("input_wait_copy", "sync_copy_fallback", "graph_compute_async", "event_record"):
         key = f"{phase}_ms"
         if key in summary_kv:
             blockers.append((float(summary_kv[key]), f"sched {phase}"))

@@ -215,11 +215,32 @@ def main() -> None:
                         f"ms={round_ms(sum(bus))}"
                     )
 
-            for phase in ("input_wait_copy", "graph_compute_async", "event_record"):
+            for phase in ("input_wait_copy", "graph_compute_async", "event_record", "sync_copy_fallback"):
                 phase_rows = [row for row in sched_rows if row.get("phase") == phase]
                 if phase_rows:
                     pus = [int(row.get("elapsed_us", 0)) for row in phase_rows]
-                    lines.append(f"  {phase}_ms={round_ms(sum(pus))}")
+                    if phase == "sync_copy_fallback":
+                        lines.append(f"  {phase}_ms={round_ms(sum(pus))}")
+                        by_fb: dict[str, list[int]] = defaultdict(list)
+                        for row in phase_rows:
+                            by_fb[str(row.get("backend", "?"))].append(int(row.get("elapsed_us", 0)))
+                        for backend in sorted(by_fb, key=lambda x: (x == "?", x)):
+                            lines.append(
+                                f"    sync_copy_fallback backend{backend} "
+                                f"count={len(by_fb[backend])} "
+                                f"ms={round_ms(sum(by_fb[backend]))}"
+                            )
+                    else:
+                        lines.append(f"  {phase}_ms={round_ms(sum(pus))}")
+
+            async_ok = [row for row in sched_rows if row.get("phase") == "copy_async_ok"]
+            if async_ok:
+                lines.append(f"  copy_async_ok_count={len(async_ok)}")
+                by_ok: dict[str, int] = defaultdict(int)
+                for row in async_ok:
+                    by_ok[str(row.get("backend", "?"))] += 1
+                for backend in sorted(by_ok, key=lambda x: (x == "?", x)):
+                    lines.append(f"    copy_async_ok backend{backend} count={by_ok[backend]}")
 
             split_ev = [row for row in sched_rows if row.get("phase") == "split_total"]
             if len(split_ev) >= 2:
@@ -295,10 +316,15 @@ def main() -> None:
                 "total_ms": round_ms(sum(rtts_ext)),
             }
     if sched_rows:
-        for phase in ("input_wait_copy", "graph_compute_async", "event_record"):
+        for phase in ("input_wait_copy", "graph_compute_async", "event_record", "sync_copy_fallback"):
             phase_rows = [r for r in sched_rows if r.get("phase") == phase]
             if phase_rows:
                 extended[phase] = round_ms(sum(int(r.get("elapsed_us", 0)) for r in phase_rows))
+        async_ok = [r for r in sched_rows if r.get("phase") == "copy_async_ok"]
+        if async_ok:
+            extended["copy_async_ok_count"] = len(async_ok)
+        if extended.get("sync_copy_fallback") or async_ok:
+            extended["c_full_trace"] = True
         split_ev = [r for r in sched_rows if r.get("phase") == "split_total"]
         if len(split_ev) >= 2:
             overlap = 0

@@ -20,7 +20,7 @@ DEFAULT_DIRS=(
 
 DIRS=("${@:-${DEFAULT_DIRS[@]}}")
 
-printf 'label\tgen_tokens\toverlap_pct\tstall_ratio\tinput_wait_copy_ms\tgraph_compute_ms\tblocking_ms\tdrain_ms\tcopy_issue\tcopy_tensor_rpc\tcopy_peer_rpc\tget_tensor_rpc\tset_hash_rpc\tevent_record_rpc\tlocal_sync_gap_ms\tverdict\n' >"$OUT_TSV"
+printf 'label\tgen_tokens\toverlap_pct\tstall_ratio\tinput_wait_copy_ms\tgraph_compute_ms\tsync_copy_fallback_ms\tcopy_async_ok_count\tblocking_ms\tdrain_ms\tcopy_issue\tcopy_tensor_rpc\tcopy_peer_rpc\tget_tensor_rpc\tset_hash_rpc\tevent_record_rpc\tlocal_sync_gap_ms\tc_full\tverdict\n' >"$OUT_TSV"
 
 for label in "${DIRS[@]}"; do
     telem="${ROOT}/benches/path-b-plus/${label}/telemetry"
@@ -126,6 +126,26 @@ for row in sched:
 
 input_wait = sched_gen.get("input_wait_copy", 0.0)
 graph_compute = sched_gen.get("graph_compute_async", 0.0)
+sync_fallback_ms = sched_gen.get("sync_copy_fallback", 0.0)
+copy_async_ok_count = int(sched_gen.get("copy_async_ok", 0.0))  # marker rows, elapsed_us=0
+if copy_async_ok_count == 0:
+    copy_async_ok_count = sum(1 for row in sched if row.get("phase") == "copy_async_ok" and int(row.get("decode_id", 0)) >= 1)
+
+sync_fallback_by_backend: dict[str, float] = defaultdict(float)
+sync_fallback_count = 0
+for row in sched:
+    if row.get("phase") != "sync_copy_fallback":
+        continue
+    if int(row.get("decode_id", 0)) < 1:
+        continue
+    sync_fallback_count += 1
+    sync_fallback_by_backend[str(row.get("backend", "?"))] += int(row.get("elapsed_us", 0)) / 1000.0
+
+c_full = sync_fallback_count > 0 or copy_async_ok_count > 0 or any(
+    row.get("split") is not None and row.get("backend") is not None
+    for row in rpc if row.get("phase") in ("send_recv", "copy_issue") and in_gen(int(row.get("ts_us", 0)))
+)
+
 copy_tensor_ms = by_cmd_ms.get(9, 0.0)
 copy_peer_ms = by_cmd_ms.get(19, 0.0)
 get_tensor_ms = by_cmd_ms.get(8, 0.0)
@@ -140,12 +160,21 @@ stall = float(diag.get("stall_ratio", 0) or 0)
 drain = float(diag.get("drain_flush_ms", 0) or 0)
 gen_tokens = int(diag.get("gen_tokens_est", len(decode_windows)) or len(decode_windows))
 
-# Verdict heuristics for Phase 1.2C
+# Verdict heuristics for Phase 1.2C / C-full
 flags = []
 if len(copy_issue) == 0:
     flags.append("NO_COPY_ISSUE_TRACE")
-if local_sync_gap > input_wait * 0.25 and input_wait > 100:
+if c_full:
+    if sync_fallback_ms > 50:
+        flags.append("SYNC_COPY_FALLBACK_MEASURED")
+    elif copy_async_ok_count > 0 and sync_fallback_count == 0:
+        flags.append("COPY_ASYNC_OK_ONLY")
+    elif sync_fallback_count == 0 and copy_async_ok_count == 0:
+        flags.append("C_FULL_NO_B13_PHASES")
+elif local_sync_gap > input_wait * 0.25 and input_wait > 100:
     flags.append("LOCAL_SYNC_FALLBACK_LIKELY")
+if sync_fallback_ms > input_wait * 0.5 and input_wait > 100:
+    flags.append("B13_DOMINATES_INPUT_WAIT")
 if event_ms > 0 and abs(event_ms - drain) < drain * 0.15:
     flags.append("EVENT_RECORD_DOMINATES_DRAIN")
 if set_hash_ms > blocking_ms * 0.2:
@@ -171,16 +200,24 @@ out_json = {
         "peer_copy_count": len(peer_copy),
     },
     "local_sync_gap_ms": round(local_sync_gap, 2),
+    "c_full_trace": c_full,
+    "sync_copy_fallback_ms": round(sync_fallback_ms, 2),
+    "sync_copy_fallback_count": sync_fallback_count,
+    "sync_copy_fallback_by_backend_ms": {
+        k: round(v, 2) for k, v in sorted(sync_fallback_by_backend.items(), key=lambda x: x[0])
+    },
+    "copy_async_ok_count": copy_async_ok_count,
     "verdict_flags": flags,
 }
 (telem / "blocking-audit-c.json").write_text(json.dumps(out_json, indent=2) + "\n")
 
 row = [
     label, str(gen_tokens), str(overlap), str(stall),
-    f"{input_wait:.1f}", f"{graph_compute:.1f}", f"{blocking_ms:.1f}", f"{drain:.1f}",
+    f"{input_wait:.1f}", f"{graph_compute:.1f}", f"{sync_fallback_ms:.1f}",
+    str(copy_async_ok_count), f"{blocking_ms:.1f}", f"{drain:.1f}",
     str(len(copy_issue)), f"{copy_tensor_ms:.1f}", f"{copy_peer_ms:.1f}",
     f"{get_tensor_ms:.1f}", f"{set_hash_ms:.1f}", f"{event_ms:.1f}",
-    f"{local_sync_gap:.1f}", verdict,
+    f"{local_sync_gap:.1f}", "yes" if c_full else "no", verdict,
 ]
 with out_tsv.open("a") as fh:
     fh.write("\t".join(row) + "\n")
@@ -190,7 +227,8 @@ print(f"  gen_tokens={gen_tokens} overlap={overlap}% stall={stall}")
 print(f"  input_wait_copy={input_wait:.0f}ms graph_compute={graph_compute:.0f}ms")
 print(f"  blocking_rpc={blocking_ms:.0f}ms drain={drain:.0f}ms")
 print(f"  copy_issue={len(copy_issue)} COPY_TENSOR={copy_tensor_ms:.0f}ms GET_TENSOR={get_tensor_ms:.0f}ms SET_HASH={set_hash_ms:.0f}ms EVENT={event_ms:.0f}ms")
-print(f"  local_sync_gap={local_sync_gap:.0f}ms ({100*local_sync_gap/max(input_wait,1):.0f}% of input_wait)")
+print(f"  sync_copy_fallback={sync_fallback_ms:.0f}ms count={sync_fallback_count} copy_async_ok={copy_async_ok_count}")
+print(f"  local_sync_gap={local_sync_gap:.0f}ms ({100*local_sync_gap/max(input_wait,1):.0f}% of input_wait) c_full={c_full}")
 print(f"  flags: {verdict}")
 PY
 done
@@ -216,7 +254,11 @@ for r in rows:
 body.extend([
     "\n## Interpretation guide\n",
     "- **NO_COPY_ISSUE_TRACE**: `GGML_RPC_TRACE` copy_issue lines absent; wire-level copy deferral not visible in these artifacts.",
-    "- **LOCAL_SYNC_FALLBACK_LIKELY**: `input_wait_copy_ms` >> on-wire COPY_TENSOR/PEER ms → B+13 sync fallback in `ggml-backend.cpp` (local synchronize + tensor_copy) is prime suspect.",
+    "- **LOCAL_SYNC_FALLBACK_LIKELY**: pre-C-full heuristic; `input_wait_copy_ms` >> wire COPY ms.",
+    "- **SYNC_COPY_FALLBACK_MEASURED**: C-full `sync_copy_fallback` phase present (>50ms gen window) — B+13 local sync path proven.",
+    "- **B13_DOMINATES_INPUT_WAIT**: measured `sync_copy_fallback_ms` > 50% of `input_wait_copy_ms`.",
+    "- **COPY_ASYNC_OK_ONLY**: async copy path succeeded (markers only, no fallback rows).",
+    "- **C_FULL_NO_B13_PHASES**: RPC join present but no B+13 phase rows (check trace env + build SHA).",
     "- **EVENT_RECORD_DOMINATES_DRAIN**: B+9/B+12 less likely to move overlap until EVENT path shortened.",
     "- **SET_HASH_RPC_HEAVY**: weight relay still costs gen-window budget (B+4 cache check).",
     "- **WAIT_DOMINATES_COMPUTE**: assembly line starved regardless of straggler ms/tok.",
