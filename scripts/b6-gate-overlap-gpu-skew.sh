@@ -6,17 +6,15 @@
 #
 # usage:
 #   bash scripts/b6-gate-overlap-gpu-skew.sh
-#
-# env: B6_ROMULUS_HOST, B6_ROMULUS_PASS
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
-OUT_BASE="${ROOT}/benches/path-b-plus/b6-overlap-gpu-skew-${STAMP}"
 ROMULUS_HOST="${B6_ROMULUS_HOST:-hunter@192.168.8.108}"
 ROMULUS_PASS="${B6_ROMULUS_PASS:-12345}"
 ROMULUS_REPO="${B6_ROMULUS_REPO:-/home/hunter/atomic-llama-cpp-turboquant}"
+OUT_BASE="${ROMULUS_REPO}/benches/path-b-plus/b6-overlap-gpu-skew-${STAMP}"
 
 ssh_romulus() {
     if command -v sshpass &>/dev/null && [[ -n "$ROMULUS_PASS" ]]; then
@@ -28,25 +26,20 @@ ssh_romulus() {
 
 summarize_dir() {
     local tag="$1" dir="$2"
-    ssh_romulus "python3 <<'PY'
-import json, re
-tag = \"${tag}\"
-path = \"${dir}/telemetry/diagnose.json\"
-summary = \"${dir}/telemetry/trace-summary.txt\"
-d = json.load(open(path))
-print(f\"{tag} G={d['G_tps']:.2f} overlap={d['overlap_pct']}% stall={d['stall_ratio']:.3f} \"\
-      f\"straggler=backend{d.get('straggler_backend')} @{d.get('straggler_ms_per_token')}ms \"\
-      f\"blocking={d['blocking_ms']:.0f}\")
-backends = {}
+    ssh_romulus "python3 -c \"
+import json, re, sys
+tag, path = sys.argv[1], sys.argv[2]
+d = json.load(open(path + '/telemetry/diagnose.json'))
+print(f'{tag} G={d[\\\"G_tps\\\"]:.2f} overlap={d[\\\"overlap_pct\\\"]}% stall={d[\\\"stall_ratio\\\"]:.3f} '
+      f'straggler=backend{d.get(\\\"straggler_backend\\\")} @{d.get(\\\"straggler_ms_per_token\\\")}ms '
+      f'blocking={d[\\\"blocking_ms\\\"]:.0f}')
 try:
-    txt = open(summary).read()
-    for m in re.finditer(r'backend(\\d+) splits=(\\d+) ms=([\\d.]+)', txt):
-        backends[int(m.group(1))] = float(m.group(3))
-    for b in sorted(backends):
-        print(f\"  backend{b} split_total_ms={backends[b]:.2f}\")
+    txt = open(path + '/telemetry/trace-summary.txt').read()
+    for m in re.finditer(r'backend(\\\\d+) splits=(\\\\d+) ms=([\\\\d.]+)', txt):
+        print(f'  backend{m.group(1)} split_total_ms={float(m.group(3)):.2f}')
 except FileNotFoundError:
     pass
-PY"
+\" \"$tag\" \"$dir\""
 }
 
 run_case() {
@@ -63,7 +56,6 @@ run_case() {
     summarize_dir "$tag" "$out"
 }
 
-mkdir -p "$OUT_BASE"
 echo "OUT_BASE=${OUT_BASE}"
 
 run_case "A-3gpu-5060-3060" "b6-3gpu-g"
