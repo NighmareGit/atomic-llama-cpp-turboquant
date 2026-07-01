@@ -415,7 +415,7 @@ static void rpc_drain_all_endpoints_pending() {
     if (tls_pending_copy.pending && tls_pending_copy.sock) {
         drain_pending_copy_response(tls_pending_copy.sock);
     }
-    if (!rpc_event_defer_barrier() && tls_pending_event.pending && tls_pending_event.sock) {
+    if (tls_pending_event.pending && tls_pending_event.sock) {
         drain_pending_event_response(tls_pending_event.sock);
     }
     flush_pending_get_tensor();
@@ -443,7 +443,7 @@ static void rpc_drain_all_endpoints_pending() {
     for (const auto & sock : live) {
         flush_pending_get_tensor_for_socket(sock);
         flush_pending_hash_for_socket(sock);
-        if (!rpc_event_defer_barrier() && tls_pending_event.pending && tls_pending_event.sock == sock) {
+        if (tls_pending_event.pending && tls_pending_event.sock == sock) {
             drain_pending_event_response(sock);
         }
         if (tls_pending_copy.pending && tls_pending_copy.sock == sock) {
@@ -717,6 +717,9 @@ static bool rpc_same_endpoint(const char * a, const char * b) {
 }
 
 static void flush_pending_get_tensor_for_socket(const socket_ptr & sock) {
+    if (tls_pending_event.pending && tls_pending_event.sock == sock) {
+        drain_pending_event_response(sock);
+    }
     for (auto it = tls_pending_get_tensor.begin(); it != tls_pending_get_tensor.end(); ) {
         if (it->sock != sock) {
             ++it;
@@ -745,9 +748,6 @@ static void flush_pending_get_tensor_for_socket(const socket_ptr & sock) {
 }
 
 static void flush_pending_get_tensor() {
-    if (!rpc_event_defer_barrier() && tls_pending_event.pending && tls_pending_event.sock) {
-        drain_pending_event_response(tls_pending_event.sock);
-    }
     while (!tls_pending_get_tensor.empty()) {
         flush_pending_get_tensor_for_socket(tls_pending_get_tensor.front().sock);
     }
@@ -1524,9 +1524,6 @@ void ggml_backend_rpc_flush_pending_downloads_for_dst(const ggml_tensor * const 
         }
     }
     for (const auto & sock : socks) {
-        if (!rpc_event_defer_barrier() && tls_pending_event.pending && tls_pending_event.sock == sock) {
-            drain_pending_event_response(sock);
-        }
         flush_pending_get_tensor_for_socket(sock);
         flush_pending_hash_for_socket(sock);
     }
