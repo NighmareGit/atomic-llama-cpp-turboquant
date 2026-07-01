@@ -266,6 +266,8 @@ static void drain_pending_event_response(const socket_ptr & sock);
 static void drain_pending_copy_response(const socket_ptr & sock);
 static void flush_pending_get_tensor_for_socket(const socket_ptr & sock);
 static void flush_pending_get_tensor();
+static bool rpc_issue_relay_upload(const rpc_pending_relay & relay);
+static void flush_pending_relays_for_socket(const socket_ptr & sock);
 static void flush_set_tensor_batch();
 static void rpc_register_socket(const socket_ptr & sock);
 static void rpc_drain_all_endpoints_pending();
@@ -676,36 +678,6 @@ static bool rpc_same_host(const std::string & a, const std::string & b) {
 
 static bool rpc_same_endpoint(const char * a, const char * b) {
     return a && b && strcmp(a, b) == 0;
-}
-
-static bool rpc_issue_relay_upload(const rpc_pending_relay & relay) {
-    const size_t size = relay.staging.size();
-    if (size == 0 || relay.dst == nullptr) {
-        return true;
-    }
-    rpc_tensor rpc_t = serialize_tensor(relay.dst);
-    const size_t input_size = sizeof(rpc_tensor) + sizeof(uint64_t) + size;
-    std::vector<uint8_t> input(input_size, 0);
-    memcpy(input.data(), &rpc_t, sizeof(rpc_tensor));
-    const uint64_t offset = 0;
-    memcpy(input.data() + sizeof(rpc_tensor), &offset, sizeof(offset));
-    memcpy(input.data() + sizeof(rpc_tensor) + sizeof(offset), relay.staging.data(), size);
-    return send_rpc_cmd(relay.dst_sock, RPC_CMD_SET_TENSOR, input.data(), input.size());
-}
-
-static void flush_pending_relays_for_socket(const socket_ptr & sock) {
-    for (auto it = tls_pending_relays.begin(); it != tls_pending_relays.end(); ) {
-        if (it->src_sock != sock) {
-            ++it;
-            continue;
-        }
-        if (!rpc_issue_relay_upload(*it)) {
-            GGML_LOG_ERROR("[%s] relay upload failed\n", __func__);
-            ++it;
-            continue;
-        }
-        it = tls_pending_relays.erase(it);
-    }
 }
 
 static void flush_pending_get_tensor_for_socket(const socket_ptr & sock) {
@@ -1458,6 +1430,36 @@ void ggml_backend_rpc_flush_pending_downloads_for_dst(const ggml_tensor * const 
 
 void ggml_backend_rpc_flush_pending_downloads(void) {
     ggml_backend_rpc_flush_pending_downloads_for_dst(nullptr, 0);
+}
+
+static bool rpc_issue_relay_upload(const rpc_pending_relay & relay) {
+    const size_t size = relay.staging.size();
+    if (size == 0 || relay.dst == nullptr) {
+        return true;
+    }
+    rpc_tensor rpc_t = serialize_tensor(relay.dst);
+    const size_t input_size = sizeof(rpc_tensor) + sizeof(uint64_t) + size;
+    std::vector<uint8_t> input(input_size, 0);
+    memcpy(input.data(), &rpc_t, sizeof(rpc_tensor));
+    const uint64_t offset = 0;
+    memcpy(input.data() + sizeof(rpc_tensor), &offset, sizeof(offset));
+    memcpy(input.data() + sizeof(rpc_tensor) + sizeof(offset), relay.staging.data(), size);
+    return send_rpc_cmd(relay.dst_sock, RPC_CMD_SET_TENSOR, input.data(), input.size());
+}
+
+static void flush_pending_relays_for_socket(const socket_ptr & sock) {
+    for (auto it = tls_pending_relays.begin(); it != tls_pending_relays.end(); ) {
+        if (it->src_sock != sock) {
+            ++it;
+            continue;
+        }
+        if (!rpc_issue_relay_upload(*it)) {
+            GGML_LOG_ERROR("[%s] relay upload failed\n", __func__);
+            ++it;
+            continue;
+        }
+        it = tls_pending_relays.erase(it);
+    }
 }
 
 // Same-host isolated RPC endpoints (e.g. triton :50054 + :50055 docker): client pulls
