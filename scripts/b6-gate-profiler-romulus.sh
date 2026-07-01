@@ -77,8 +77,9 @@ case "$LABEL" in
         export PROFILER_OUT_DIR="${PROFILER_OUT_DIR:-${ROOT}/benches/path-b-plus/${LABEL}}"
         ;;
     b6-5gpu-g)
-        export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051,127.0.0.1:50051,192.168.8.23:50054,192.168.8.23:50055}"
-        # ts order: RPC0 remus 5060, RPC1 romulus 3060, RPC2 triton 3090, RPC3 triton 3070, ROCm0 7900
+        # triton :50054 runs rpc-server -d CUDA0,CUDA1 (3090+3070 on one endpoint; avoids peer-copy crash)
+        export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051,127.0.0.1:50051,192.168.8.23:50054}"
+        # ts order: RPC0 remus 5060, RPC1 romulus 3060, RPC2a triton 3090, RPC2b triton 3070, ROCm0 7900
         export BENCH_TS="${BENCH_TS:-20,10,30,10,30}"
         export GGML_PIPELINE_PLUS="${GGML_PIPELINE_PLUS:-1}"
         export PROFILER_OUT_DIR="${PROFILER_OUT_DIR:-${ROOT}/benches/path-b-plus/${LABEL}}"

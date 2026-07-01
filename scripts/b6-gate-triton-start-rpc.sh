@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start triton CUDA rpc-server on :50054 (3090, CUDA0).
+# Start triton CUDA rpc-server on :50054 (default CUDA0; set B6_TRITON_RPC_DEVICE=CUDA0,CUDA1 for 5-GPU).
 #
 # usage: b6-gate-triton-start-rpc.sh [--restart]
 #
