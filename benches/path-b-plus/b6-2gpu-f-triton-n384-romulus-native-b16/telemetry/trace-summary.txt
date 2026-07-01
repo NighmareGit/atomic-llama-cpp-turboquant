@@ -1,0 +1,41 @@
+=== trace summary ===
+dir=/src/benches/path-b-plus/b6-2gpu-f-triton-n384-romulus-native-b16/telemetry
+
+[rpc] events=3681
+  ALLOC_BUFFER count=8 total_ms=6.04 avg_us=755
+  GET_ALIGNMENT count=2 total_ms=0.46 avg_us=231
+  GET_MAX_SIZE count=2 total_ms=0.57 avg_us=283
+  BUFFER_GET_BASE count=8 total_ms=1.15 avg_us=144
+  FREE_BUFFER count=8 total_ms=5.85 avg_us=731
+  BUFFER_CLEAR count=4 total_ms=0.63 avg_us=157
+  SET_TENSOR count=1540 total_ms=24.47 avg_us=16
+  SET_TENSOR_HASH count=162 total_ms=1125.51 avg_us=6948
+  GET_TENSOR count=770 total_ms=142.24 avg_us=185
+  GRAPH_COMPUTE count=8 total_ms=3.29 avg_us=412
+  GET_DEVICE_MEMORY count=6 total_ms=10.37 avg_us=1728
+  GET_ALLOC_SIZE count=12 total_ms=2.2 avg_us=183
+  HELLO count=4 total_ms=0 avg_us=0
+  GRAPH_RECOMPUTE count=762 total_ms=2.68 avg_us=4
+  EVENT_RECORD count=385 total_ms=134.27 avg_us=349
+  blocking_events=876 blocking_ms=1427.63
+  drain_flush_ms=276.51
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  copy_issue_count=1155 defer_count=1155 peer_copy_count=0
+
+[sched] events=10073
+  split_total_count=1155
+  split_total_ms_sum=3338.53 avg_us=2891
+    backend2 splits=385 ms=6.52
+    backend0 splits=385 ms=217.47
+    backend1 splits=385 ms=3114.55
+  input_wait_copy_ms=2891.1
+  graph_compute_async_ms=293.02
+  event_record_ms=0.93
+  assembly_overlap_count=864 pairs=444675 overlap_pct=0.2
+    copy0 splits=291
+    copy1 splits=288
+    copy2 splits=288
+    copy3 splits=288

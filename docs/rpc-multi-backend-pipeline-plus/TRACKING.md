@@ -133,7 +133,7 @@ Romulus-native canonical (`78e8f3c45` ladder):
 1. ~~**PR 8** validate-rpc~~ (**done 2026-07-01**)
 2. ~~**B+11–B+13 ladder**~~ (**done 2026-07-01** — all NULL on M3 overlap; B+13 ships for G/stall)
 3. **Production guard** — `trace-f-2gpu-plus` @ 48.9 t/s; RX6600 excluded for 35B+ A3B MoE
-4. **B+16 optional** — CUDA `leaf_55` MoE weight path (G-only on remus-docker; weak overlap ROI)
+4. ~~**B+16 optional**~~ — **REJECT** (split-slot wait hurts `leaf_55`; code reverted)
 5. **Comparison matrix** — `BENCHMARKS/2026-07-comparison-matrix.md` when 1.1 data is folded in
 
 ## Open Items / Blockers
@@ -201,10 +201,11 @@ Side track — not blocking production ship (`trace-f-2gpu-plus` @ 48.9 t/s). Pe
 | V2 | llama-70B Q4_K_M | remus CUDA docker (profiler) | — | — | — | **VRAM BLOCKED** (profiler holds local shard in-process) |
 | V2 | llama-70B Q4_K_M | remus CUDA `llama-server` + triton | smoke OK | — | — | **PASS** (`--fit on`, ts=50,50; 3 tok gen) |
 | V2 | llama-70B Q4_K_M | romulus HIP (profiler) | 30.0 | 0.8% | 0 | **PASS** |
+| V2 | llama-70B Q4_K_M | romulus HIP 4-GPU triton (`b6-4gpu-g-triton`, n=128) | 16.9 | 0.2% | 0 | **PASS** |
 
 **V2 CUDA note:** `llama-pipeline-profiler` on remus-docker OOMs on dense 70B — local 5060 Ti cannot hold the client shard. For V2 CUDA validation use **llama-server + RPC worker** topology (`rpc-server-bench.sh pathb`): e.g. remus client + triton `:50054`, or remus + romulus `:50051`, with `GGML_PIPELINE_PLUS=1` and `BENCH_TRACE=1`. Profiler gate presets remain canonical for M3; validation smokes may use server style for large dense models.
 
-Artifacts: `benches/path-b-plus/b6-2gpu-f-triton-n384-v1-moe-gemma-{hip,cuda}`, `b6-2gpu-f-triton-n384-v2-llama70b-hip`, `b6-2gpu-f-triton-n384-romulus-native-b15b`. No `sync_copy_fallback` on any completed run.
+Artifacts: `benches/path-b-plus/b6-2gpu-f-triton-n384-v1-moe-gemma-{hip,cuda}`, `b6-2gpu-f-triton-n384-v2-llama70b-hip`, `b6-4gpu-g-triton-n384-v2-llama70b-hip`, `b6-2gpu-f-triton-n384-romulus-native-b15b`. No `sync_copy_fallback` on any completed run.
 
 ### V3 — Plan / mission review (2026-07-01)
 
@@ -287,10 +288,23 @@ Artifacts: `b6-2gpu-f-triton-n384-romulus-native-b12`, `...-no-get-defer`.
 
 Artifacts: `b6-4gpu-g-triton-n384-romulus-native`, `...-no-dual-socket`; logs `b11-4gpu-bisect-logs/`.
 
+### B+16 — CUDA `leaf_55` MoE split-slot wait (2026-07-01)
+
+**Hypothesis:** MoE host->GPU path waits CPU `input_bid` copy slot (~1.5ms CUDA `leaf_55` stall); switch to `split_backend_id` slot.
+
+| Arm | G (t/s) | overlap_pct | `leaf_55` med | Verdict |
+|-----|---------|-------------|---------------|---------|
+| b14i (pre-B+16) | 128.8 | 0.3% | 1582 us | baseline |
+| b16 (split-slot ON) | 128.9 | 0.2% | **7184 us** | **REJECT** |
+
+**Verdict:** **NULL / REJECT** — split-slot wait **increases** `leaf_55` ~4.5x on CUDA; G flat. Keep B+10 `input_bid` slot wait. CUDA `leaf_55` residual (~1.5ms) is structural on remus-docker; not an overlap lever.
+
+Artifacts: `b6-2gpu-f-triton-n384-romulus-native-b16` (experiment only; code reverted).
+
 ### Backlog (post-ceiling, optional)
 
-- **B+16** — CUDA `leaf_55` MoE weight path (~1.5ms vs HIP ~122us); G lever on remus-docker only
-- **4-GPU llama-70B** — validation run if VRAM/ts permits on romulus
+- ~~**B+16**~~ — **REJECT** (2026-07-01); see section above
+- ~~**4-GPU llama-70B**~~ — **PASS** (2026-07-01); `b6-4gpu-g-triton-n384-v2-llama70b-hip`
 - **Jupiter `:50053`** — deferred; triton swap is canonical 4-GPU gate
 
 ## Next 7 Days (grill-locked 2026-07-01)

@@ -120,8 +120,8 @@ case "$CLIENT" in
 esac
 
 BASE="$(basename "$PROFILER_OUT_DIR")"
-if [[ ! "$BASE" =~ $OUT_PATTERN ]]; then
-    echo "error: PROFILER_OUT_DIR basename must match ${OUT_PATTERN}* (got ${BASE})" >&2
+if [[ ! "$BASE" =~ $OUT_PATTERN ]] && [[ ! "$BASE" =~ ^${OUT_PATTERN%-romulus-native}-v2- ]]; then
+    echo "error: PROFILER_OUT_DIR basename must match ${OUT_PATTERN}* or ${OUT_PATTERN%-romulus-native}-v2-* (got ${BASE})" >&2
     exit 1
 fi
 
