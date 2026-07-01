@@ -60,7 +60,7 @@ pathb_node_deploy_sync() {
     fi
 
     pathb_node_remote "find ${dst} -maxdepth 1 -name '*.sh' -exec sed -i 's/\\r$//' {} + 2>/dev/null || true"
-    pathb_node_remote "chmod +x ${dst}/build.sh ${dst}/build-rpc.sh ${dst}/build-server.sh 2>/dev/null || true"
+    pathb_node_remote "chmod +x ${dst}/build.sh ${dst}/build-rpc.sh ${dst}/build-server.sh ${dst}/build-from-bin.sh 2>/dev/null || true"
     pathb_node_remote "grep -h 'GIT_BRANCH=' ${dst}/build.sh ${dst}/build-rpc.sh 2>/dev/null | head -3 || true"
 
     local branch="${GIT_BRANCH:-Path-B-Event-Support-Pipeline-Plus}"

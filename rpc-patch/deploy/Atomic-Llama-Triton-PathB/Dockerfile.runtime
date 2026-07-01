@@ -1,0 +1,16 @@
+ARG PROXY_IP=192.168.8.108
+FROM nvidia/cuda:12.8.0-runtime-ubuntu24.04
+
+RUN bash -c 'timeout 1 bash -c "cat < /dev/null > /dev/tcp/'${PROXY_IP}'/3128" 2>/dev/null && (echo "Acquire::http::Proxy \"http://'${PROXY_IP}':3128\";" > /etc/apt/apt.conf.d/01proxy) || true'
+
+RUN apt-get update && apt-get install -y libgomp1 libopenblas0 && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY staging/rpc-server /usr/local/bin/rpc-server
+COPY staging/lib/ /usr/local/lib/
+
+RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/llama.conf && ldconfig \
+    && chmod +x /usr/local/bin/rpc-server
+
+ENTRYPOINT ["/usr/local/bin/rpc-server"]
