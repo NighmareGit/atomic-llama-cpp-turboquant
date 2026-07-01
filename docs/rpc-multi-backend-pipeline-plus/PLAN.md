@@ -23,7 +23,7 @@ Navigation: [TRACKING.md](TRACKING.md) | [MISSION.md](MISSION.md) | [rpc-patch/d
 - Per-graph-split timing + RPC RTT histogram when `Plus=1` (extend existing `GGML_SCHED_TRACE` / `GGML_RPC_TRACE`)
 - Expose via `-Profile`, `pathb-profile-parse.ps1`, `pathb-rpc-trace-parse.sh`, `llama-pipeline-profiler`
 - Log `cudaEvent` / RPC event wait durations separately from compute
-- **Profiler gate presets:** `b6-2gpu-f`, `b6-4gpu-g`, `b6-4gpu-g-triton` (n=384 canonical)
+- **Profiler gate presets:** `b6-2gpu-f-triton`, `b6-4gpu-g-triton` (n=384 canonical). `b6-4gpu-g` (jupiter) **deferred** — use triton `:50054` as RPC2.
 
 **Success metric:** Operator sees per-split wait vs compute; `diagnose.json` maps to audit blocker IDs (7a–7e).
 
@@ -118,7 +118,7 @@ Gate `b6-4gpu-g-triton` n=384, romulus client, proto 4.4 on remus/romulus/triton
 5. [x] Re-gate romulus n=384 — pre-b13b / b13b / b13bc A/B (`199eb1d5e`); overlap 0.3% all arms; G ~204 t/s
 6. [x] B+13d: gather+defer uses producer `event_wait` instead of full copy-slot wait (`event_wait_producer_slot`)
 
-**B+13 closed (NULL on M3 overlap).** Next hunt: B+16 CUDA `leaf_55` (G-only) or structural ceiling doc update.
+**B+13 closed (NULL on M3 overlap).** Structural ceiling finalized (TRACKING). Backlog: B+16 G-only (optional).
 
 ### 2.3 B+13 4-GPU gate (2026-07-01, `d5c5f2fb0`, triton swap)
 
@@ -128,6 +128,15 @@ Gate `b6-4gpu-g-triton` n=384, romulus client, proto 4.4 on remus/romulus/triton
 | dual OFF (ships) | **81.8** | 0.2% | 0.68 | +1.6% G (80.5) |
 
 M3 still FAIL. B+13 cuts orchestration stall on 4-GPU; G gain is real but overlap gate unchanged. Production 4-GPU: keep **dual OFF** (B+11).
+
+### 2.4 4-GPU topology (locked — jupiter skipped)
+
+Triton provides the third RPC hop (3090 `:50054`) in place of jupiter 5070 `:50053`. Romulus validate-rpc reports jupiter `register failed`; do not gate on jupiter ops.
+
+```bash
+B6_GATE_PRESET=b6-4gpu-g-triton bash scripts/b6-gate-bisect-run.sh canonical-romulus
+B6_GATE_PRESET=b6-4gpu-g-triton bash scripts/b6-gate-bisect-run.sh no-dual-socket  # production ships
+```
 
 **Trace env:** `GGML_SCHED_TRACE=1`, `GGML_RPC_TRACE=1` (C-full phases in [IMPLEMENTATION.md](IMPLEMENTATION.md)).
 
@@ -195,4 +204,4 @@ bash scripts/b6-gate-phase12c-blocking-audit.sh b6-2gpu-f-triton-n384-romulus-na
 - End of Phase 2: M3 PASS **or** structural ceiling documented with trace proof
 - Phase 3 start: Explicit approval only
 
-**Next action (2026-07-01):** B+11 closed — NULL overlap, -9.1% G when dual ON; default OFF. **Proceed B+13:** C-full audit of `sync_copy_fallback` on `b6-2gpu-f-triton-n384-romulus-native`, fix async upload path, re-gate n=384. Details: [TRACKING.md](TRACKING.md), [IMPLEMENTATION.md](IMPLEMENTATION.md).
+**Next action (2026-07-01):** Phase 2 complete — M3 FAIL, structural ceiling documented. 4-GPU gate = `b6-4gpu-g-triton` (jupiter skipped). Ship B+13 for G/stall; optional B+16 on remus-docker CUDA. Details: [TRACKING.md](TRACKING.md).

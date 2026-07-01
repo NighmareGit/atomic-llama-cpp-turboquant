@@ -17,7 +17,7 @@ Linux ROCm cluster host at `192.168.8.108`; primary gate **client** (7900XTX) wi
 _Avoid_: cluster, server
 
 **Triton**:
-Ubuntu 24.04 CUDA spike worker at `192.168.8.23`; RTX 3090 RPC on `:50054` (3070 on `:50055`, parked for 35B MoE). Ops: `scripts/b6-gate-triton-*.sh`.
+Ubuntu 24.04 CUDA worker at `192.168.8.23`; RTX 3090 RPC on `:50054` is **canonical 4-GPU RPC2** (replaces jupiter `:50053`, skipped 2026-07-01). 3070 on `:50055` parked for 35B MoE. Ops: `scripts/b6-gate-triton-*.sh`.
 _Avoid_: worker, remote GPU
 
 **Mitigation ladder**:

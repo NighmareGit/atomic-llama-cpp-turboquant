@@ -2,7 +2,7 @@
 
 **Branch:** `Path-B-Event-Support-Pipeline-Plus`  
 **Date:** 2026-07-01  
-**Status:** Phase 1b — 2-GPU triton ladder **exhausted**; B+11 dual-socket bisect **NULL** on 4-GPU triton gate (2026-07-01).
+**Status:** Phase 2 complete — B+11–B+13 ladder **exhausted**; structural ceiling **finalized**; 4-GPU gate = `b6-4gpu-g-triton` (jupiter skipped).
 
 Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs/b6-gate/TRACKING.md)
 
@@ -28,6 +28,8 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 | 2026-07-01 | **V3 plan review: ship B+14/B+15, resume M3 hunt** | V1/V2 PASS; overlap 0.3% @ n=384 canonical unchanged; next experiment B+12 not leaf_55 | TRACKING V3 section; PLAN Phase 2b |
 | 2026-07-01 | **B+12 NULL on M3 overlap** | Canonical bisect ON/OFF: overlap 0.3% both; G +1.8%; drain_flush -52%; defer path shipped | B+12 section; next B+11 |
 | 2026-07-01 | **B+11 NULL on M3 overlap; HURTS G** | 4-GPU triton bisect dual ON/OFF: overlap 0.2% both; G -9.1%; hol_tail_ms +508%; default OFF kept | B+11 section; next B+13 |
+| 2026-07-01 | **B+13 NULL on M3 overlap; +G** | 2-GPU ~206 t/s; 4-GPU ~82 t/s; stall_ratio 0.95->0.68; overlap 0.1-0.3% | B+13 shipped; ceiling finalized |
+| 2026-07-01 | **Jupiter skipped; triton is 4-GPU RPC2** | `:50053` register failed from romulus; triton `:50054` operational | Gate preset `b6-4gpu-g-triton` canonical |
 
 ## Current Champion Runs
 
@@ -44,6 +46,7 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 | `b6-4gpu-g-triton` | 4-GPU triton swap n=384 (2026-06) | 1 | 63.1 | 0.1% | drain 5.9s | Gate FAIL |
 | `b6-4gpu-g-triton-n384-romulus-native` | romulus 4-GPU + triton 3090 n=384 dual OFF | 1 | **80.5** | 0.2% | B+11 bisect OFF arm; drain 3.0s | Gate FAIL |
 | `b6-4gpu-g-triton-n384-romulus-native` (dual ON) | romulus 4-GPU + triton 3090 n=384 dual ON | 1 | 73.2 | 0.2% | B+11 bisect ON arm; hol_tail 864ms spike | Gate FAIL |
+| `b6-4gpu-g-triton-n384-romulus-native-b13` | post-B+13d dual OFF | 1 | **81.8** | 0.2% | stall 0.68; canonical 4-GPU gate | Gate FAIL overlap |
 | `trace-g-4gpu-primary` | romulus 4-GPU (no 6600) | 1 | ~43.0 | 0.1% | Stable cluster | Path-C baseline |
 
 ## Partial 2-GPU verdict (2026-07-01)
@@ -61,11 +64,26 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 
 **4-GPU summary (2026-07-01):** JUPITER canonical 0.2%/6.4s drain; B+7a′ OFF 0.1%; triton swap 0.2%/3.0s drain, G=80.5 (dual OFF). B+11 dual ON: overlap 0.2%, G=73.2, hol_tail_ms=1036 (864ms spike). All M1 FAIL.
 
-**Next:** B+13 next M3 hunt step; dual-socket ships default OFF (proto 4.4 compat retained).
+**Next:** B+13 ladder closed; 4-GPU canonical gate is `b6-4gpu-g-triton` (jupiter skipped).
 
-## Structural ceiling (2026-07-01 — PLAN stop rule)
+## Topology decision (2026-07-01 — locked)
 
-**Verdict:** M3 (`overlap_pct >= 5%`) is **not reachable** within Path-B+ scope on measured 2-GPU and 4-GPU topologies after the mitigation ladder (B+8, B+9, B+10, B+7a') is exhausted.
+**4-GPU gate:** Use **`b6-4gpu-g-triton`** only. Jupiter `:50053` skipped (`register failed` from romulus validate-rpc 2026-07-01).
+
+| Slot | Endpoint | Role |
+|------|----------|------|
+| RPC0 | `192.168.8.176:50051` | remus 5060 Ti |
+| RPC1 | `127.0.0.1:50051` | remus 3060 (romulus tunnel) |
+| RPC2 | `192.168.8.23:50054` | triton 3090 (replaces jupiter 5070) |
+| ROCm0 | romulus 7900 XTX | client gather |
+
+`-ts 22,11,34,33`. Do not block gates on jupiter rebuild. Preset `b6-4gpu-g` (JUPITER) is **deprecated** for active hunt until ops revisits Windows rpc-server.
+
+Triton `:50055` (3070) remains parked for 35B+ MoE per ops notes.
+
+## Structural ceiling (2026-07-01 — finalized post B+13)
+
+**Verdict:** M3 (`overlap_pct >= 5%`) is **not reachable** within Path-B+ scope on measured 2-GPU and 4-GPU topologies after the full mitigation ladder through **B+13** is exhausted.
 
 **Scope boundary:** Path C (server-side scheduling / distributed orchestration) is **out of scope** for `rpc-multi-backend-pipeline-plus`. Ideas from Path C may inform future work elsewhere; **no Path C implementation** on this branch.
 
@@ -79,11 +97,16 @@ Mirror gate checklist: [rpc-patch/docs/b6-gate/TRACKING.md](../../rpc-patch/docs
 | `straggler` | backend 1 (triton RPC) @ 5.6–8.2 ms/tok | Serial RPC stage bounds assembly line |
 | `EVENT_RECORD` | 385 events / 1752 ms drain | Drain tracks event count, not overlap lever |
 | Bisect B+8/B+9/B+10 OFF | NULL overlap (Δ=0); stall worsens when OFF | Mitigations help marginally; not pipelining depth |
+| B+11 dual-socket OFF | NULL overlap; **+9% G** vs dual ON on 4-GPU | Ship dual OFF |
+| B+12 GET defer OFF | NULL overlap; +1.8% G | Ship defer ON |
+| B+13b/c/d | NULL overlap; +G on 4-GPU, +1% on 2-GPU romulus | Gather fixes; not pipelining depth |
 
-| Signal | 4-GPU romulus n=384 | Interpretation |
-|--------|----------------------|----------------|
-| `overlap_pct` | 0.1–0.2% | M1 FAIL |
-| `drain_flush_ms` | 4.6–6.4s (triton swap helps vs JUPITER 50s) | Drain fix != overlap fix |
+| Signal | 4-GPU `b6-4gpu-g-triton` romulus n=384 | Interpretation |
+|--------|----------------------------------------|----------------|
+| `overlap_pct` | 0.1–0.2% (pre/post B+13) | M1/M3 FAIL |
+| G (dual OFF, ships) | **81.8** post-B+13 (was 80.5) | Real throughput gain; not overlap |
+| `stall_ratio` | 0.68 post-B+13 (was 0.95) | Orchestration improved |
+| `drain_flush_ms` | ~4.3–4.6s | Drain fix != overlap fix |
 | B+7a' OFF (`no-flush`) | overlap 0.1% (worse) | NULL / harmful to overlap |
 
 ### Phase 1.1 trace proof (re-parse, no new bench)
@@ -107,16 +130,17 @@ Romulus-native canonical (`78e8f3c45` ladder):
 
 ### What remains in path-b-plus (no Path C)
 
-1. ~~**PR 8** validate-rpc~~ (**done 2026-07-01** — matrix all PASS; RPC handshake fix; `b6-gate-validate-rpc-matrix.sh`)
-2. **Production guard** — `trace-f-2gpu-plus` @ 48.9 t/s; RX6600 excluded for 35B+ A3B MoE
-3. **B+13** — next M3 hunt (B+11 NULL, B+12 NULL). **Staged analysis D:** 1.2 A+B done
-4. **Comparison matrix** — `BENCHMARKS/2026-07-comparison-matrix.md` when 1.1 data is folded in
+1. ~~**PR 8** validate-rpc~~ (**done 2026-07-01**)
+2. ~~**B+11–B+13 ladder**~~ (**done 2026-07-01** — all NULL on M3 overlap; B+13 ships for G/stall)
+3. **Production guard** — `trace-f-2gpu-plus` @ 48.9 t/s; RX6600 excluded for 35B+ A3B MoE
+4. **B+16 optional** — CUDA `leaf_55` MoE weight path (G-only on remus-docker; weak overlap ROI)
+5. **Comparison matrix** — `BENCHMARKS/2026-07-comparison-matrix.md` when 1.1 data is folded in
 
 ## Open Items / Blockers
 
-### Primary — B+6 overlap gate (M3 hunt resumed)
+### Primary — B+6 overlap gate (ceiling finalized)
 
-V1+V2 validation **PASS** (see Lateral Todo). B+14/B+15 cleared for ship. **B+11 done — NULL on overlap; HURTS G** (see B+11 section). **M3 hunt active** — next experiment **B+13**, gate `b6-4gpu-g-triton` n=384.
+V1+V2 validation **PASS**. B+11–B+13 ladder **closed NULL on M3**. **G gains ship** (2-GPU ~206 t/s, 4-GPU ~82 t/s triton gate). Overlap gate remains FAIL; structural ceiling documented. Optional backlog: B+16 G-only.
 
 ### Secondary — cluster sync + instrumentation
 
@@ -263,10 +287,11 @@ Artifacts: `b6-2gpu-f-triton-n384-romulus-native-b12`, `...-no-get-defer`.
 
 Artifacts: `b6-4gpu-g-triton-n384-romulus-native`, `...-no-dual-socket`; logs `b11-4gpu-bisect-logs/`.
 
-### Pending M3 experiments (hunt active)
+### Backlog (post-ceiling, optional)
 
-- **B+13** — next hunt step on canonical gate (see PLAN Phase 2b)
-- CUDA `leaf_55` MoE weight path (~1.5ms vs HIP ~122us) — G lever only; see FUTURE-EXPANSIONS / B+16
+- **B+16** — CUDA `leaf_55` MoE weight path (~1.5ms vs HIP ~122us); G lever on remus-docker only
+- **4-GPU llama-70B** — validation run if VRAM/ts permits on romulus
+- **Jupiter `:50053`** — deferred; triton swap is canonical 4-GPU gate
 
 ## Next 7 Days (grill-locked 2026-07-01)
 
@@ -320,4 +345,4 @@ Artifacts: `b6-4gpu-g-triton-n384-romulus-native`, `...-no-dual-socket`; logs `b
 ---
 
 **Update this file after every profile/profiler run or topology decision.**  
-**Last edit:** 2026-07-01 — B+13 ladder closed NULL on M3; shipped b/c/d @ romulus; next B+16 or ceiling doc.
+**Last edit:** 2026-07-01 — Jupiter skipped; 4-GPU gate = triton swap; structural ceiling finalized post B+13.

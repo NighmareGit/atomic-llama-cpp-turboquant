@@ -162,6 +162,6 @@ Profiler / validate logs must show `proto 4.4` on all endpoints before dual=ON g
 
 ## Follow-up
 
-1. Rebuild jupiter `:50053` to 4.4; rerun `b6-4gpu-g` (JUPITER canonical) bisect for apples-to-apples with production 4-GPU topology
+1. ~~Rebuild jupiter `:50053`~~ — **deferred 2026-07-01**; canonical 4-GPU gate is `b6-4gpu-g-triton` (triton `:50054` as RPC2)
 2. **B+13** next M3 hunt step per [TRACKING.md](TRACKING.md)
 3. Do **not** enable dual-socket in production until a future bisect shows overlap or stable hol_tail improvement
