@@ -55,6 +55,16 @@ case "$LABEL" in
             b6_5gpu_base_env
         fi
         ;;
+    b6-6gpu-g|b6-6gpu-g-prod)
+        # shellcheck source=scripts/b6-gate-6gpu-env.sh
+        source "${ROOT}/scripts/b6-gate-6gpu-env.sh"
+        if [[ "$LABEL" == "b6-6gpu-g-prod" ]]; then
+            b6_6gpu_production_env
+            b6_6gpu_frontier_kv_env
+        else
+            b6_6gpu_base_env
+        fi
+        ;;
     b6-2gpu-f-plus0)
         export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051}"
         export BENCH_TS="${BENCH_TS:-50,50}"

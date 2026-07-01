@@ -135,3 +135,47 @@ Artifact: `benches/path-b-plus/b6-retest-matrix-20260701-150053/`
 **Verdict:** GPU class shifts G (+23%), stall, and straggler — **overlap unchanged**. Heterogeneous RPC chain does **not** skew overlap_pct; retire as overlap lever.
 
 Script: `scripts/b6-gate-overlap-gpu-skew.sh`
+
+## Overlap grill: serial dispatch trace audit (20260701-151024)
+
+Read-only sweep of `split_total` intervals per `decode_id` before any scheduler code change.
+
+Script: `scripts/b6-gate-overlap-serial-audit.py`
+
+```bash
+python3 scripts/b6-gate-overlap-serial-audit.py benches/.../telemetry --json telemetry/serial-overlap-audit.json
+```
+
+Metrics:
+
+| Metric | Meaning |
+|--------|---------|
+| `serial_dispatch_pct` | `(single + idle) / total` wall time with 0-1 backends active |
+| `timeline multi_pct` | Wall time with 2+ backends active |
+| `single_of_active` | Single-backend fraction excluding idle gaps |
+| `assembly_overlap` | Phase 1.2B pair-start metric (matches `overlap_pct`) |
+
+Arm B (`B-3gpu-5060-3090`, n=384 gen):
+
+| Metric | Value |
+|--------|-------|
+| serial_dispatch_pct | **91.4%** |
+| timeline multi_pct | 8.6% |
+| single_of_active | 85.5% |
+| assembly_overlap | 0.2% (1939/889350) |
+| multi concurrency | 2-backend only (never 3+) |
+| overlap_efficiency | 0.984 |
+
+Arm A comparison (slow 3060 straggler):
+
+| Metric | A (3060) | B (3090) |
+|--------|----------|----------|
+| serial_dispatch_pct | 80.2% | **91.4%** |
+| timeline multi_pct | **19.9%** | 8.6% |
+| assembly_overlap | 0.2% | 0.2% |
+
+**Verdict (arm B):** Serial split dispatch **proven** — >90% wall clock has at most one backend active. The ~9% multi window is exclusively 2-backend tail overlap (split 2 still running when split 3 starts); no 3+ backend concurrency. `overlap_pct` stays 0.2% because the pair metric counts overlap *events*, not overlap *duration*; arm A shows straggler stretch inflates concurrent wall time without moving `overlap_pct`.
+
+Artifacts: `b6-overlap-gpu-skew-20260701-151024/{A,B}-3gpu-*/telemetry/serial-overlap-audit.json`
+
+**Next (grill Q3):** Scheduler code spike (partial parallel split / B+8 frontier) vs Path C branch.

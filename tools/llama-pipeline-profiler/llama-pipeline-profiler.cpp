@@ -119,11 +119,14 @@ static void apply_tensor_split(profiler_config & cfg) {
 }
 
 static ggml_type parse_cache_type(const std::string & s) {
-    if (s == "f16")  return GGML_TYPE_F16;
-    if (s == "bf16") return GGML_TYPE_BF16;
-    if (s == "q8_0") return GGML_TYPE_Q8_0;
-    if (s == "q4_0") return GGML_TYPE_Q4_0;
-    if (s == "q4_1") return GGML_TYPE_Q4_1;
+    if (s == "f16")    return GGML_TYPE_F16;
+    if (s == "bf16")   return GGML_TYPE_BF16;
+    if (s == "q8_0")   return GGML_TYPE_Q8_0;
+    if (s == "q4_0")   return GGML_TYPE_Q4_0;
+    if (s == "q4_1")   return GGML_TYPE_Q4_1;
+    if (s == "turbo2") return GGML_TYPE_TURBO2_0;
+    if (s == "turbo3") return GGML_TYPE_TURBO3_0;
+    if (s == "turbo4") return GGML_TYPE_TURBO4_0;
     throw std::invalid_argument("unknown cache type: " + s);
 }
 

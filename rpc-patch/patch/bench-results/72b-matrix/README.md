@@ -2,8 +2,8 @@
 
 **Date:** 2026-06-26  
 **Script:** `rpc-patch/scripts/pathb-72b-matrix.sh`  
-**Topology:** RPC0=remus 5060 Ti, RPC1=Romulus 3060 Ti, ROCm0=7900 XTX (~44.5 GB combined)  
-**Endpoint:** `192.168.8.176:50051,127.0.0.1:50051`
+**Topology:** RPC0=remus 5060 Ti (`192.168.8.176`), RPC1=romulus 3060 Ti docker (`127.0.0.1:50051`), ROCm0=7900 XTX (~44.5 GB combined)  
+**Endpoint:** `192.168.8.176:50051,127.0.0.1:50051` (remus-first listing; 3060 is on romulus only)
 
 ## Phase 1 summary (load feasibility)
 

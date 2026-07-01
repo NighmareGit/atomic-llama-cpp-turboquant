@@ -40,7 +40,10 @@ CLUSTER_PASS = os.environ.get("B6_CLUSTER_PASS", os.environ.get("PATHB_ROMULUS_S
 ROMULUS_HOST = os.environ.get("B6_ROMULUS_HOST", "192.168.8.108")
 REMUS_HOST = os.environ.get("B6_REMUS_HOST", "192.168.8.176")
 TRITON_HOST = os.environ.get("B6_TRITON_HOST", "192.168.8.23")
+JUPITER_HOST = os.environ.get("B6_JUPITER_HOST", "192.168.8.21")
 SSH_USER = os.environ.get("B6_CLUSTER_USER", "hunter")
+JUPITER_USER = os.environ.get("B6_JUPITER_USER", "nightmare")
+JUPITER_PASS = os.environ.get("B6_JUPITER_PASS", CLUSTER_PASS)
 
 PROFILER_CANDIDATES = [
     os.environ.get("PATHB_ROMULUS_PROFILER", ""),
@@ -93,6 +96,18 @@ PRESETS: dict[str, PresetSpec] = {
         vrams_static=[23.0, 22.0],
         config="remus",
     ),
+    "b6-3gpu-g-triton": PresetSpec(
+        name="b6-3gpu-g-triton (remus 5060 + triton 3090 + romulus 7900)",
+        rpc=f"{REMUS_HOST}:50051,{TRITON_HOST}:50054",
+        devices=[
+            DeviceSpec("RPC0 remus 5060", "rpc", endpoint=f"{REMUS_HOST}:50051", fallback_host=REMUS_HOST),
+            DeviceSpec("RPC1 triton 3090", "rpc", endpoint=f"{TRITON_HOST}:50054", fallback_host=TRITON_HOST),
+            DeviceSpec("ROCm0 romulus 7900", "rocm", host=ROMULUS_HOST),
+        ],
+        ts_default=[30, 35, 35],
+        vrams_static=[15.5, 23.0, 22.0],
+        config="config-g",
+    ),
     "b6-4gpu-g-triton": PresetSpec(
         name="b6-4gpu-g-triton (remus 5060 + romulus 3060 + triton 3090 + romulus 7900)",
         rpc=f"{REMUS_HOST}:50051,127.0.0.1:50051,{TRITON_HOST}:50054",
@@ -132,6 +147,27 @@ PRESETS: dict[str, PresetSpec] = {
         vrams_static=[15.5, 7.0, 23.0, 7.5, 22.0],
         config="config-g",
     ),
+    "b6-6gpu-g": PresetSpec(
+        name="b6-6gpu-g Linux (5-GPU prod + jupiter 5070 Ti :50053)",
+        rpc=f"{REMUS_HOST}:50051,127.0.0.1:50051,{TRITON_HOST}:50054,{TRITON_HOST}:50055,192.168.8.21:50053",
+        devices=[
+            DeviceSpec("RPC0 remus 5060", "rpc", endpoint=f"{REMUS_HOST}:50051", fallback_host=REMUS_HOST),
+            DeviceSpec(
+                "RPC1 romulus 3060 docker",
+                "rpc",
+                endpoint="127.0.0.1:50051",
+                via_host=ROMULUS_HOST,
+                fallback_host=ROMULUS_HOST,
+            ),
+            DeviceSpec("RPC2 triton 3090", "rpc", endpoint=f"{TRITON_HOST}:50054", fallback_host=TRITON_HOST),
+            DeviceSpec("RPC3 triton 3070", "rpc", endpoint=f"{TRITON_HOST}:50055", fallback_host=TRITON_HOST),
+            DeviceSpec("RPC4 jupiter 5070", "rpc", endpoint="192.168.8.21:50053", fallback_host="192.168.8.21"),
+            DeviceSpec("ROCm0 romulus 7900", "rocm", host=ROMULUS_HOST),
+        ],
+        ts_default=[16, 10, 30, 10, 16, 22],
+        vrams_static=[15.5, 7.0, 23.0, 7.5, 15.5, 22.0],
+        config="config-g",
+    ),
     "config-c": PresetSpec(
         name="Config C (remus 5060 + romulus 3060 docker + romulus 7900 client)",
         rpc=f"{REMUS_HOST}:50051,127.0.0.1:50051",
@@ -153,11 +189,24 @@ PRESETS: dict[str, PresetSpec] = {
 }
 
 
+def _ssh_user(host: str) -> str:
+    if host == JUPITER_HOST:
+        return JUPITER_USER
+    return SSH_USER
+
+
+def _ssh_pass(host: str) -> str:
+    if host == JUPITER_HOST:
+        return JUPITER_PASS
+    return CLUSTER_PASS
+
+
 def _ssh(host: str, cmd: str, timeout: int = 20) -> str:
-    target = f"{SSH_USER}@{host}"
+    target = f"{_ssh_user(host)}@{host}"
     base = ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", f"ConnectTimeout={min(timeout, 8)}", target, cmd]
-    if CLUSTER_PASS and _has_sshpass():
-        run = ["sshpass", "-p", CLUSTER_PASS, *base]
+    passwd = _ssh_pass(host)
+    if passwd and _has_sshpass():
+        run = ["sshpass", "-p", passwd, *base]
     else:
         run = base
     out = subprocess.run(run, capture_output=True, text=True, timeout=timeout, check=False)

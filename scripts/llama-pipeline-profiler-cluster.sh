@@ -136,6 +136,24 @@ build_profiler_args() {
     if [[ "$MODE" == "profile" ]]; then
         args+=(--with-gpu-telemetry)
     fi
+    if [[ -n "${BENCH_CTK:-}" ]]; then
+        args+=(-ctk "$BENCH_CTK")
+    fi
+    if [[ -n "${BENCH_CTV:-}" ]]; then
+        args+=(-ctv "$BENCH_CTV")
+    fi
+    if [[ -n "${BENCH_NGL:-}" ]]; then
+        args+=(-ngl "$BENCH_NGL")
+    fi
+    if [[ -n "${BENCH_N_BATCH:-}" ]]; then
+        args+=(-b "$BENCH_N_BATCH")
+    fi
+    if [[ -n "${BENCH_N_UBATCH:-}" ]]; then
+        args+=(-ub "$BENCH_N_UBATCH")
+    fi
+    if [[ -n "${BENCH_CTX:-}" ]]; then
+        args+=(-c "$BENCH_CTX")
+    fi
     args+=("$@")
     if [[ "${PROFILER_SKIP_VALIDATE:-0}" == "1" ]]; then
         local has_skip=0 a
