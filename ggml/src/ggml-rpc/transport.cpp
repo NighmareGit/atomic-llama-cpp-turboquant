@@ -505,6 +505,7 @@ bool socket_t::impl::recv_data(void * data, size_t size) {
 
 void socket_t::impl::get_caps(uint8_t * local_caps) {
     memset(local_caps, 0, RPC_CONN_CAPS_SIZE);
+    local_caps[0] |= RPC_CAP_TRACE_ID; // advertise trace_id support (EVENT_RECORD 20B)
 #ifdef GGML_RPC_RDMA
     rdma_local = {};
     if (rdma_probe()) {

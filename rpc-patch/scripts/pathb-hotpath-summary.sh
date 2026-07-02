@@ -232,11 +232,28 @@ def main() -> None:
     summary_kv = parse_summary_kv(summary_text)
     gen_tokens = estimate_gen_tokens(sched_rows, summary_kv)
 
+    # trace_id join (preferred over ts heuristic for long-running / perf_reset cases)
+    rpc_by_tid = {}
+    for r in rpc_rows:
+        tid = int(r.get("trace_id", 0) or 0)
+        if tid:
+            rpc_by_tid[tid] = rpc_by_tid.get(tid, 0) + 1
+    trace_joins = 0
+    total_tid = 0
+    for r in sched_rows:
+        tid = int(r.get("trace_id", 0) or 0)
+        if tid:
+            total_tid += 1
+            if tid in rpc_by_tid:
+                trace_joins += 1
+    trace_join_rate = round(trace_joins / total_tid, 4) if total_tid > 0 else 0.0
+
     lines: list[str] = []
     lines.append("=== pathb hotpath summary ===")
     lines.append(f"dir={trace_dir}")
     lines.append(f"trace_summary={summary_file}")
     lines.append(f"gen_tokens_est={gen_tokens}")
+    lines.append(f"trace_id_join_rate={trace_join_rate} (joins={trace_joins} total_tid={total_tid}; target >0.95)")
     lines.append("")
 
     # --- sync stall waterfall ---

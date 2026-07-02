@@ -648,6 +648,7 @@ Environment knobs:
 | Var | Default | Effect |
 |---|---|---|
 | `LLAMA_PIPELINE_DEPTH2` | unset (on) | `=0` disables depth-2 overlap; falls back to sync `_async + _wait` inside `draft`. |
+| (stubs) | - | llama_decode_mtp_async/wait/cancel/drain + prepare_next are stub impl (depth-1, Phase R1) |
 | `LLAMA_MTP_SKIP_STREAK_THRESHOLD` | unset / `0` (off) | `1..32` enables zero-accept skip streak. |
 | `LLAMA_MTP_ACC_TRACE` | unset (off) | `1` → stderr; any other value → file path (append). |
 | `LLAMA_GRAPH_REUSE_DISABLE` | unset (off) | Disables `llm_graph_result::can_reuse`. Useful when changing the MTP graph; disastrous for throughput. |

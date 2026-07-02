@@ -388,5 +388,6 @@ private:
     mutable int32_t n_eval   = 0; // number of eval calls
 
     mutable int32_t n_reused = 0; // number of times the previous graph was reused
-    int32_t pipeline_decode_id = 0; // monotonic decode counter for GGML_PIPELINE_TRACE
+    int32_t pipeline_decode_id = 0; // monotonic decode counter for GGML_PIPELINE_TRACE (resets on perf_reset)
+    uint64_t trace_id = 0; // server-lifetime monotonic trace_id (per llama_decode); never reset on perf_reset
 };

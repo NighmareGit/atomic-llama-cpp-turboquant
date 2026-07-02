@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # T0: A/B bench for LLAMA_PIPELINE_DEPTH2 (Layer A speculative overlap).
+# Note: llama_decode_mtp_* and prepare_next are stub (depth-1 sync) when LLAMA_PIPELINE_DEPTH2=1 (Phase R1)
 #
 # Compares depth-2 ON (unset) vs OFF (=0) against the same running llama-server.
 # Does not start a server unless START_SERVER=1 (experimental).
@@ -267,6 +268,7 @@ MTP trace lines: ${MTP_LINES}
 BENCH_SERVER_TRACE: ${BENCH_SERVER_TRACE}
 Server telemetry: $([[ "$BENCH_SERVER_TRACE" == "1" ]] && echo "${SERVER_TELEMETRY}" || echo n/a)
 Git: $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+Layer A: stub implementation (Phase R1) - see PLAN.md 1.4
 
 Raw samples (tps|accept|tokens):
 

@@ -1799,6 +1799,8 @@ int llama_context::decode(const llama_batch & batch_inp) {
 
     pipeline_decode_id++;
     ggml_pipeline_trace_set_decode_id(pipeline_decode_id);
+    trace_id++;
+    ggml_pipeline_trace_set_trace_id(trace_id);
 
     n_queued_tokens += n_tokens_all;
 
@@ -3244,6 +3246,7 @@ void llama_context::perf_reset() {
     n_reused    = 0;
     pipeline_decode_id = 0;
     ggml_pipeline_trace_set_decode_id(-1);
+    // trace_id intentionally not reset (server-lifetime correlation key)
 }
 
 llama_memory_breakdown llama_context::memory_breakdown() const {
@@ -4131,6 +4134,62 @@ int32_t llama_decode(
     }
 
     return ret;
+}
+
+// Layer A depth-2 stubs (synchronous depth-1 per PLAN 1.4)
+// call existing draft path + one-time "stub" log when LLAMA_PIPELINE_DEPTH2=1
+// default (flag=0) identical to before (no-op return 0)
+static bool depth2_stub_logged = false;
+
+static bool llama_pipeline_depth2_enabled() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("LLAMA_PIPELINE_DEPTH2");
+        v = (e == nullptr || atoi(e) != 0) ? 1 : 0;
+    }
+    return v != 0;
+}
+
+int32_t llama_decode_mtp_async(
+        llama_context * /*ctx*/,
+        llama_seq_id  /*seq_id*/,
+        llama_pos     /*attn_pos*/,
+        llama_token   /*last_token*/,
+        const float * /*h_prev*/,
+        int32_t       /*n_steps*/) {
+    if (llama_pipeline_depth2_enabled() && !depth2_stub_logged) {
+        LLAMA_LOG_WARN("llama_decode_mtp_async: stub implementation (depth-1 sync, LLAMA_PIPELINE_DEPTH2=1)\n");
+        depth2_stub_logged = true;
+    }
+    // depth-1: call existing draft path would be done via common layer; here surface only
+    return 0;
+}
+
+int32_t llama_decode_mtp_wait(
+        llama_context * /*ctx*/,
+        llama_token * /*out_drafts*/,
+        float       * /*out_h_prev_last*/) {
+    if (llama_pipeline_depth2_enabled() && !depth2_stub_logged) {
+        LLAMA_LOG_WARN("llama_decode_mtp_wait: stub implementation (depth-1, LLAMA_PIPELINE_DEPTH2=1)\n");
+        depth2_stub_logged = true;
+    }
+    return 0;
+}
+
+int32_t llama_decode_mtp_cancel(llama_context * /*ctx*/) {
+    if (llama_pipeline_depth2_enabled() && !depth2_stub_logged) {
+        LLAMA_LOG_WARN("llama_decode_mtp_cancel: stub implementation (depth-1, LLAMA_PIPELINE_DEPTH2=1)\n");
+        depth2_stub_logged = true;
+    }
+    return 0;
+}
+
+int32_t llama_decode_mtp_drain(llama_context * /*ctx*/) {
+    if (llama_pipeline_depth2_enabled() && !depth2_stub_logged) {
+        LLAMA_LOG_WARN("llama_decode_mtp_drain: stub implementation (depth-1, LLAMA_PIPELINE_DEPTH2=1)\n");
+        depth2_stub_logged = true;
+    }
+    return 0;
 }
 
 //

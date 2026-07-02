@@ -9,6 +9,7 @@ typedef std::shared_ptr<socket_t> socket_ptr;
 
 static constexpr size_t MAX_CHUNK_SIZE = 1024ull * 1024ull * 1024ull; // 1 GiB
 static constexpr size_t RPC_CONN_CAPS_SIZE = 24;
+static constexpr uint8_t  RPC_CAP_TRACE_ID     = 1u << 0; // for trace_id in EVENT_RECORD (proto patch 3+)
 
 struct socket_t {
     ~socket_t();
@@ -27,6 +28,8 @@ struct socket_t {
     bool server_supports_peer_copy = false;
     // B+11: paired response socket (cmd/response split); nullptr = single-socket
     socket_ptr rsp_channel;
+    // Set after HELLO (patch 3+ or RPC_CAP_TRACE_ID): trace_id carried in EVENT_RECORD (20B wire)
+    bool server_supports_trace_id = false;
 
     static socket_ptr create_server(const char * host, int port);
     static socket_ptr connect(const char * host, int port);

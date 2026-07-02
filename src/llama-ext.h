@@ -90,6 +90,24 @@ LLAMA_API ggml_backend_dev_t llama_model_get_device(const struct llama_model * m
 
 LLAMA_API llama_memory_breakdown llama_get_memory_breakdown(const struct llama_context * ctx);
 
+// Layer A depth-2 stubs (see include/llama.h)
+LLAMA_API int32_t llama_decode_mtp_async(
+        struct llama_context * ctx,
+        llama_seq_id  seq_id,
+        llama_pos     attn_pos,
+        llama_token   last_token,
+        const float * h_prev,
+        int32_t       n_steps);
+
+LLAMA_API int32_t llama_decode_mtp_wait(
+        struct llama_context * ctx,
+        llama_token * out_drafts,
+        float       * out_h_prev_last);
+
+LLAMA_API int32_t llama_decode_mtp_cancel(struct llama_context * ctx);
+
+LLAMA_API int32_t llama_decode_mtp_drain(struct llama_context * ctx);
+
 // Set whether the context outputs nextn embeddings or not
 // If masked == true,  output the embeddings only for the tokens with batch.logits != 0
 // If masked == false, output the embeddings for all tokens in the batch regardless of batch.logits

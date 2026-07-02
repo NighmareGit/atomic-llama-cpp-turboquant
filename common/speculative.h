@@ -71,6 +71,12 @@ void common_speculative_accept(common_speculative * spec, llama_seq_id, uint16_t
 // print statistics about the speculative decoding
 void common_speculative_print_stats(const common_speculative * spec);
 
+// Depth-2 stubs (synchronous depth-1). Call existing draft path when LLAMA_PIPELINE_DEPTH2=1.
+// Default (flag off) is no-op for compatibility.
+void common_speculative_prepare_next(common_speculative * spec, llama_token sampled);
+void common_speculative_cancel(common_speculative * spec);
+void common_speculative_drain(common_speculative * spec);
+
 struct common_speculative_deleter {
     void operator()(common_speculative * s) { common_speculative_free(s); }
 };

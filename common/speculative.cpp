@@ -2,6 +2,7 @@
 
 #include "common.h"
 #include "ggml.h"
+#include "ggml-backend.h"
 #include "llama.h"
 #include "log.h"
 #include "ngram-cache.h"
@@ -13,10 +14,25 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cstring>
 #include <iomanip>
 #include <map>
 #include <cinttypes>
+#include <cstdio>
+
+static void mtp_acc_trace_emit(const char * phase, int32_t n) {
+    const char * e = std::getenv("LLAMA_MTP_ACC_TRACE");
+    if (!e || !e[0]) return;
+    FILE * out = (e[0] == '1' && e[1] == '\0') ? stderr : fopen(e, "a");
+    if (!out) out = stderr;
+    uint64_t tid = ggml_pipeline_trace_get_trace_id();
+    int32_t did = ggml_pipeline_trace_get_decode_id();
+    const auto ts = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    fprintf(out, "{\"ts_us\":%lld,\"phase\":\"%s\",\"decode_id\":%d,\"trace_id\":%llu,\"n\":%d}\n",
+            (long long)ts, phase, did, (unsigned long long)tid, n);
+    if (out != stderr) fclose(out);
+}
 
 #define SPEC_VOCAB_MAX_SIZE_DIFFERENCE  128
 #define SPEC_VOCAB_CHECK_START_TOKEN_ID 5
@@ -2050,6 +2066,7 @@ void common_speculative_draft(common_speculative * spec) {
             dp.drafting = false;
         }
     }
+    mtp_acc_trace_emit("draft", 0);
 }
 
 void common_speculative_accept(common_speculative * spec, llama_seq_id seq_id, uint16_t n_accepted) {
@@ -2074,6 +2091,7 @@ void common_speculative_accept(common_speculative * spec, llama_seq_id seq_id, u
             impl_other->accept(seq_id, n_accepted, true);
         }
     }
+    mtp_acc_trace_emit("accept", (int32_t)n_accepted);
 }
 
 void common_speculative_print_stats(const common_speculative * spec) {
@@ -2101,5 +2119,42 @@ void common_speculative_print_stats(const common_speculative * spec) {
                 impl->n_gen_tokens,
                 impl->n_acc_tokens,
                 str_perf.c_str());
+    }
+}
+
+// LLAMA_PIPELINE_DEPTH2 depth-1 synchronous stubs (Phase R1)
+// call existing draft path + one-time log when enabled
+static bool depth2_stub_logged = false;
+
+static bool llama_pipeline_depth2_enabled() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = std::getenv("LLAMA_PIPELINE_DEPTH2");
+        v = (e == nullptr || atoi(e) != 0) ? 1 : 0;
+    }
+    return v != 0;
+}
+
+void common_speculative_prepare_next(common_speculative * spec, llama_token /*sampled*/) {
+    if (llama_pipeline_depth2_enabled()) {
+        if (!depth2_stub_logged) {
+            LOG_INF("common_speculative_prepare_next: stub (depth-1 sync, LLAMA_PIPELINE_DEPTH2=1)\n");
+            depth2_stub_logged = true;
+        }
+        if (spec) common_speculative_draft(spec); // call existing draft path
+    }
+}
+
+void common_speculative_cancel(common_speculative * /*spec*/) {
+    if (llama_pipeline_depth2_enabled() && !depth2_stub_logged) {
+        LOG_INF("common_speculative_cancel: stub (depth-1, LLAMA_PIPELINE_DEPTH2=1)\n");
+        depth2_stub_logged = true;
+    }
+}
+
+void common_speculative_drain(common_speculative * /*spec*/) {
+    if (llama_pipeline_depth2_enabled() && !depth2_stub_logged) {
+        LOG_INF("common_speculative_drain: stub (depth-1, LLAMA_PIPELINE_DEPTH2=1)\n");
+        depth2_stub_logged = true;
     }
 }

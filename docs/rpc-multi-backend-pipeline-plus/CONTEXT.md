@@ -43,3 +43,27 @@ _Avoid_: master, primary server
 **Topology-agnostic bench**:
 A profiler run defined only by label, RPC endpoints, and env flags — not by which physical host executes the client binary.
 _Avoid_: portable test, host-independent
+
+**Layer A (depth-2)**:
+Speculative draft preparation layer. Enables preparing the draft for iteration k+1 concurrently with target decode of iteration k inside the llama-server loop (MTP/NextN). Primary knob: `LLAMA_PIPELINE_DEPTH2`. Orthogonal to Layer B.
+_Avoid_: MTP layer, speculative pipeline (ambiguous)
+
+**Layer B (Path-B-Plus)**:
+Multi-backend graph-split orchestration and copy-slot pipelining across local + RPC devices using events. Primary knob: `GGML_PIPELINE_PLUS` + the B+ mitigation ladder. This is the primary focus of the current mission.
+_Avoid_: RPC layer (too narrow)
+
+**trace_id**:
+Monotonically increasing uint64 correlation identifier (one per `llama_decode` or micro-batch). Propagated through sched, RPC wire (EVENT_RECORD), pipeline barrier, and Layer A traces. Enables exact joins in `pathb-hotpath-summary.sh` without timestamp heuristics.
+_Avoid_: decode_id (resets on perf_reset), session id, correlation key
+
+**Blessed configuration**:
+The minimal set of env flags documented as production defaults for a given topology (see CONFIGURATION.md and the 4-GPU baseline env.txt). Changes outside this set should be explicitly justified.
+_Avoid_: default flags, recommended flags (too vague)
+
+**Deprecation policy (this workstream)**:
+When a flag is superseded, it emits a one-time warning naming the flag, the superseding work, and the planned removal phase. Flags remain functional until removal phase. Removal happens only after the successor is validated on the gate.
+_Avoid_: just remove it, soft delete
+
+**Lateral addition**:
+A supporting change (observability, hygiene, API surface, or new mitigation) that improves the ability to attack the core mission (overlap gate / straggler diagnosis) or reduces future friction, without itself moving the primary metric.
+_Avoid_: side quest, unrelated feature

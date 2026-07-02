@@ -56,12 +56,14 @@ static FILE * rpc_trace_file() {
 
 static void rpc_trace_emit_hotpath_fields(FILE * out) {
     const int32_t decode_id = ggml_pipeline_trace_get_decode_id();
+    uint64_t trace_id = ggml_pipeline_trace_get_trace_id();
     int32_t split_id = -1;
     int32_t backend_id = -1;
     ggml_hotpath_trace_get_sched_ctx(&split_id, &backend_id);
     if (decode_id >= 0) {
         fprintf(out, ",\"decode_id\":%d", decode_id);
     }
+    fprintf(out, ",\"trace_id\":%llu", (unsigned long long) trace_id);
     if (split_id >= 0) {
         fprintf(out, ",\"split\":%d", split_id);
     }
@@ -634,14 +636,17 @@ struct rpc_msg_graph_recompute_req {
 };
 
 // Path B: event record command (TCP ordering after GRAPH_RECOMPUTE)
+// 20 bytes when trace_id supported (patch 3+ / RPC_CAP_TRACE_ID); legacy 12 bytes.
 struct rpc_msg_event_record_req {
     uint64_t event_id;
     uint32_t device;
+    uint64_t trace_id;
 };
 
 struct rpc_msg_event_record_rsp {
     uint64_t event_id;
     uint32_t result;  // 0 = success
+    uint64_t trace_id;
 };
 
 #pragma pack(pop)
@@ -658,8 +663,9 @@ static void rpc_finish_event_response(rpc_event_t * ev) {
         return;
     }
     if (tls_pending_event.pending && tls_pending_event.sock == ev->sock) {
-        rpc_msg_event_record_rsp rsp;
-        if (!recv_rpc_cmd_deferred(ev->sock, &rsp, sizeof(rsp))) {
+        rpc_msg_event_record_rsp rsp = {};
+        size_t rsp_sz = ev->sock->server_supports_trace_id ? sizeof(rsp) : 12;
+        if (!recv_rpc_cmd_deferred(ev->sock, &rsp, rsp_sz)) {
             GGML_LOG_ERROR("[%s] failed to read event response\n", __func__);
         }
         tls_pending_event.pending = false;
@@ -677,8 +683,9 @@ static void drain_pending_event_response(const socket_ptr & sock) {
         if (tls_pending_event.ev) {
             rpc_finish_event_response(tls_pending_event.ev);
         } else {
-            rpc_msg_event_record_rsp rsp;
-            if (!recv_rpc_cmd_deferred(sock, &rsp, sizeof(rsp))) {
+            rpc_msg_event_record_rsp rsp = {};
+            size_t rsp_sz = sock->server_supports_trace_id ? sizeof(rsp) : 12;
+            if (!recv_rpc_cmd_deferred(sock, &rsp, rsp_sz)) {
                 GGML_LOG_ERROR("[%s] failed to drain pending event response\n", __func__);
             }
             tls_pending_event.pending = false;
@@ -1074,6 +1081,7 @@ static bool negotiate_hello(const std::shared_ptr<socket_t> & sock, const char *
 
     sock->server_supports_batch = (response.major == RPC_PROTO_MAJOR_VERSION && response.minor >= 1);
     sock->server_supports_peer_copy = (response.major == RPC_PROTO_MAJOR_VERSION && response.minor >= 3);
+    sock->server_supports_trace_id = (response.patch >= 3) || (response.conn_caps[0] & RPC_CAP_TRACE_ID);
     sock->update_caps(response.conn_caps);
 
     if (request.dual_socket && response.minor >= 4 && (response.flags & 1) && response.session_id != 0) {
@@ -2011,8 +2019,10 @@ static void rpc_backend_event_record(ggml_backend_t backend, ggml_backend_event_
         ev->response_pending = true;
     } else {
         auto sock = get_socket(rpc_ctx->endpoint);
-        rpc_msg_event_record_req ev_req = {ev->id, rpc_ctx->device};
-        send_rpc_cmd_deferred(sock, RPC_CMD_EVENT_RECORD, &ev_req, sizeof(ev_req));
+        uint64_t tid = ggml_pipeline_trace_get_trace_id();
+        rpc_msg_event_record_req ev_req = {ev->id, rpc_ctx->device, tid};
+        size_t ev_sz = sock->server_supports_trace_id ? sizeof(ev_req) : 12;
+        send_rpc_cmd_deferred(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz);
         tls_pending_event.sock = sock;
         tls_pending_event.pending = true;
         tls_pending_event.ev = ev;
@@ -2087,10 +2097,10 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
         bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_RECOMPUTE, &request, sizeof(request));
         RPC_STATUS_ASSERT(status);
 
-        rpc_msg_event_record_req ev_req;
-        ev_req.event_id = 0;
-        ev_req.device = rpc_ctx->device;
-        send_rpc_cmd_deferred(sock, RPC_CMD_EVENT_RECORD, &ev_req, sizeof(ev_req));
+        uint64_t tid = ggml_pipeline_trace_get_trace_id();
+        rpc_msg_event_record_req ev_req = {0, rpc_ctx->device, tid};
+        size_t ev_sz = sock->server_supports_trace_id ? sizeof(ev_req) : 12;
+        send_rpc_cmd_deferred(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz);
         tls_pending_event.sock = sock;
         tls_pending_event.pending = true;
         rpc_ctx->last_compute_sock = sock;
@@ -3033,6 +3043,8 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
             rsp3.patch = tmp.patch;
         }
         sock->get_caps(rsp3.conn_caps);
+        // trace_id support (additive for 20B EVENT_RECORD)
+        // client will see patch in rsp; we also set based on caps below
         if (!send_msg(sock, &rsp3, sizeof(rsp3))) {
             return;
         }
@@ -3044,6 +3056,8 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
             rsp.session_id = session_id;
         }
         sock->get_caps(rsp.conn_caps);
+        // trace_id support from client caps (for deciding 20B vs 12B recv on EVENT_RECORD)
+        sock->server_supports_trace_id = (rsp.patch >= 3) || (req.conn_caps[0] & RPC_CAP_TRACE_ID);
         if (!send_msg(sock, &rsp, sizeof(rsp))) {
             return;
         }
@@ -3342,17 +3356,19 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 break;
             }
             case RPC_CMD_EVENT_RECORD: {
-                rpc_msg_event_record_req request;
-                if (!recv_msg(sock, &request, sizeof(request))) {
+                rpc_msg_event_record_req request = {};
+                size_t req_sz = sock->server_supports_trace_id ? sizeof(request) : 12;
+                if (!recv_msg(sock, &request, req_sz)) {
                     return;
                 }
                 server.wait_compute_idle();
-                rpc_msg_event_record_rsp response = {request.event_id, 0};
-                if (!send_response(sock, &response, sizeof(response))) {
+                rpc_msg_event_record_rsp response = {request.event_id, 0, request.trace_id};
+                size_t rsp_sz = sock->server_supports_trace_id ? sizeof(response) : 12;
+                if (!send_msg(sock, &response, rsp_sz)) {
                     return;
                 }
-                LOG_DBG("[%s] RPC_CMD_EVENT_RECORD: event_id=%lu, device=%u\n",
-                        __func__, (unsigned long)request.event_id, request.device);
+                LOG_DBG("[%s] RPC_CMD_EVENT_RECORD: event_id=%lu, device=%u, trace_id=%llu\n",
+                        __func__, (unsigned long)request.event_id, request.device, (unsigned long long)request.trace_id);
                 break;
             }
             case RPC_CMD_GET_DEVICE_MEMORY: {

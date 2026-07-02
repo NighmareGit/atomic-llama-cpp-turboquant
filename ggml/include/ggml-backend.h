@@ -350,6 +350,11 @@ extern "C" {
     GGML_API void                 ggml_pipeline_trace_set_decode_id(int32_t decode_id);
     GGML_API int32_t              ggml_pipeline_trace_get_decode_id(void);
 
+    // Unified trace correlation (trace_id): monotonic uint64 per llama_decode (server-lifetime, never reset).
+    // Emitted alongside decode_id for compat. Preferred join key for long-running / cross-process traces.
+    GGML_API void                 ggml_pipeline_trace_set_trace_id(uint64_t trace_id);
+    GGML_API uint64_t             ggml_pipeline_trace_get_trace_id(void);
+
     // Hot-path trace context (Phase 1.2C-full): correlate RPC rows with sched split/backend.
     GGML_API void                 ggml_hotpath_trace_set_sched_ctx(int32_t split_id, int32_t backend_id);
     GGML_API void                 ggml_hotpath_trace_get_sched_ctx(int32_t * split_id, int32_t * backend_id);

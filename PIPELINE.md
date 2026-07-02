@@ -151,6 +151,7 @@ and the next prefill.
 | Var | Default | Effect |
 |-----|---------|--------|
 | `LLAMA_PIPELINE_DEPTH2` | unset (on) | `=0` disables `prepare_next`; restores sync `_async + _wait` inside `draft` |
+| (stubs) | - | llama_decode_mtp_* + common_speculative_prepare_next are stub (depth-1 sync, Phase R1) |
 
 ---
 

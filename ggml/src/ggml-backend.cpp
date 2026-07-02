@@ -36,6 +36,7 @@ static int sched_trace_lvl() {
 static thread_local int32_t g_pipeline_decode_id = -1;
 static thread_local int32_t g_hotpath_split_id  = -1;
 static thread_local int32_t g_hotpath_backend_id = -1;
+static thread_local uint64_t g_trace_id = 0; // monotonic per llama_decode; never reset on perf_reset; 0 = unset/legacy
 
 static int pipeline_trace_lvl() {
     static int v = -1;
@@ -171,14 +172,15 @@ static void pipeline_trace_emit(const char * event, int copy_from, int copy_to, 
     }
     const auto ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
+    uint64_t tid = g_trace_id;
     if (g_pipeline_decode_id >= 0) {
         fprintf(out,
-            "{\"ts_us\":%lld,\"event\":\"%s\",\"decode_id\":%d,\"copy_from\":%d,\"copy_to\":%d,\"n_copies\":%d,\"elapsed_us\":%lld}\n",
-            (long long) ts_us, event, g_pipeline_decode_id, copy_from, copy_to, n_copies, (long long) elapsed_us);
+            "{\"ts_us\":%lld,\"event\":\"%s\",\"decode_id\":%d,\"trace_id\":%llu,\"copy_from\":%d,\"copy_to\":%d,\"n_copies\":%d,\"elapsed_us\":%lld}\n",
+            (long long) ts_us, event, g_pipeline_decode_id, (unsigned long long) tid, copy_from, copy_to, n_copies, (long long) elapsed_us);
     } else {
         fprintf(out,
-            "{\"ts_us\":%lld,\"event\":\"%s\",\"copy_from\":%d,\"copy_to\":%d,\"n_copies\":%d,\"elapsed_us\":%lld}\n",
-            (long long) ts_us, event, copy_from, copy_to, n_copies, (long long) elapsed_us);
+            "{\"ts_us\":%lld,\"event\":\"%s\",\"trace_id\":%llu,\"copy_from\":%d,\"copy_to\":%d,\"n_copies\":%d,\"elapsed_us\":%lld}\n",
+            (long long) ts_us, event, (unsigned long long) tid, copy_from, copy_to, n_copies, (long long) elapsed_us);
     }
     fflush(out);
 }
@@ -189,6 +191,14 @@ void ggml_pipeline_trace_set_decode_id(int32_t decode_id) {
 
 int32_t ggml_pipeline_trace_get_decode_id(void) {
     return g_pipeline_decode_id;
+}
+
+void ggml_pipeline_trace_set_trace_id(uint64_t trace_id) {
+    g_trace_id = trace_id;
+}
+
+uint64_t ggml_pipeline_trace_get_trace_id(void) {
+    return g_trace_id;
 }
 
 void ggml_hotpath_trace_set_sched_ctx(int32_t split_id, int32_t backend_id) {
@@ -225,14 +235,15 @@ static void sched_trace_emit(int split_id, int backend_id, int copy_id, const ch
     FILE * out = sched_trace_file() ? sched_trace_file() : stderr;
     const auto ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
+    uint64_t tid = g_trace_id;
     if (pipeline_trace_lvl() && g_pipeline_decode_id >= 0) {
         fprintf(out,
-            "{\"ts_us\":%lld,\"decode_id\":%d,\"split\":%d,\"backend\":%d,\"copy\":%d,\"phase\":\"%s\",\"elapsed_us\":%lld}\n",
-            (long long) ts_us, g_pipeline_decode_id, split_id, backend_id, copy_id, phase, (long long) elapsed_us);
+            "{\"ts_us\":%lld,\"decode_id\":%d,\"trace_id\":%llu,\"split\":%d,\"backend\":%d,\"copy\":%d,\"phase\":\"%s\",\"elapsed_us\":%lld}\n",
+            (long long) ts_us, g_pipeline_decode_id, (unsigned long long) tid, split_id, backend_id, copy_id, phase, (long long) elapsed_us);
     } else {
         fprintf(out,
-            "{\"ts_us\":%lld,\"split\":%d,\"backend\":%d,\"copy\":%d,\"phase\":\"%s\",\"elapsed_us\":%lld}\n",
-            (long long) ts_us, split_id, backend_id, copy_id, phase, (long long) elapsed_us);
+            "{\"ts_us\":%lld,\"trace_id\":%llu,\"split\":%d,\"backend\":%d,\"copy\":%d,\"phase\":\"%s\",\"elapsed_us\":%lld}\n",
+            (long long) ts_us, (unsigned long long) tid, split_id, backend_id, copy_id, phase, (long long) elapsed_us);
     }
     fflush(out);
 }
@@ -266,28 +277,29 @@ static void sched_trace_emit_sync_detail(
     const int rpc_dst  = buf_dst ? (int) ggml_backend_buffer_is_rpc(buf_dst) : -1;
     const int view     = (input && input->view_src) ? 1 : 0;
 
+    uint64_t tid = g_trace_id;
     if (pipeline_trace_lvl() && g_pipeline_decode_id >= 0) {
         fprintf(out,
-            "{\"ts_us\":%lld,\"decode_id\":%d,\"split\":%d,\"backend\":%d,\"copy\":%d,"
+            "{\"ts_us\":%lld,\"decode_id\":%d,\"trace_id\":%llu,\"split\":%d,\"backend\":%d,\"copy\":%d,"
             "\"phase\":\"%s\",\"elapsed_us\":%lld,"
             "\"tensor\":\"%s\",\"nbytes\":%zu,\"view\":%d,"
             "\"src_buft\":\"%s\",\"dst_buft\":\"%s\","
             "\"input_backend\":\"%s\",\"split_backend\":\"%s\","
             "\"host_src\":%d,\"host_dst\":%d,\"rpc_src\":%d,\"rpc_dst\":%d,"
             "\"reject\":\"%s\"}\n",
-            (long long) ts_us, g_pipeline_decode_id, split_id, backend_id, copy_id, phase, (long long) elapsed_us,
+            (long long) ts_us, g_pipeline_decode_id, (unsigned long long) tid, split_id, backend_id, copy_id, phase, (long long) elapsed_us,
             tname, nbytes, view, src_buft, dst_buft, input_bname, split_bname,
             host_src, host_dst, rpc_src, rpc_dst, g_sched_copy_reject);
     } else {
         fprintf(out,
-            "{\"ts_us\":%lld,\"split\":%d,\"backend\":%d,\"copy\":%d,"
+            "{\"ts_us\":%lld,\"trace_id\":%llu,\"split\":%d,\"backend\":%d,\"copy\":%d,"
             "\"phase\":\"%s\",\"elapsed_us\":%lld,"
             "\"tensor\":\"%s\",\"nbytes\":%zu,\"view\":%d,"
             "\"src_buft\":\"%s\",\"dst_buft\":\"%s\","
             "\"input_backend\":\"%s\",\"split_backend\":\"%s\","
             "\"host_src\":%d,\"host_dst\":%d,\"rpc_src\":%d,\"rpc_dst\":%d,"
             "\"reject\":\"%s\"}\n",
-            (long long) ts_us, split_id, backend_id, copy_id, phase, (long long) elapsed_us,
+            (long long) ts_us, (unsigned long long) tid, split_id, backend_id, copy_id, phase, (long long) elapsed_us,
             tname, nbytes, view, src_buft, dst_buft, input_bname, split_bname,
             host_src, host_dst, rpc_src, rpc_dst, g_sched_copy_reject);
     }

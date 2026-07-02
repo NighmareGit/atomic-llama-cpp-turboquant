@@ -8,7 +8,7 @@
 > Legacy standalone `*_mtp` GGUFs (`override_arch`) are still supported as a fallback for
 > users who ship the draft head as a separate artifact.
 > This path is **named `nextn`** in this fork to coexist with **Gemma 4 MTP** (`--spec-type mtp`), which uses a
-> single target context and `llama_decode_mtp_*`.
+> single target context and `llama_decode_mtp_*` (stubs in Phase R1 per PLAN 1.4).
 
 See also `MTP.md` (Gemma) and `docs/speculative.md` for shared CLI concepts.
 

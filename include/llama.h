@@ -961,6 +961,26 @@ extern "C" {
             struct llama_context * ctx,
               struct llama_batch   batch);
 
+    // Layer A depth-2 stubs (synchronous depth-1 implementation)
+    // Gated by LLAMA_PIPELINE_DEPTH2=1 (default: no-op, current behavior preserved)
+    // Provides compilation surface only per PLAN 1.4
+    LLAMA_API int32_t llama_decode_mtp_async(
+            struct llama_context * ctx,
+            llama_seq_id  seq_id,
+            llama_pos     attn_pos,
+            llama_token   last_token,
+            const float * h_prev,
+            int32_t       n_steps);
+
+    LLAMA_API int32_t llama_decode_mtp_wait(
+            struct llama_context * ctx,
+            llama_token * out_drafts,
+            float       * out_h_prev_last);
+
+    LLAMA_API int32_t llama_decode_mtp_cancel(struct llama_context * ctx);
+
+    LLAMA_API int32_t llama_decode_mtp_drain(struct llama_context * ctx);
+
     // Set the number of threads used for decoding
     // n_threads is the number of threads used for generation (single token)
     // n_threads_batch is the number of threads used for prompt and batch processing (multiple tokens)

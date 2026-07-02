@@ -255,7 +255,7 @@ benches/path-b-plus/           # published summaries (this branch)
 docs/cuda-windows-5070ti/benchmarks/   # Windows run dirs (result.meta, telemetry/)
 rpc-patch/patch/bench-results/         # romulus / cluster benches
 
-scripts/bench-pipeline-depth2.sh       # T0 stub
+scripts/bench-pipeline-depth2.sh       # T0 stub (llama_decode_mtp_* are depth-1 stubs Phase R1)
 scripts/bench-pipeline-plus-ab.sh      # T1 stub
 scripts/llama-pipeline-profiler-cluster.sh  # 4-GPU native profiler (romulus)
 tools/llama-pipeline-profiler/         # native trace + diagnose harness
