@@ -23,16 +23,29 @@ N_PREDICT="${N_PREDICT:-384}"
 PORT="${PORT:-8080}"
 HOST="${HOST:-0.0.0.0}"
 
+# Source production env for 5-GPU (blessed config: dual off, wavefront off, etc.)
+if [ -f "scripts/b6-gate-5gpu-production-env.sh" ]; then
+  # shellcheck source=scripts/b6-gate-5gpu-production-env.sh
+  source scripts/b6-gate-5gpu-production-env.sh
+  b6_5gpu_production_env || true
+fi
+
 echo "=== 5-GPU MTP + VRAM preflight (lateral config) ==="
-python3 rpc-patch/scripts/pathb-rpc-vram-preflight.py \
+PF_OUTPUT=$(python3 rpc-patch/scripts/pathb-rpc-vram-preflight.py \
   --preset "${PRESET}" \
   --gguf "${MODEL}" \
   --ts-mode equal \
   --phase load \
-  --mtp || true
+  --mtp 2>&1 || true)
+echo "$PF_OUTPUT"
 
-# Example from plan/history for 5-GPU; override after preflight
-TS="${TS:-30,14,16,40,20}"   # adjust based on preflight output for your MTP model
+# Capture BENCH_TS
+TS=$(echo "$PF_OUTPUT" | grep -o 'BENCH_TS=[^ ]*' | cut -d= -f2 | tr -d '"' || true)
+if [ -z "$TS" ]; then
+  TS=$(echo "$PF_OUTPUT" | grep -o '#.*ts=.*' | head -1 | sed 's/.*ts=//;s/ .*//' || true)
+fi
+TS="${TS:-30,14,16,40,20}"  # fallback; override from preflight
+export TS
 
 echo "Using TS=${TS}"
 echo "Model: ${MODEL}"

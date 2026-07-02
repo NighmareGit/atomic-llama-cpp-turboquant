@@ -30,16 +30,25 @@ HOST="${HOST:-0.0.0.0}"
 
 # First, run VRAM preflight (lateral config tool) to get -ts recommendation
 echo "=== Running VRAM preflight for ${PRESET} (MTP-aware) ==="
-python3 rpc-patch/scripts/pathb-rpc-vram-preflight.py \
+PF_OUTPUT=$(python3 rpc-patch/scripts/pathb-rpc-vram-preflight.py \
   --preset "${PRESET}" \
   --gguf "${MODEL}" \
   --ts-mode equal \
   --phase load \
-  --mtp || echo "Preflight note: use output for -ts below"
+  --mtp 2>&1 || true)
+echo "$PF_OUTPUT"
 
-# TODO: capture recommended TS from preflight output, e.g.
-# TS="25,12,25,38"   # example from history for this preset; override after running preflight
-TS="${TS:-25,12,25,38}"
+# Capture BENCH_TS (preferred) or fallback to comment
+TS=$(echo "$PF_OUTPUT" | grep -o 'BENCH_TS=[^ ]*' | cut -d= -f2 | tr -d '"' || true)
+if [ -z "$TS" ]; then
+  TS=$(echo "$PF_OUTPUT" | grep -o '#.*ts=.*' | head -1 | sed 's/.*ts=//;s/ .*//' || true)
+fi
+TS="${TS:-25,12,25,38}"  # fallback from history for b6-4gpu-g-triton
+export TS  # for any sub-calls
+
+echo "Using TS=${TS}"
+echo "Model: ${MODEL}"
+echo "Draft: ${DRAFT}"
 
 echo "Using TS=${TS}"
 echo "Model: ${MODEL}"

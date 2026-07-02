@@ -6,6 +6,7 @@ STAGING="${DIR}/staging"
 PROXY_IP="${PROXY_IP:-192.168.8.108}"
 GIT_BRANCH="${GIT_BRANCH:-Path-B-Event-Support-Pipeline-Plus}"
 GIT_URL="${GIT_URL:-http://192.168.8.108:3005/hunter/atomic-llama-cpp-turboquant.git}"
+GIT_COMMIT="${GIT_COMMIT:-}"
 MIN_GB="${MIN_ROOT_GB:-25}"
 
 avail=$(df -BG / | awk 'NR==2 {print $4}')
@@ -34,6 +35,7 @@ timeout 1 bash -c 'cat < /dev/null > /dev/tcp/${PROXY_IP}/3128' 2>/dev/null && \
 apt-get update && apt-get install -y git cmake ninja-build build-essential libopenblas-dev libomp-dev
 rm -rf /tmp/src && git clone '${GIT_URL}' /tmp/src
 cd /tmp/src && git checkout '${GIT_BRANCH}'
+[ -n '${GIT_COMMIT}' ] && git checkout '${GIT_COMMIT}' || true
 export LD_LIBRARY_PATH=/usr/local/cuda/lib64:\$LD_LIBRARY_PATH
 cmake -S . -B build -G Ninja \
     -DGGML_CUDA=ON -DGGML_RPC=ON -DCMAKE_BUILD_TYPE=Release \
