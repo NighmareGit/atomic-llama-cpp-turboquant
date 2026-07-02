@@ -584,6 +584,7 @@ static void usage(const char * argv0) {
         "  --validate-rpc            probe -rpc endpoints and exit (R5 preflight)\n"
         "  --skip-rpc-validate       skip automatic RPC probe before model load\n"
         "  --no-warmup\n"
+        "  --pipeline-plus <0|1>   default: GGML_PIPELINE_PLUS env or 1\n"
         "  -h, --help\n",
         argv0);
 }
@@ -601,6 +602,7 @@ int llama_pipeline_profiler(int argc, char ** argv) {
     profiler_config cfg;
     cfg.tensor_split.assign(llama_max_devices(), 0.0f);
     cfg.out_dir = "profiler-out";
+    bool pipeline_plus_cli = false;
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -679,6 +681,9 @@ int llama_pipeline_profiler(int argc, char ** argv) {
             cfg.skip_rpc_validate = true;
         } else if (arg == "--no-warmup") {
             cfg.no_warmup = true;
+        } else if (arg == "--pipeline-plus") {
+            cfg.pipeline_plus = std::stoi(need(arg.c_str())) != 0 ? 1 : 0;
+            pipeline_plus_cli = true;
         } else {
             fprintf(stderr, "error: unknown arg %s\n", arg.c_str());
             usage(argv[0]);
@@ -687,6 +692,12 @@ int llama_pipeline_profiler(int argc, char ** argv) {
     }
 
     apply_tensor_split(cfg);
+
+    if (!pipeline_plus_cli) {
+        if (const char * env_plus = std::getenv("GGML_PIPELINE_PLUS")) {
+            cfg.pipeline_plus = std::atoi(env_plus) != 0 ? 1 : 0;
+        }
+    }
 
     if (cfg.validate_rpc_only) {
         if (!pipeline_rpc_validate_prepare()) {

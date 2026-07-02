@@ -126,6 +126,19 @@ python3 scripts/b6-gate-phase0-assembly-bounds.py benches/path-b-plus/<run>/tele
 
 ---
 
+## Backlog: SYNC vs Plus comparison chart
+
+Before or in parallel with Phase D0:
+
+- Matrix: [path-b-plus-vs-sync-comparison.md](../../docs/rpc-multi-backend-pipeline-plus/BENCHMARKS/path-b-plus-vs-sync-comparison.md)
+- Run: `DRY_RUN=1 bash scripts/b6-gate-sync-vs-plus-comparison.sh` (36 cells)
+- **Both workloads:** `n384` + `n2048-mt` (multi-turn hard prompt, 2048 gen)
+- Pin SYNC SHA (`feature/turboquant-kv-cache`); rebuild `build-rocm-docker-sync` + rpc-servers
+- Suggested order: n384 full matrix first, then `B6_COMPARE_WORKLOADS=n2048-mt` overnight
+- MTP/NextN rows (M2/M4) need `llama-server` bench — manual per chart s6.3
+
+---
+
 ## Not in this commit
 
 - Bench artifact dirs under `benches/path-b-plus/b6-*-b14*` (untracked; keep local or commit separately).

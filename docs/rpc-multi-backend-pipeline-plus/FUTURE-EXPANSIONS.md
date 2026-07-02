@@ -46,12 +46,13 @@ This file holds **one** deferred item: extending the post-run trace sample scrip
 |----------|------|-------|-------|
 | ~~all~~ | ~~B+8–B+16 + B+14 wavefront~~ | overlap | **NULL** on M3 (2026-07-01) |
 | ~~1~~ | ~~5-GPU 70B+ deploy~~ | throughput / VRAM | **PASS** — Phase 1c complete |
-| **1** | **Phase D0** design + grill / Path C C1 | `global_3bk` | DESIGN-path-d; proposed `Path-D-Layer-Pipeline` branch |
-| 2 | Path C D1 triton (`GRAPH_COMPUTE_ALL`) | server GPU util | [rpc-path-c-plan.md](../../rpc-patch/docs/rpc-path-c-plan.md) C1/C2 |
-| 3 | GPipe D2 (`GGML_SCHED_GPIPE`) | cross-host saturation | MTP-coupled single-seq first |
-| 4 | L4 @ n=384 confirmation | deploy | optional on Path-B+ |
-| 5 | VRAM P2/P3 | planning accuracy | MISSION.md future work |
-| 6 | C-full sample keep lists | telemetry | deferred (below) |
+| **1** | **SYNC vs Plus comparison campaign** | deploy proof | [path-b-plus-vs-sync-comparison.md](BENCHMARKS/path-b-plus-vs-sync-comparison.md); `b6-gate-sync-vs-plus-comparison.sh` |
+| 2 | **Phase D0** design + grill / Path C C1 | `global_3bk` | DESIGN-path-d; proposed `Path-D-Layer-Pipeline` branch |
+| 3 | Path C D1 triton (`GRAPH_COMPUTE_ALL`) | server GPU util | [rpc-path-c-plan.md](../../rpc-patch/docs/rpc-path-c-plan.md) C1/C2 |
+| 4 | GPipe D2 (`GGML_SCHED_GPIPE`) | cross-host saturation | MTP-coupled single-seq first |
+| 5 | L4 @ n=384 confirmation | deploy | optional on Path-B+ |
+| 6 | VRAM P2/P3 | planning accuracy | MISSION.md future work |
+| 7 | C-full sample keep lists | telemetry | deferred (below) |
 
 **Deferred:** Sample API C-full keep lists (above).
 

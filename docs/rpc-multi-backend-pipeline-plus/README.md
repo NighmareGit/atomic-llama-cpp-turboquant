@@ -17,6 +17,7 @@ This is the canonical home for analysis, planning, tracking, and artifacts relat
 - [FEATURE-b11-dual-socket-rpc.md](FEATURE-b11-dual-socket-rpc.md) — B+11 cmd/rsp split, bisect, ops
 - [DESIGN-b13-input-wait-audit.md](DESIGN-b13-input-wait-audit.md) — B+13 split-2 gather wait breakdown
 - [FUTURE-EXPANSIONS.md](FUTURE-EXPANSIONS.md) — deferred work (C-full sample API, Phase D backlog)
+- [BENCHMARKS/path-b-plus-vs-sync-comparison.md](BENCHMARKS/path-b-plus-vs-sync-comparison.md) — **SYNC vs Plus** deployment matrix (3/5 GPU)
 - Handover: [HANDOVER-SESSION-2026-07-01-phase-d.md](../../rpc-patch/patch/HANDOVER-SESSION-2026-07-01-phase-d.md) — **continue here** for path decision
 - [ANALYSIS/Path-B-Plus-MultiBackend-RPC-Orchestration-Audit.md](ANALYSIS/Path-B-Plus-MultiBackend-RPC-Orchestration-Audit.md) — Core technical audit of serial workflow and sync blockers
 - [BENCHMARKS/](BENCHMARKS/) — Reference runs, matrix summaries, profile artifacts

@@ -71,6 +71,14 @@ Matrix re-run 2026-07-01: **all cells PASS** — see `benches/path-b-plus/valida
 3. **Parked pending grill:** B+11–B+13 (proto/cross-cutting; explicit scope required).
 4. **Hygiene:** PR 8 closed; optional `pipeline_rpc_validate_prepare()` loads RPC-only for `--validate-rpc`.
 
+## SYNC vs Plus deployment matrix (planned)
+
+Apples-to-apples **atomic sync branch** vs **Path-B+ production** on 3-GPU and 5-GPU Linux:
+
+- Chart: [path-b-plus-vs-sync-comparison.md](path-b-plus-vs-sync-comparison.md)
+- Orchestrator: `scripts/b6-gate-sync-vs-plus-comparison.sh`
+- Results jsonl: `benches/path-b-plus/sync-vs-plus-comparison.jsonl`
+
 ## Artifact index
 
 | Path | Contents |

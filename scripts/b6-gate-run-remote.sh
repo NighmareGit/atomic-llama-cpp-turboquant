@@ -70,6 +70,23 @@ case "$LABEL" in
         export BENCH_TS="${BENCH_TS:-50,50}"
         export GGML_PIPELINE_PLUS=0
         ;;
+    b6-3gpu-g-triton-plus0)
+        export BENCH_RPC_ENDPOINT="${BENCH_RPC_ENDPOINT:-192.168.8.176:50051,192.168.8.23:50054}"
+        export BENCH_TS="${BENCH_TS:-30,35,35}"
+        export GGML_PIPELINE_PLUS=0
+        export GGML_RPC_DUAL_SOCKET=0
+        export B6_PERF_AUTO=0
+        ;;
+    b6-5gpu-g-prod-plus0)
+        # shellcheck source=scripts/b6-gate-5gpu-production-env.sh
+        source "${ROOT}/scripts/b6-gate-5gpu-production-env.sh"
+        b6_5gpu_base_env
+        export GGML_PIPELINE_PLUS=0
+        export GGML_RPC_DUAL_SOCKET=0
+        export B6_5GPU_HASH_DEFER=0
+        export B6_5GPU_WAVEFRONT=0
+        export B6_PERF_AUTO=0
+        ;;
     *)
         echo "unknown label: $LABEL" >&2
         exit 1
