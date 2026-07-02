@@ -14,8 +14,10 @@ WORKDIR /build
 
 ARG GIT_URL=http://192.168.8.108:3005/hunter/atomic-llama-cpp-turboquant.git
 ARG GIT_BRANCH=Path-B-Event-Support-Pipeline-Plus
+# Pin to specific commit with trace_id + Layer A stubs (lateral additions)
+ARG GIT_COMMIT=2f78713ab
 
-RUN git clone "${GIT_URL}" . && git checkout "${GIT_BRANCH}"
+RUN git clone "${GIT_URL}" . && git checkout "${GIT_BRANCH}" && git checkout "${GIT_COMMIT}" || git checkout "${GIT_BRANCH}"
 
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
 RUN cmake -S . -B build -G Ninja \
