@@ -16,8 +16,8 @@ cd "$ROOT"
 
 PRESET="b6-5gpu-g-prod"
 MODEL_BASENAME="${1:-gemma-4-26B-A4B-APEX-I-Compact.gguf}"
-MODEL="/mnt/models/${MODEL_BASENAME}"
-DRAFT="${DRAFT_GGUF:-/mnt/models/gemma-assistant-mtp.gguf}"
+MODEL=/mnt/models/gemma-4-26B-A4B-APEX-I-Compact.gguf
+DRAFT=/mnt/models/gemma-4-12B-it-assistant-Q8_0.gguf
 
 N_PREDICT="${N_PREDICT:-384}"
 PORT="${PORT:-8080}"
@@ -64,7 +64,7 @@ export GGML_PIPELINE_TRACE_FILE=/tmp/5gpu-mtp-pipeline.jsonl
 # 5-GPU RPC list (example; use your actual workers)
 RPC_LIST="${RPC_LIST:-192.168.8.23:50054,192.168.8.176:50051,...}"  # extend
 
-SERVER="${LLAMA_SERVER:-./build/bin/llama-server}"
+SERVER="${LLAMA_SERVER:-/home/hunter/projects/atomic-llama-cpp-turboquant/build-a2/build-check/bin/llama-server}"
 
 echo "=== Starting 5-GPU MTP ==="
 $SERVER \
@@ -77,7 +77,7 @@ $SERVER \
   --host "${HOST}" \
   --port "${PORT}" \
   --n-predict "${N_PREDICT}" \
-  --draft 1 \
+  --model-draft "${DRAFT}" --spec-type mtp --draft-block-size 3 --draft-max 8 \
   2>&1 | tee /tmp/5gpu-mtp-server.log &
 
 SERVER_PID=$!

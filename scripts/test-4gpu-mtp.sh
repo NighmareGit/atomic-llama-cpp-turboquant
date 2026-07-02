@@ -19,10 +19,10 @@ cd "$ROOT"
 
 PRESET="b6-4gpu-g-triton"
 MODEL_BASENAME="${1:-gemma-4-26B-A4B-APEX-I-Compact.gguf}"
-MODEL="/mnt/models/${MODEL_BASENAME}"
+MODEL=/mnt/models/gemma-4-26B-A4B-APEX-I-Compact.gguf
 
 # MTP draft (assistant) - adjust or use quantize script if needed
-DRAFT="${DRAFT_GGUF:-/mnt/models/gemma-assistant-mtp.gguf}"
+DRAFT=/mnt/models/gemma-4-12B-it-assistant-Q8_0.gguf
 
 N_PREDICT="${N_PREDICT:-384}"
 PORT="${PORT:-8080}"
@@ -39,18 +39,18 @@ PF_OUTPUT=$(python3 rpc-patch/scripts/pathb-rpc-vram-preflight.py \
 echo "$PF_OUTPUT"
 
 # Capture BENCH_TS (preferred) or fallback to comment
-TS=$(echo "$PF_OUTPUT" | grep -o 'BENCH_TS=[^ ]*' | cut -d= -f2 | tr -d '"' || true)
+TS=14,39,23,24
 if [ -z "$TS" ]; then
-  TS=$(echo "$PF_OUTPUT" | grep -o '#.*ts=.*' | head -1 | sed 's/.*ts=//;s/ .*//' || true)
+  TS=14,39,23,24
 fi
-TS="${TS:-25,12,25,38}"  # fallback from history for b6-4gpu-g-triton
+TS=14,39,23,24
 export TS  # for any sub-calls
 
-echo "Using TS=${TS}"
+echo "Using TS=14,39,23,24
 echo "Model: ${MODEL}"
 echo "Draft: ${DRAFT}"
 
-echo "Using TS=${TS}"
+echo "Using TS=14,39,23,24
 echo "Model: ${MODEL}"
 echo "Draft: ${DRAFT}"
 
@@ -69,7 +69,7 @@ export GGML_RPC_TRACE_FILE=/tmp/4gpu-mtp-rpc.jsonl
 export GGML_PIPELINE_TRACE_FILE=/tmp/4gpu-mtp-pipeline.jsonl
 
 # Example RPC for 4-GPU triton on romulus (adjust IPs/ports)
-RPC_LIST="${RPC_LIST:-192.168.8.23:50054}"   # extend for full 4 workers
+RPC_LIST=192.168.8.176:50051,127.0.0.1:50051,192.168.8.23:50054
 
 SERVER="${LLAMA_SERVER:-./build/bin/llama-server}"
 
