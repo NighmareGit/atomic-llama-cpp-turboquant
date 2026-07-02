@@ -59,6 +59,17 @@ Replacing `:50052` (RX6600) with `:50053` (5070) fixes slot init.
 | trace-g-3gpu-primary-r2 | FAIL* | ~41 | *curl run 3 |
 | trace-g-3gpu-primary-r3 | PASS | ~35 |
 
+## Retry (2026-07-02, SHA 9121d16d4, ts=25,12,25,38)
+
+| Label | RESULT | Load | G (t/s) | Notes |
+|-------|--------|------|---------|-------|
+| trace-g-2gpu-retry-M35 | PASS | 56s | 46.4 avg | 2G baseline |
+| trace-g-3gpu-3060-retry-M35 | PASS | 50s | 42.8 avg | 3060 third GPU |
+| trace-g-3gpu-5070-retry-M35 | PASS | 80s | 44.7 avg | 5070 third GPU |
+| trace-g-4gpu-primary-retry-M35 | PASS | 80s | 44.9 avg | **-3.2% vs 2G** |
+
+4G vs 2G server regression **PASS** (<10%). June ~43 t/s baseline recovered. See [CLUSTER-4GPU-PRIMARY.md](../../../../docs/cuda-windows-5070ti/CLUSTER-4GPU-PRIMARY.md#config-g-retry-2026-07-02-sha-9121d16d4).
+
 ## Romulus host snapshot (in git)
 
 Meta/result files pulled to `romulus-host/` before cluster shutdown. Full server logs and jsonl telemetry remain on romulus at `rpc-patch/patch/bench-results/rpc-server-bench/`. Pull script: `rpc-patch/scripts/pull-romulus-bench-snapshot.sh`.

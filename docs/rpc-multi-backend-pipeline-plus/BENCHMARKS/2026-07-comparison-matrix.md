@@ -25,7 +25,13 @@ Data sources: in-repo `diagnose.json`, `trace-parse-extended.json`, `bench.resul
 | `b6-2gpu-f-triton-guard-n128` | 2 | triton 3090 | remus docker | 128 | 116.0 | **0.9** | 0.64 | 788 | 13.7 | Best overlap (short n) |
 | `b6-4gpu-g-n384-romulus-native` | 4 | 5060+3060+JUPITER | romulus 7900 | 384 | 69.5 | 0.2 | 0.96 | 6362 | 8.4 | M1 FAIL |
 | `b6-4gpu-g-triton-n384-romulus-native` | 4 | triton swap | romulus 7900 | 384 | 73.2 | 0.1 | 0.94 | 4632 | — | Drain improved, overlap FAIL |
-| `trace-g-4gpu-primary` | 4 (no 6600) | cluster | romulus | — | ~43 | 0.1 | — | — | — | Throughput baseline |
+| `trace-g-4gpu-primary` | 4 (no 6600) | cluster | romulus | 128 | ~43 | 0.1 | — | — | — | June baseline |
+| `trace-g-4gpu-primary-retry-M35` | 4 (no 6600) | 5060+3060+5070 | romulus | 128 | **44.9** | — | — | — | — | **2026-07-02 PASS** (-3.2% vs 2G) |
+| `trace-g-2gpu-retry-M35` | 2 | remus 5060 | romulus | 128 | **46.4** | — | — | — | — | Config G 2G baseline |
+| `trace-g-3gpu-5070-retry-M35` | 3 | 5060+5070 | romulus | 128 | 44.7 | — | — | — | — | 5070 third GPU OK |
+| `trace-g-3gpu-3060-retry-M35` | 3 | 5060+3060 | romulus | 128 | 42.8 | — | — | — | — | 3060 third GPU OK |
+| `b6-4gpu-g-n384-config-g-retry-M35` | 4 | Config G | romulus | 384 | 76.0 | 0.2 | 0.67 | — | 7.1 (5060) | Profiler (higher orch penalty) |
+| `b6-4gpu-g-n128-config-g-retry-M70` | 4 | Config G | romulus | 128 | 16.3 | 0.4 | 0.67 | — | 33.3 (3060) | Llama-70B dense |
 
 ## Phase 1.1 hot-path signals (n=384 triton ladder)
 

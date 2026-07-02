@@ -79,6 +79,46 @@ Presets on `pathb-romulus-4gpu-bench.sh`:
 Artifacts on romulus: `rpc-patch/patch/bench-results/rpc-server-bench/trace-g-4gpu-primary*/`  
 Summary: [rpc-patch/patch/bench-results/cluster-4gpu-primary/summary.md](../../rpc-patch/patch/bench-results/cluster-4gpu-primary/summary.md)
 
+## Config G retry (2026-07-02, SHA `9121d16d4`)
+
+Re-run without RX6600; updated `-ts 25,12,25,38`; model **Qwen3.6-35B-A3B MoE** (not 70B dense).
+Server bench: `q8_0`/`q8_0`, 128 tok fox, `GGML_PIPELINE_PLUS=1`, `BENCH_TRACE=0`.
+
+### Server bench: 2-device vs 3-device vs 4-device
+
+| Cell | Topology | Load | G run1/2/3 | G avg | vs 2G |
+|------|----------|------|------------|-------|-------|
+| **2G** | 7900 + remus 5060 | 56s | 48.2 / 46.5 / 46.4 | **46.4** | baseline |
+| **3G-3060** | 7900 + 5060 + romulus 3060 | 50s | 41.8 / 43.3 / 43.3 | **42.8** | -7.8% |
+| **3G-5070** | 7900 + 5060 + JUPITER 5070 | 80s | 42.1 / 46.7 / 45.3 | **44.7** | -3.7% |
+| **4G** | Config G (no 6600) | 80s | 43.4 / 45.5 / 45.7 | **44.9** | **-3.2%** |
+
+**Pass criteria (server):** `G_4G >= 0.90 * G_2G` and M35 in 38-45 t/s range -- **PASS** (44.9 vs 46.4 = 96.8%).
+
+**3-device note:** 3G with **5070** (~44.7 t/s) is within 1% of 4G; 3G with **3060** (~42.8 t/s) is the weaker third-GPU case. RX6600 remains excluded (slot-init hang); 3060/5070 are valid third workers.
+
+Labels: `trace-g-{2gpu,3gpu-3060,3gpu-5070,4gpu-primary}-retry-M35`  
+Local copies: `rpc-patch/patch/bench-results/cluster-4gpu-primary/romulus-host/trace-g-*-retry-M35.result`
+
+### Profiler (n384, same model)
+
+| Cell | G (t/s) | vs 2G | overlap % | straggler |
+|------|---------|-------|-----------|-----------|
+| `b6-2gpu-f-n384-config-g-retry-M35` | 106.2 | baseline | 0.2 | backend1 (5060) |
+| `b6-4gpu-g-n384-config-g-retry-M35` | 76.0 | -28.4% | 0.2 | backend1 (5060) |
+
+Profiler penalty exceeds 10% on long n384 workload (orchestration + RPC fan-out). Server fox bench is the fair apples-to-apples for production throughput regression.
+
+### Llama-70B dense arm (separate expectations)
+
+| Cell | Result | G (t/s) |
+|------|--------|---------|
+| `config-g` VRAM preflight | PASS (`ngl=60`, `ts=25,12,25,38`) | -- |
+| `b6-4gpu-g-n128-config-g-retry-M70` | load + decode OK | **16.3** |
+| `b6-2gpu-f` (7900 + 5060) | **OOM** on RPC0 buffer alloc | N/A |
+
+70B dense does not fit the romulus 2-device path; no 43 t/s expectation. Config G 4-GPU is viable at ~16 t/s (profiler n128).
+
 ### Trace hotpath (`trace-g-4gpu-primary-trace`)
 
 | Metric | Value |

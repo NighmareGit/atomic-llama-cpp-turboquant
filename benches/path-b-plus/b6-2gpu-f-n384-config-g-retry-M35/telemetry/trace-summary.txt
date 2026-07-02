@@ -1,0 +1,43 @@
+=== trace summary ===
+dir=benches/path-b-plus/b6-2gpu-f-n384-config-g-retry-M35/telemetry
+
+[rpc] events=3726
+  ALLOC_BUFFER count=8 total_ms=51.08 avg_us=6386
+  GET_ALIGNMENT count=2 total_ms=0.38 avg_us=192
+  GET_MAX_SIZE count=2 total_ms=0.38 avg_us=192
+  BUFFER_GET_BASE count=8 total_ms=1.42 avg_us=178
+  FREE_BUFFER count=8 total_ms=22.19 avg_us=2774
+  BUFFER_CLEAR count=4 total_ms=0.57 avg_us=142
+  SET_TENSOR count=1540 total_ms=5.92 avg_us=4
+  SET_TENSOR_HASH count=168 total_ms=31939.3 avg_us=190115
+  GET_TENSOR count=770 total_ms=136.17 avg_us=177
+  GRAPH_COMPUTE count=8 total_ms=3.55 avg_us=443
+  GET_DEVICE_MEMORY count=6 total_ms=17.25 avg_us=2876
+  GET_ALLOC_SIZE count=48 total_ms=6.8 avg_us=142
+  HELLO count=5 total_ms=0 avg_us=0
+  DEVICE_COUNT count=2 total_ms=0.44 avg_us=221
+  GRAPH_RECOMPUTE count=762 total_ms=1.58 avg_us=2
+  EVENT_RECORD count=385 total_ms=3382.99 avg_us=8787
+  blocking_events=898 blocking_ms=35558
+  drain_flush_ms=3519.17
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  copy_issue_count=1155 defer_count=1155 peer_copy_count=0
+
+[sched] events=9665
+  split_total_count=1155
+  split_total_ms_sum=3949.44 avg_us=3419
+    backend2 splits=385 ms=5.21
+    backend0 splits=385 ms=173.53
+    backend1 splits=385 ms=3770.69
+  input_wait_copy_ms=219.13
+  graph_compute_async_ms=243.65
+  event_record_ms=0.59
+  assembly_overlap_count=853 pairs=444675 overlap_pct=0.2
+    copy0 splits=291
+    copy1 splits=288
+    copy2 splits=288
+    copy3 splits=288
