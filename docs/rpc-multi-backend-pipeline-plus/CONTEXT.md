@@ -67,3 +67,45 @@ _Avoid_: just remove it, soft delete
 **Lateral addition**:
 A supporting change (observability, hygiene, API surface, or new mitigation) that improves the ability to attack the core mission (overlap gate / straggler diagnosis) or reduces future friction, without itself moving the primary metric.
 _Avoid_: side quest, unrelated feature
+
+### Gated DeltaNet / TSC diagnostics
+
+**Total Semantic Collapse (TSC)**:
+Generation degenerates into a stable short token cycle (infinite repetition loop) with collapsed output diversity.
+_Avoid_: repetition penalty failure, EOS miss, bad prompt
+
+**State divergence witness**:
+Evidence that recurrent Gated DeltaNet state (`GGML_OP_GATED_DELTA_NET` I/O, especially the `s` state tensor) differs across backends at the same decode step.
+_Avoid_: tensor hash telemetry, SET_TENSOR_HASH bucket
+
+**TSC symptom**:
+The observable output cycle that triggers investigation; diagnosed from the token stream, not from scheduler split timing alone.
+_Avoid_: semantic collapse, model collapse
+
+**Fox bench**:
+The default rpc-server-bench prompt (`The quick brown fox jumps over the lazy dog.`) labeled `fox` in `.result` previews.
+_Avoid_: default-fox file, pangram test
+
+**Output stutter**:
+Repetitive morphemes in a completed generation preview (e.g. `pangramramramram`, `known-known-known`) while throughput gates still pass and the run finishes `n_predict` tokens.
+_Avoid_: TSC, infinite loop (unless generation actually fails to terminate)
+
+**Reproduction vector**:
+Pinned launcher + env + prompt + artifact paths that reproduce a failure class; for cluster fox benches see `trace-g-4gpu-primary-r3` meta in `rpc-patch/patch/bench-results/`.
+_Avoid_: repro steps, test vector
+
+**TSC validation matrix**:
+Controlled A/B runs that falsify misdiagnosis: same fox prompt across topology (2-GPU / 3-GPU / 4-GPU) and Plus on/off, scoring output stutter vs true non-termination before any GDB witness work.
+_Avoid_: retest plan, bug hunt checklist
+
+**TSC composite gate**:
+Pass/fail uses hang detection (A), automated stutter metrics (B), and one human spot-check per topology class (C); no single signal alone is sufficient.
+_Avoid_: coherence check, preview lint
+
+**Cluster inventory**:
+Live node layout, deploy dirs, and bring-up commands live in gitignored `.scratch/cluster-inventory.md`; credentials in `.scratch/cluster-access.env`.
+_Avoid_: cluster map, SSH cheatsheet (in repo root)
+
+**Cluster ops handover**:
+Versioned runbook for docker lifecycle, build paths, bench launchers, and artifact locations (`rpc-patch/patch/HANDOVER-CLUSTER-OPS.md`).
+_Avoid_: setup guide, infra README

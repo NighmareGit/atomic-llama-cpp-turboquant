@@ -56,11 +56,11 @@ case "$ACTION" in
         if [[ "${PATHB_REMUS_SKIP_DEPLOY:-}" != "1" ]]; then
             deploy_sync
         fi
-        remote "cd $REMUS_DIR && ./build.sh"
+        remote "cd $REMUS_DIR && GIT_COMMIT='${GIT_COMMIT:-}' ./build.sh"
         ;;
     rebuild)
         deploy_sync
-        remote "cd $REMUS_DIR && ./build.sh"
+        remote "cd $REMUS_DIR && GIT_COMMIT='${GIT_COMMIT:-}' ./build.sh"
         remote "cd $REMUS_DIR && docker compose up -d --force-recreate"
         sleep 2
         nc -zv "${REMUS_RPC_IP:-192.168.8.176}" 50051

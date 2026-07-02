@@ -36,7 +36,7 @@ host_git_sync() {
 remote_build() {
     local branch
     branch="$(pathb_node_git_branch)"
-    remote "cd $ROMULUS_DIR && GIT_BRANCH='${branch}' ./build.sh"
+    remote "cd $ROMULUS_DIR && GIT_BRANCH='${branch}' GIT_COMMIT='${GIT_COMMIT:-}' ./build.sh"
 }
 
 ACTION="${1:-status}"

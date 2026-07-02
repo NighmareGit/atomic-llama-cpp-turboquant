@@ -152,6 +152,9 @@ a.out.*
 .history/
 .scratch/
 
+# accidental nested clone inside repo root (1.7G+); use parent tree only
+/atomic-llama-cpp-turboquant/
+
 # AGENTS
 
 AGENTS.local.md
