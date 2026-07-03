@@ -65,12 +65,21 @@ def check_prompt(pid: str, content: str, spec: dict) -> tuple[bool, str]:
 
     if pid == "niche_json":
         try:
-            start = content.find("{")
-            end = content.rfind("}")
+            blob = content
+            if "```" in blob:
+                for part in blob.split("```"):
+                    part = part.strip()
+                    if part.startswith("json"):
+                        part = part[4:].strip()
+                    if "{" in part and "}" in part:
+                        blob = part
+                        break
+            start = blob.find("{")
+            end = blob.rfind("}")
             if start < 0 or end <= start:
                 reasons.append("no_json")
             else:
-                obj = json.loads(content[start : end + 1])
+                obj = json.loads(blob[start : end + 1])
                 if not all(k in obj for k in ("model", "gpus", "kv_tokens")):
                     reasons.append("json_keys")
                 else:

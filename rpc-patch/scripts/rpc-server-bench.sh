@@ -56,6 +56,7 @@ VERBOSE_LV="${BENCH_VERBOSE_LV:-}"
 EXTRACT_VRAM="${BENCH_EXTRACT_VRAM:-0}"
 CURL_TIMEOUT="${BENCH_CURL_TIMEOUT:-300}"
 SAVE_FULL="${BENCH_SAVE_FULL:-0}"
+MULTITURN_KVFILL="${BENCH_MULTITURN_KVFILL:-0}"
 FULL_OUT="${LOG_DIR}/${LABEL}.full.jsonl"
 RPC_MODE="${BENCH_RPC_MODE:-local}"
 RPC_HOST="${BENCH_RPC_HOST:-${REMUS_RPC_IP:-192.168.8.176}}"
@@ -431,6 +432,23 @@ if [[ "$NO_WARMUP" != "1" ]]; then
     curl -sf "http://127.0.0.1:${PORT}/v1/chat/completions" \
         -H "Content-Type: application/json" \
         -d "{\"messages\":[{\"role\":\"user\",\"content\":\"Hi\"}],\"max_tokens\":8}" >/dev/null || true
+fi
+
+if [[ "$MULTITURN_KVFILL" == "1" ]]; then
+    log "multi-turn KV fill (single slot, cache_prompt on)..."
+    export BENCH_PORT="$PORT"
+    export BENCH_KV_OUT="${LOG_DIR}/${LABEL}.kvfill.json"
+    if ! python3 "${SCRIPT_DIR}/pathb-plus1-tsc-multiturn-kvfill.py" 2>&1 | tee -a "$META"; then
+        capture_rpc_artifacts "kvfill_fail"
+        cleanup
+        exit 1
+    fi
+    llama_copy_log
+    capture_rpc_artifacts "pass_final"
+    cleanup
+    log "RESULT=PASS"
+    log "kvfill in ${LOG_DIR}/${LABEL}.kvfill.json"
+    exit 0
 fi
 
 log "benchmark ${RUNS} runs..."
