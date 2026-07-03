@@ -98,6 +98,9 @@ _Avoid_: repro steps, test vector
 Controlled A/B runs that falsify misdiagnosis: same fox prompt across topology (2-GPU / 3-GPU / 4-GPU) and Plus on/off, scoring output stutter vs true non-termination before any GDB witness work.
 _Avoid_: retest plan, bug hunt checklist
 
+**Plus=1 TSC bugfix track**:
+Mitigation bisect (strategy D) before any GDN pin or selective-sync patch. See [BUGFIX-plus1-tsc-semantic-collapse.md](BUGFIX-plus1-tsc-semantic-collapse.md).
+
 **TSC composite gate**:
 Pass/fail uses hang detection (A), automated stutter metrics (B), and one human spot-check per topology class (C); no single signal alone is sufficient.
 _Avoid_: coherence check, preview lint

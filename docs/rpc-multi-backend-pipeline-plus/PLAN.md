@@ -314,3 +314,24 @@ Overlap hunt on this branch is **done**. See [DESIGN-b14-parallel-assembly-line.
 | 4 | Path C bridge criteria doc | **done** (DESIGN s11) |
 
 **Next action (2026-07-01, V6):** Path-B+ **deploy-ready** (Phase 1c complete). Overlap hunt **closed**. Open **Phase D0** — [DESIGN-path-d-layer-pipeline.md](DESIGN-path-d-layer-pipeline.md). Decide: grill D0.3 vs Path C C1 vs parallel.
+
+## Phase 1e — RPC protocol regression (Complete — 2026-07-03)
+
+**Goal:** Fix slot-init hang (`rpc_finish_event_response` / `recv failed`) from `2f78713ab` trace_id work.
+
+| Step | Status |
+|------|--------|
+| PATCH v3 + EVENT_RECORD channel + HELLO v3 trace_id | **merged** @ `2393538ae` |
+| TSC matrix Plus on/off (hang gate) | **PASS** all cells |
+
+## Phase 1f — Plus=1 TSC identification (Active)
+
+**Goal:** Identify which Plus mitigation causes output stutter; no fix until bisect proves root cause.
+
+**Doc:** [BUGFIX-plus1-tsc-semantic-collapse.md](BUGFIX-plus1-tsc-semantic-collapse.md)
+
+**Launcher:** `rpc-patch/scripts/pathb-plus1-tsc-mitigation-bisect.sh`
+
+**Stop rule:** Do not implement GDN pin / selective sync guards until root cause is identified.
+
+**Bisect result (2026-07-03):** B+8..B+12 single-flag and `all-off` arms still stutter. Root cause narrowed to Tier-0 Plus (P0 `pipeline_barrier` + P1 narrow sampling sync). Next: P0/P1 split bisect.

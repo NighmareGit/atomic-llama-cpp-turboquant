@@ -40,6 +40,25 @@ static bool llama_pipeline_plus_enabled() {
     return v != 0;
 }
 
+// Phase 1f bisect: Tier-0 Plus split (P0 graph-reuse barrier vs P1 narrow sampling sync).
+static bool llama_pipeline_p0_full_sync() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_PIPELINE_P0_FULL_SYNC");
+        v = (e != nullptr && atoi(e) != 0) ? 1 : 0;
+    }
+    return v != 0;
+}
+
+static bool llama_pipeline_p1_full_sync() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_PIPELINE_P1_FULL_SYNC");
+        v = (e != nullptr && atoi(e) != 0) ? 1 : 0;
+    }
+    return v != 0;
+}
+
 llama_context::llama_context(
         const llama_model & model,
               llama_context_params params) :
@@ -731,7 +750,7 @@ void llama_context::synchronize_sampling() {
         return;
     }
 
-    if (!cparams.pipeline_parallel || !llama_pipeline_plus_enabled()) {
+    if (!cparams.pipeline_parallel || !llama_pipeline_plus_enabled() || llama_pipeline_p1_full_sync()) {
         synchronize();
         return;
     }
@@ -1362,7 +1381,7 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         //LLAMA_LOG_DEBUG("%s: reusing previous graph\n", __func__);
 
         if (cparams.pipeline_parallel) {
-            if (llama_pipeline_plus_enabled()) {
+            if (llama_pipeline_plus_enabled() && !llama_pipeline_p0_full_sync()) {
                 ggml_backend_sched_pipeline_barrier(sched.get());
             } else {
                 ggml_backend_sched_synchronize(sched.get());
