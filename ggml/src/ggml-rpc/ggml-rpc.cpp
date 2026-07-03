@@ -3043,8 +3043,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
             rsp3.patch = tmp.patch;
         }
         sock->get_caps(rsp3.conn_caps);
-        // trace_id support (additive for 20B EVENT_RECORD)
-        // client will see patch in rsp; we also set based on caps below
+        sock->server_supports_trace_id = (rsp3.patch >= 3) || (req_conn_caps[0] & RPC_CAP_TRACE_ID);
         if (!send_msg(sock, &rsp3, sizeof(rsp3))) {
             return;
         }
