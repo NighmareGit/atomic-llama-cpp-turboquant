@@ -8,7 +8,7 @@ extern "C" {
 
 #define RPC_PROTO_MAJOR_VERSION    4
 #define RPC_PROTO_MINOR_VERSION    4   // + RPC_CMD_CHANNEL_BIND dual-socket (4)
-#define RPC_PROTO_PATCH_VERSION    2
+#define RPC_PROTO_PATCH_VERSION    3   // + trace_id in EVENT_RECORD (20B wire, RPC_CAP_TRACE_ID)
 
 #ifdef  __cplusplus
 // 98 = upstream 97 + the fork's GGML_OP_TURBO_WHT. Bumped patch version because
