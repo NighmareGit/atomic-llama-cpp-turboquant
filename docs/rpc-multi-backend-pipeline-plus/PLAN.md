@@ -334,4 +334,4 @@ Overlap hunt on this branch is **done**. See [DESIGN-b14-parallel-assembly-line.
 
 **Stop rule:** Do not implement GDN pin / selective sync guards until root cause is identified.
 
-**Bisect result (2026-07-03):** B+8..B+12 single-flag and `all-off` arms still stutter. Root cause narrowed to Tier-0 Plus (P0 `pipeline_barrier` + P1 narrow sampling sync). Next: P0/P1 split bisect.
+**Bisect result (2026-07-03):** B+8..B+12 and P0/P1 llama-context knobs do not restore coherence. Stutter correlates with `ggml_sched_pipeline_plus_enabled()` in `ggml-backend.cpp`. Next: sched-legacy split knob.

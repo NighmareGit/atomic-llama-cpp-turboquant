@@ -51,8 +51,13 @@ static int pipeline_trace_lvl() {
 static bool ggml_sched_pipeline_plus_enabled() {
     static int v = -1;
     if (v < 0) {
-        const char * e = getenv("GGML_PIPELINE_PLUS");
-        v = e ? (atoi(e) != 0) : 1;
+        const char * legacy = getenv("GGML_PIPELINE_SCHED_LEGACY");
+        if (legacy != nullptr && atoi(legacy) != 0) {
+            v = 0;
+        } else {
+            const char * e = getenv("GGML_PIPELINE_PLUS");
+            v = e ? (atoi(e) != 0) : 1;
+        }
     }
     return v != 0;
 }

@@ -94,6 +94,21 @@ set -a && source .scratch/cluster-access.env && set +a
 
 Logs: `/tmp/plus1-tsc-bisect/*.log`
 
+### P0/P1 split results (2026-07-03 @ `4ee47dcc7`, 2-GPU fox)
+
+| Arm | P0 | P1 | G t/s | Stutter (B) |
+|-----|----|----|-------|-------------|
+| canonical | barrier | narrow | ~48 | **YES** |
+| p0-legacy | full sync | narrow | ~47-52 | **YES** |
+| p1-legacy | barrier | full sync | ~48 | **YES** |
+| p0-p1-legacy | full sync | full sync | ~48 | **YES** |
+
+Logs: `/tmp/plus1-tsc-p0p1-bisect/*.log`
+
+**Verdict:** Tier-0 **llama-context** P0/P1 alone do not restore coherence. `p0-p1-legacy` matches Plus=0 behavior in `llama-context.cpp` but leaves `ggml_sched_pipeline_plus_enabled()` true in `ggml-backend.cpp`.
+
+**Narrowed to:** scheduler/backend Plus path (`ggml-backend.cpp` copy-slot / split compute) while `GGML_PIPELINE_PLUS=1`.
+
 ### Bisect verdict
 
 **No single B+8..B+12 mitigation is the stutter root cause.** Disabling all rollback flags together while keeping `GGML_PIPELINE_PLUS=1` still stutters.
@@ -129,11 +144,11 @@ set -a && source .scratch/cluster-access.env && set +a
 | `p1-legacy` | barrier | full sync |
 | `p0-p1-legacy` | full sync | full sync |
 
-### Next steps after P0/P1 (no production fix until identified)
+### Next identification step (no production fix until identified)
 
-1. Record which arm restores coherent fox output.
-2. If `p0-p1-legacy` only: design minimal permanent fix on implicated path(s).
-3. If still stutter: state witness on `GGML_OP_GATED_DELTA_NET` I/O.
+1. **Sched vs client split knob** — `GGML_PIPELINE_SCHED_LEGACY=1` (proposed): force `ggml_sched_pipeline_plus_enabled()` false while `GGML_PIPELINE_PLUS=1` in llama-context; falsifies whether backend scheduler alone causes stutter.
+2. If sched-legacy restores coherence: bisect inside `ggml_backend_sched_compute_splits` / copy-slot path with trace.
+3. State witness on `GGML_OP_GATED_DELTA_NET` I/O if sched bisect inconclusive.
 4. Do not implement frontier Stratum 2 (pin GDN to ROCm0) until bisect completes.
 
 ---

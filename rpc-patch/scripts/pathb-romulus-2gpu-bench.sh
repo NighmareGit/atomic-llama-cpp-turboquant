@@ -27,6 +27,7 @@ TRACE="${BENCH_TRACE:-0}"
 PIPE="${GGML_PIPELINE_PLUS:-1}"
 P0_FULL="${GGML_PIPELINE_P0_FULL_SYNC:-}"
 P1_FULL="${GGML_PIPELINE_P1_FULL_SYNC:-}"
+SCHED_LEGACY="${GGML_PIPELINE_SCHED_LEGACY:-}"
 
 REMOTE_ENV=(
     "BENCH_GEN_TOKENS=${GEN}"
@@ -45,6 +46,9 @@ fi
 if [[ -n "$P1_FULL" ]]; then
     REMOTE_ENV+=("GGML_PIPELINE_P1_FULL_SYNC=${P1_FULL}")
 fi
+if [[ -n "$SCHED_LEGACY" ]]; then
+    REMOTE_ENV+=("GGML_PIPELINE_SCHED_LEGACY=${SCHED_LEGACY}")
+fi
 if [[ -n "$NCMOE" ]]; then
     REMOTE_ENV+=("BENCH_NCMOE=${NCMOE}")
 else
@@ -61,5 +65,5 @@ fi
 
 echo "=== romulus 2-GPU bench: ${LABEL} ==="
 echo "remote: ${SSH_HOST}"
-echo "endpoint=${ENDPOINT} ts=${TS} gen=${GEN} load_timeout=${TIMEOUT} trace=${TRACE} pipeline_plus=${PIPE} p0_full=${P0_FULL:-0} p1_full=${P1_FULL:-0}"
+echo "endpoint=${ENDPOINT} ts=${TS} gen=${GEN} load_timeout=${TIMEOUT} trace=${TRACE} pipeline_plus=${PIPE} p0_full=${P0_FULL:-0} p1_full=${P1_FULL:-0} sched_legacy=${SCHED_LEGACY:-0}"
 "${SSH_BASE[@]}" "$SSH_HOST" "$REMOTE_CMD"
