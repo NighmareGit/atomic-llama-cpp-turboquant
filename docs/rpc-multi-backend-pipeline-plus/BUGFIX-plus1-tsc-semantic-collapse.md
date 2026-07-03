@@ -107,7 +107,7 @@ Logs: `/tmp/plus1-tsc-p0p1-bisect/*.log`
 
 **Verdict:** Tier-0 **llama-context** P0/P1 alone do not restore coherence. `p0-p1-legacy` matches Plus=0 behavior in `llama-context.cpp` but leaves `ggml_sched_pipeline_plus_enabled()` true in `ggml-backend.cpp`.
 
-**Narrowed to:** scheduler/backend Plus path (`ggml-backend.cpp` copy-slot / split compute) while `GGML_PIPELINE_PLUS=1`.
+**Superseded:** stutter requires Plus=1 on llama P0/P1 + backend sched + RPC together (see sched-legacy + full-legacy-v2 below).
 
 ### Bisect verdict
 
@@ -144,12 +144,37 @@ set -a && source .scratch/cluster-access.env && set +a
 | `p1-legacy` | barrier | full sync |
 | `p0-p1-legacy` | full sync | full sync |
 
-### Next identification step (no production fix until identified)
+### Sched-legacy + full-legacy combo (@ `92f5b43e5`)
 
-1. **Sched vs client split knob** — `GGML_PIPELINE_SCHED_LEGACY=1` (proposed): force `ggml_sched_pipeline_plus_enabled()` false while `GGML_PIPELINE_PLUS=1` in llama-context; falsifies whether backend scheduler alone causes stutter.
-2. If sched-legacy restores coherence: bisect inside `ggml_backend_sched_compute_splits` / copy-slot path with trace.
-3. State witness on `GGML_OP_GATED_DELTA_NET` I/O if sched bisect inconclusive.
-4. Do not implement frontier Stratum 2 (pin GDN to ROCm0) until bisect completes.
+| Arm | Knobs | Stutter (B) |
+|-----|-------|-------------|
+| `sched-legacy` | `SCHED_LEGACY=1`, Plus=1 | **YES** |
+| `full-legacy` (v1) | `SCHED_LEGACY` + `P0/P1_FULL_SYNC`, RPC Plus still on | **YES** |
+| `full-legacy-v2` | `SCHED_LEGACY` + `P0/P1_FULL_SYNC`, RPC respects `SCHED_LEGACY` | **NO** — coherent pangram |
+| `plus0-retest` | `GGML_PIPELINE_PLUS=0` | **NO** — coherent pangram |
+
+**Identification result:** Stutter requires Plus=1 active on **all three** async surfaces together:
+
+1. **Llama P0/P1** — `pipeline_barrier` + narrow sampling sync
+2. **Backend sched** — `ggml_sched_pipeline_plus_enabled()` copy-slot / split path
+3. **RPC** — `rpc_pipeline_plus_enabled()` defer/drain behavior
+
+Disabling any **one** surface alone is insufficient. Disabling **all three** (via knobs or `Plus=0`) restores coherence.
+
+**Bisect env (debug only @ `92f5b43e5`):**
+
+| Variable | Effect |
+|----------|--------|
+| `GGML_PIPELINE_SCHED_LEGACY=1` | Backend sched + RPC Plus behavior off |
+| `GGML_PIPELINE_P0_FULL_SYNC=1` | Graph reuse: full `sched_synchronize` |
+| `GGML_PIPELINE_P1_FULL_SYNC=1` | Sampling: full `synchronize()` |
+
+### Next step toward proper fix (no production patch yet)
+
+1. **Pairwise matrix** — which *pair* of Plus surfaces still stutters? (find minimal failing combo).
+2. **Trace witness** — with all Plus on vs `full-legacy-v2`, hash `GGML_OP_GATED_DELTA_NET` `s` state at decode step where preview diverges.
+3. Design **surgical sync** at the failing surface only (keep Plus overlap elsewhere), not blanket `Plus=0`.
+4. Do not implement frontier Stratum 2 (pin GDN to ROCm0) until pairwise matrix completes.
 
 ---
 
