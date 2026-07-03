@@ -3364,7 +3364,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 server.wait_compute_idle();
                 rpc_msg_event_record_rsp response = {request.event_id, 0, request.trace_id};
                 size_t rsp_sz = sock->server_supports_trace_id ? sizeof(response) : 12;
-                if (!send_msg(sock, &response, rsp_sz)) {
+                if (!send_response(sock, &response, rsp_sz)) {
                     return;
                 }
                 LOG_DBG("[%s] RPC_CMD_EVENT_RECORD: event_id=%lu, device=%u, trace_id=%llu\n",
