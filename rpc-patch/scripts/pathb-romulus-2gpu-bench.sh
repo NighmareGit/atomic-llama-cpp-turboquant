@@ -23,11 +23,18 @@ MODEL="${BENCH_MODEL:-/mnt/models/Qwen3.6-35B-A3B-APEX-I-Quality.gguf}"
 CTK="${BENCH_CTK:-q8_0}"
 CTV="${BENCH_CTV:-q8_0}"
 NCMOE="${BENCH_NCMOE:-}"
+CTX="${BENCH_CTX:-}"
 TRACE="${BENCH_TRACE:-0}"
+RUNS="${BENCH_RUNS:-}"
+EXTRA="${BENCH_EXTRA:-}"
+PROMPTS="${BENCH_PROMPTS_FILE:-}"
+CURL_TIMEOUT="${BENCH_CURL_TIMEOUT:-}"
+SAVE_FULL="${BENCH_SAVE_FULL:-}"
 PIPE="${GGML_PIPELINE_PLUS:-1}"
 P0_FULL="${GGML_PIPELINE_P0_FULL_SYNC:-}"
 P1_FULL="${GGML_PIPELINE_P1_FULL_SYNC:-}"
 SCHED_LEGACY="${GGML_PIPELINE_SCHED_LEGACY:-}"
+MULTI_BACKEND_SEQ="${GGML_PIPELINE_MULTI_BACKEND_SEQ:-}"
 
 REMOTE_ENV=(
     "BENCH_GEN_TOKENS=${GEN}"
@@ -40,6 +47,24 @@ REMOTE_ENV=(
     "BENCH_TRACE=${TRACE}"
     "GGML_PIPELINE_PLUS=${PIPE}"
 )
+if [[ -n "$RUNS" ]]; then
+    REMOTE_ENV+=("BENCH_RUNS=${RUNS}")
+fi
+if [[ -n "$CTX" ]]; then
+    REMOTE_ENV+=("BENCH_CTX=${CTX}")
+fi
+if [[ -n "$PROMPTS" ]]; then
+    REMOTE_ENV+=("BENCH_PROMPTS_FILE=${PROMPTS}")
+fi
+if [[ -n "$CURL_TIMEOUT" ]]; then
+    REMOTE_ENV+=("BENCH_CURL_TIMEOUT=${CURL_TIMEOUT}")
+fi
+if [[ -n "$SAVE_FULL" ]]; then
+    REMOTE_ENV+=("BENCH_SAVE_FULL=${SAVE_FULL}")
+fi
+if [[ -n "$EXTRA" ]]; then
+    REMOTE_ENV+=("BENCH_EXTRA=${EXTRA}")
+fi
 if [[ -n "$P0_FULL" ]]; then
     REMOTE_ENV+=("GGML_PIPELINE_P0_FULL_SYNC=${P0_FULL}")
 fi
@@ -49,6 +74,9 @@ fi
 if [[ -n "$SCHED_LEGACY" ]]; then
     REMOTE_ENV+=("GGML_PIPELINE_SCHED_LEGACY=${SCHED_LEGACY}")
 fi
+if [[ -n "$MULTI_BACKEND_SEQ" ]]; then
+    REMOTE_ENV+=("GGML_PIPELINE_MULTI_BACKEND_SEQ=${MULTI_BACKEND_SEQ}")
+fi
 if [[ -n "$NCMOE" ]]; then
     REMOTE_ENV+=("BENCH_NCMOE=${NCMOE}")
 else
@@ -56,7 +84,11 @@ else
 fi
 REMOTE_ENV+=("$@")
 
-REMOTE_CMD="cd /home/hunter/atomic-llama-cpp-turboquant && ${REMOTE_ENV[*]} bash /home/hunter/bench-5gpu.sh ${LABEL}"
+REMOTE_PREFIX=""
+for _e in "${REMOTE_ENV[@]}"; do
+    REMOTE_PREFIX+="$(printf '%q ' "$_e")"
+done
+REMOTE_CMD="cd /home/hunter/atomic-llama-cpp-turboquant && ${REMOTE_PREFIX}bash rpc-patch/scripts/pathb-romulus-2gpu-bench-host.sh $(printf '%q' "$LABEL")"
 
 SSH_BASE=(ssh -o StrictHostKeyChecking=no)
 if [[ -n "$SSH_PASS" ]] && command -v sshpass >/dev/null; then
@@ -65,5 +97,5 @@ fi
 
 echo "=== romulus 2-GPU bench: ${LABEL} ==="
 echo "remote: ${SSH_HOST}"
-echo "endpoint=${ENDPOINT} ts=${TS} gen=${GEN} load_timeout=${TIMEOUT} trace=${TRACE} pipeline_plus=${PIPE} p0_full=${P0_FULL:-0} p1_full=${P1_FULL:-0} sched_legacy=${SCHED_LEGACY:-0}"
+echo "endpoint=${ENDPOINT} ts=${TS} gen=${GEN} load_timeout=${TIMEOUT} trace=${TRACE} pipeline_plus=${PIPE} p0_full=${P0_FULL:-0} p1_full=${P1_FULL:-0} sched_legacy=${SCHED_LEGACY:-0} multi_backend_seq=${MULTI_BACKEND_SEQ:-0}"
 "${SSH_BASE[@]}" "$SSH_HOST" "$REMOTE_CMD"

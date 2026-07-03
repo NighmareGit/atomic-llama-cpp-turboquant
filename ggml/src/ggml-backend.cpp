@@ -47,12 +47,24 @@ static int pipeline_trace_lvl() {
     return v;
 }
 
+// Plus=1 TSC repair: sequential cross-backend handoff (bundles P0 full sync + sched legacy async off).
+bool ggml_pipeline_multi_backend_seq_enabled(void) {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_PIPELINE_MULTI_BACKEND_SEQ");
+        v = (e != nullptr && atoi(e) != 0) ? 1 : 0;
+    }
+    return v != 0;
+}
+
 // Path-B+ mitigation flags (B+8..B+10). Default on when GGML_PIPELINE_PLUS=1.
 static bool ggml_sched_pipeline_plus_enabled() {
     static int v = -1;
     if (v < 0) {
         const char * legacy = getenv("GGML_PIPELINE_SCHED_LEGACY");
         if (legacy != nullptr && atoi(legacy) != 0) {
+            v = 0;
+        } else if (ggml_pipeline_multi_backend_seq_enabled()) {
             v = 0;
         } else {
             const char * e = getenv("GGML_PIPELINE_PLUS");

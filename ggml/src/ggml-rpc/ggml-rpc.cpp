@@ -294,6 +294,8 @@ static bool rpc_pipeline_plus_enabled() {
         const char * legacy = getenv("GGML_PIPELINE_SCHED_LEGACY");
         if (legacy != nullptr && atoi(legacy) != 0) {
             v = 0;
+        } else if (ggml_pipeline_multi_backend_seq_enabled()) {
+            v = 0;
         } else {
             const char * e = getenv("GGML_PIPELINE_PLUS");
             v = e ? (atoi(e) != 0) : 1;

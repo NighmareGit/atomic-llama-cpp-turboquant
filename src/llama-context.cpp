@@ -50,6 +50,11 @@ static bool llama_pipeline_p0_full_sync() {
     return v != 0;
 }
 
+// R1: full sched sync at graph reuse (no cur_copy rotation). Also set by MULTI_BACKEND_SEQ spike.
+static bool llama_pipeline_reuse_full_sync() {
+    return llama_pipeline_p0_full_sync() || ggml_pipeline_multi_backend_seq_enabled();
+}
+
 static bool llama_pipeline_p1_full_sync() {
     static int v = -1;
     if (v < 0) {
@@ -1381,7 +1386,7 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         //LLAMA_LOG_DEBUG("%s: reusing previous graph\n", __func__);
 
         if (cparams.pipeline_parallel) {
-            if (llama_pipeline_plus_enabled() && !llama_pipeline_p0_full_sync()) {
+            if (llama_pipeline_plus_enabled() && !llama_pipeline_reuse_full_sync()) {
                 ggml_backend_sched_pipeline_barrier(sched.get());
             } else {
                 ggml_backend_sched_synchronize(sched.get());

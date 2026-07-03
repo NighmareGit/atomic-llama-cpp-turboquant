@@ -55,6 +55,8 @@ PROMPTS_FILE="${BENCH_PROMPTS_FILE:-}"
 VERBOSE_LV="${BENCH_VERBOSE_LV:-}"
 EXTRACT_VRAM="${BENCH_EXTRACT_VRAM:-0}"
 CURL_TIMEOUT="${BENCH_CURL_TIMEOUT:-300}"
+SAVE_FULL="${BENCH_SAVE_FULL:-0}"
+FULL_OUT="${LOG_DIR}/${LABEL}.full.jsonl"
 RPC_MODE="${BENCH_RPC_MODE:-local}"
 RPC_HOST="${BENCH_RPC_HOST:-${REMUS_RPC_IP:-192.168.8.176}}"
 RPC_WAIT="${BENCH_RPC_WAIT:-5}"
@@ -474,6 +476,20 @@ print(f\"run={ri} prompt={pid} P={t.get('prompt_per_second',0):.1f} G={t.get('pr
 " "$prompt_id" "$run_idx" <<<"$out")
     log "$line"
     echo "$line" >>"$RESULT"
+    if [[ "$SAVE_FULL" == "1" ]]; then
+        python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+row = {
+    'run': int(sys.argv[1]),
+    'prompt_id': sys.argv[2],
+    'content': d.get('choices', [{}])[0].get('message', {}).get('content', ''),
+    'timings': d.get('timings') or {},
+    'usage': d.get('usage') or {},
+}
+print(json.dumps(row, ensure_ascii=False))
+" "$run_idx" "$prompt_id" <<<"$out" >>"$FULL_OUT"
+    fi
     if python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -489,18 +505,18 @@ print(1 if bad or garbled else 0)
 
 if [[ -n "$PROMPTS_FILE" && -f "$PROMPTS_FILE" ]]; then
     mapfile -t _prompt_rows < <(python3 -c "
-import json, sys
+import base64, json, sys
 for p in json.load(open(sys.argv[1])):
-    print(p['id'] + '\t' + p['content'].replace('\n', '\\n'))
+    b64 = base64.b64encode(p['content'].encode('utf-8')).decode('ascii')
+    print(p['id'] + '\t' + b64)
 " "$PROMPTS_FILE")
     run_idx=0
     for row in "${_prompt_rows[@]}"; do
         pid="${row%%$'\t'*}"
-        ptext="${row#*$'\t'}"
-        ptext="${ptext//\\n/$'\n'}"
+        ptext="$(printf '%s' "${row#*$'\t'}" | base64 -d)"
         for _ in $(seq 1 "$RUNS"); do
             run_idx=$((run_idx + 1))
-            bench_one "$run_idx" "$pid" "$ptext" || { cleanup; exit 1; }  # artifacts captured in bench_one
+            bench_one "$run_idx" "$pid" "$ptext" || { cleanup; exit 1; }
         done
     done
 else

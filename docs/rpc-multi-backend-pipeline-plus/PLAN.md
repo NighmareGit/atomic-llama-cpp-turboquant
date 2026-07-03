@@ -324,14 +324,14 @@ Overlap hunt on this branch is **done**. See [DESIGN-b14-parallel-assembly-line.
 | PATCH v3 + EVENT_RECORD channel + HELLO v3 trace_id | **merged** @ `2393538ae` |
 | TSC matrix Plus on/off (hang gate) | **PASS** all cells |
 
-## Phase 1f — Plus=1 TSC identification (Active)
+## Phase 1f — Plus=1 TSC identification (pairwise complete — fix design next)
 
-**Goal:** Identify which Plus mitigation causes output stutter; no fix until bisect proves root cause.
+**Goal:** Identify which Plus mitigation causes output stutter; no production fix until witness confirms.
 
-**Doc:** [BUGFIX-plus1-tsc-semantic-collapse.md](BUGFIX-plus1-tsc-semantic-collapse.md)
+**Docs:** [BUGFIX-plus1-tsc-semantic-collapse.md](BUGFIX-plus1-tsc-semantic-collapse.md), [BUGFIX-plus1-tsc-REDTEAM.md](BUGFIX-plus1-tsc-REDTEAM.md)
 
-**Launcher:** `rpc-patch/scripts/pathb-plus1-tsc-mitigation-bisect.sh`
+**Launchers:** `pathb-plus1-tsc-mitigation-bisect.sh`, `pathb-plus1-tsc-p0p1-bisect.sh`, `pathb-plus1-tsc-pairwise-bisect.sh`
 
-**Stop rule:** Do not implement GDN pin / selective sync guards until root cause is identified.
+**Stop rule:** Do not ship GDN pin / blanket sync until GDN witness or split-S arm validates S+P0 hypothesis.
 
-**Bisect result (2026-07-03):** Stutter needs Plus=1 on llama P0/P1 + backend sched + RPC together. `full-legacy-v2` knobs restore coherence; single-surface disable insufficient. Next: pairwise matrix + GDN witness.
+**Result (2026-07-03 @ `09e3f0fe3`):** Pairwise matrix on 2-GPU fox. Minimal Plus=1 coherent arm: `sched-p0-legacy` (`SCHED_LEGACY` + `P0_FULL_SYNC`; P1 narrow may stay async). All single-surface and most two-surface combos still stutter. Red-team: identification sufficient to **design**, not to **ship**. Next: GDN state hash witness + 3-GPU confirmation.

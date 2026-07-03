@@ -2,8 +2,8 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | Active — identification phase (mitigation bisect) |
-| **Branch** | `Path-B-Event-Support-Pipeline-Plus` @ `2393538ae` |
+| **Status** | Active — identification complete; surgical fix design next |
+| **Branch** | `Path-B-Event-Support-Pipeline-Plus` @ `09e3f0fe3` |
 | **Related** | [CONTEXT.md](CONTEXT.md) (TSC glossary), [IMPLEMENTATION.md](IMPLEMENTATION.md) (mitigation flags) |
 | **Ops** | [HANDOVER-CLUSTER-OPS.md](../../rpc-patch/patch/HANDOVER-CLUSTER-OPS.md) |
 
@@ -169,12 +169,58 @@ Disabling any **one** surface alone is insufficient. Disabling **all three** (vi
 | `GGML_PIPELINE_P0_FULL_SYNC=1` | Graph reuse: full `sched_synchronize` |
 | `GGML_PIPELINE_P1_FULL_SYNC=1` | Sampling: full `synchronize()` |
 
+### Pairwise matrix (@ `09e3f0fe3`, 2-GPU fox, 2026-07-03)
+
+Three Plus surfaces: **S** = backend sched + RPC (`SCHED_LEGACY`), **P0** = graph-reuse barrier (`P0_FULL_SYNC`), **P1** = narrow sampling sync (`P1_FULL_SYNC`). `legacy` = knob ON (Plus async off for that surface).
+
+| Arm | S | P0 | P1 | G t/s | Stutter (B) | Preview signal |
+|-----|---|---|----|-------|-------------|----------------|
+| `canonical` | async | async | async | ~47 | **YES** | `HereHereHere` |
+| `full-legacy` | legacy | legacy | legacy | ~46 | **NO** | pangram explanation |
+| `sched-legacy` | legacy | async | async | ~45-46 | **YES** | `ppppangangangramram` |
+| `llama-legacy` | async | legacy | legacy | ~46-49 | **YES** | `!!``` / </think>` loops |
+| `sched-p0-legacy` | legacy | legacy | async | ~45-46 | **NO** | pangram explanation |
+| `sched-p1-legacy` | legacy | async | legacy | ~46 | **YES** | `sentence sentence is is` |
+| `p0-legacy` | async | legacy | async | ~48-52 | **YES** | ` ```!``` ` loops |
+| `p1-legacy` | async | async | legacy | ~46-49 | **YES** | `HereHereHere` |
+| `plus0` | off | off | off | ~45 | **NO** | pangram explanation |
+
+Logs: `/tmp/plus1-tsc-pairwise-bisect/*.log`
+
+**Pairwise verdict:**
+
+| Pattern | Count | Arms |
+|---------|-------|------|
+| All three async | 1 | `canonical` |
+| Exactly two async | 5 | `sched-legacy`, `llama-legacy`, `sched-p1-legacy`, `p0-legacy`, `p1-legacy` — all stutter |
+| Exactly one async | 1 | `sched-p0-legacy` (P1 narrow only) — **coherent** |
+| Zero async | 2 | `full-legacy`, `plus0` — coherent |
+
+**Minimal Plus=1 coherent combo:** `SCHED_LEGACY=1` + `P0_FULL_SYNC=1`. P1 narrow sync can remain async.
+
+**Refined root-cause surface:** stutter requires **S + P0** both in Plus-async mode. P1 narrow sync alone does not trigger collapse when S and P0 are legacy. `sched-p1-legacy` (S legacy, P0 async) still stutters — P0 barrier is the llama-side gate, not P1.
+
+Red-team critique: [BUGFIX-plus1-tsc-REDTEAM.md](BUGFIX-plus1-tsc-REDTEAM.md)
+
+### Root cause analysis (2026-07-03)
+
+Deep dive: [BUGFIX-plus1-tsc-ROOTCAUSE.md](BUGFIX-plus1-tsc-ROOTCAUSE.md)
+
+**Model specificity (APEX-I-Quality.gguf):** `qwen35moe`, 30 GDN + 10 full-attn layers, MoE active, **`n_layer_nextn=0`**, no speculative draft — **not an MTP execution bug**. See ROOTCAUSE §0.
+
+**Working hypothesis:** Cross-token ordering bug at **S + P0** intersection on **GDN + multi-backend** decode. P1 narrow sync not on critical path.
+
+**S factorial (P0_FULL fixed):** Only `SCHED_LEGACY` bundle coherent; single S-flag OFF arms fail; `no-moe-copy` was GATE_B false positive.
+
+**Not sufficient alone:** `P0_FULL_SYNC` without S legacy (`p0-legacy` / `p0-only` stutter). **Not sufficient alone:** S legacy without P0 full sync (`sched-p1-legacy` stutters).
+
 ### Next step toward proper fix (no production patch yet)
 
-1. **Pairwise matrix** — which *pair* of Plus surfaces still stutters? (find minimal failing combo).
-2. **Trace witness** — with all Plus on vs `full-legacy-v2`, hash `GGML_OP_GATED_DELTA_NET` `s` state at decode step where preview diverges.
-3. Design **surgical sync** at the failing surface only (keep Plus overlap elsewhere), not blanket `Plus=0`.
-4. Do not implement frontier Stratum 2 (pin GDN to ROCm0) until pairwise matrix completes.
+1. ~~**Pairwise matrix**~~ — done; minimal coherent arm is `sched-p0-legacy`.
+2. **GDN witness** — eval-callback hash at `GGML_OP_GATED_DELTA_NET` (see ROOTCAUSE §5.1).
+3. **S factorial** — decompose `SCHED_LEGACY` with `P0_FULL_SYNC=1` fixed (GET_DEFER, EVENT_DEFER, BARRIER_PARTIAL arms).
+4. **Implement** smallest proven pair (bet: F1 recurrent P0 full sync + F2a GDN split gather hardening), gated, default-on for GDN models.
+5. Defer pin-GDN-to-ROCm0 until witness + factorial complete.
 
 ---
 
