@@ -518,5 +518,23 @@ Workload gate: **A1 MoE** dev benches; **A8/A13 70B** prod prove.
 
 ---
 
+---
+
+## V7 — Plus=1 TSC repair spike (2026-07-03)
+
+**Verdict:** TSC is a **generic** multi-backend Plus=1 ordering bug (not MTP/MoE/GDN-only). Spike `GGML_PIPELINE_MULTI_BACKEND_SEQ=1` (R1+R2) restores coherence on 2/3-GPU validation matrix. **Not production-default yet** — needs R3 + witness + b6 re-gate.
+
+| Step | Item | Status |
+|------|------|--------|
+| V7.1 | Pairwise + blast-radius identification | **done** @ `09e3f0fe3` |
+| V7.2 | `MULTI_BACKEND_SEQ` spike + 8-prompt suite | **done** @ `9eb10c5ca` |
+| V7.3 | Open points: KV fill, llama3/gemma3, 3-GPU | **done** @ `6ac048b97` |
+| V7.4 | Selective R3 + GDN witness | pending |
+| V7.5 | Default-on + 4-GPU + b6 overlap proof | pending |
+
+Handover: [HANDOVER-SESSION-2026-07-03.md](../../rpc-patch/patch/HANDOVER-SESSION-2026-07-03.md)
+
+---
+
 **Update this file after every profile/profiler run or topology decision.**  
-**Last edit:** 2026-07-01 — V6: Phase D0 design doc; Path-B+ frozen for deploy; grill/Path C fork documented.
+**Last edit:** 2026-07-03 — V7: TSC spike validated; Phase D paused until TSC ship criteria met.

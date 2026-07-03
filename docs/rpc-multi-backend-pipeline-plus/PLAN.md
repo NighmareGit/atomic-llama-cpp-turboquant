@@ -40,41 +40,22 @@ Navigation: [TRACKING.md](TRACKING.md) | [MISSION.md](MISSION.md) | [DESIGN-path
 - Re-run champion + 4-GPU canonical with full profiler telemetry
 - Deliverable: `BENCHMARKS/2026-07-comparison-matrix.md` (after 1.1)
 
-<<<<<<< HEAD
+### 1.4 Lateral Observability & Hygiene Additions (Complete — 2026-07-03)
+
+Integrated lateral additions for Phase 1/2 diagnosis. They do not target `overlap_pct` improvement.
+
+**Trace correlation (unified `trace_id`)** — shipped @ `2393538ae`:
+- Monotonic `trace_id` in GGML_SCHED_TRACE, GGML_RPC_TRACE, GGML_PIPELINE_TRACE, LLAMA_MTP_ACC_TRACE.
+- RPC PATCH v3 + `RPC_CAP_TRACE_ID`; EVENT_RECORD channel fix; HELLO v3 path.
+- Regression: TSC matrix Plus on/off hang gate PASS.
+
+**Configuration hygiene & deprecation policy** — partial:
+- `ggml_sched_log_deprecated()` helper planned; blessed set in `CONFIGURATION.md`.
+- Full audit dump (`GGML_CONFIG_AUDIT=1`) backlog.
+
+**Layer A surface (depth-2 stubs)** — backlog (compilation surface only; no server loop change).
+
 ## Phase 1b — B+6 Overlap Gate (Closed — structural ceiling 2026-07-01)
-=======
-### 1.4 Lateral Observability & Hygiene Additions
-
-These are integrated lateral additions executed as part of Phase 1 and Phase 2. They improve diagnosis and reduce configuration friction for the mitigation ladder. They do not target `overlap_pct` improvement themselves.
-
-**Trace correlation (unified `trace_id`)**  
-Add a monotonic `trace_id` (uint64 per `llama_decode` or micro-batch) to all four trace schemas:
-- GGML_SCHED_TRACE, GGML_RPC_TRACE, GGML_PIPELINE_TRACE, LLAMA_MTP_ACC_TRACE.
-Propagate it in `ggml-backend.cpp`, `ggml-rpc.cpp` (extend EVENT_RECORD to 20 bytes), `llama-context.cpp` (generate in process_ubatch, never reset on perf_reset), and `common/speculative.cpp`.
-- Wire: bump RPC_PROTO_PATCH_VERSION to 3, add `RPC_CAP_TRACE_ID` bit, with full backward compat to 12-byte legacy.
-- Harness: update `pathb-hotpath-summary.sh` to join on `trace_id` and report `trace_id_join_rate`.
-- Success: `trace_id_join_rate > 0.95` on canonical 4-GPU runs. G unchanged (≥66 t/s on baseline).
-
-**Configuration hygiene & deprecation policy**  
-- Add `ggml_sched_log_deprecated()` helper (std::call_once) in `ggml-backend.cpp` and `ggml-rpc.cpp`.
-- Emit one-time warnings for `GGML_RPC_DUAL_SOCKET` (B+11), `GGML_RPC_HASH_DEFER` (B+7f), `GGML_SCHED_WAVEFRONT_DISPATCH` (B+14).
-- Add `GGML_CONFIG_AUDIT=1` startup dump in `llama-context.cpp::load()`.
-- Document blessed set (from the 4-GPU baseline env.txt) in `CONFIGURATION.md`.
-- Update IMPLEMENTATION.md env table with "Blessed" / "DEPRECATED (Phase R3 removal)" status column.
-- No removal now; flags stay functional.
-
-**Layer A surface (depth-2 stubs)**  
-The APIs documented in PIPELINE.md/MTP.md/BENCHMARKING.md (`llama_decode_mtp_async`, `llama_decode_mtp_wait`, `llama_decode_mtp_cancel`, `llama_decode_mtp_drain`, `common_speculative_prepare_next` etc.) do not exist yet.
-- Add the four symbols to `include/llama.h` (after llama_decode) and `src/llama-ext.h`.
-- Implement as synchronous depth-1 stubs in `src/llama-context.cpp` and `common/speculative.cpp` (call existing draft path + one-time "stub" log when `LLAMA_PIPELINE_DEPTH2=1`).
-- No change to `tools/server/server-context.cpp` speculative loop.
-- Update bench script, PIPELINE.md, MTP.md, NEXTN.md, BENCHMARKING.md with stub status notes.
-- All gated; default behavior identical to before. Provides compilation surface only.
-
-All changes are additive or behind new env flags that default to current behavior. They do not alter the structural ceiling or Path C boundary. Verification for the set: clean build, 4-GPU baseline G ≥ 66 t/s, trace join rate, deprecation warnings fire exactly once when enabled, stub logs exactly once when enabled.
-
-## Phase 1b — B+6 Overlap Gate (Active — parallel with 1.1)
->>>>>>> 010d4e34d (llama : add unified trace_id + Layer A depth-2 stubs (lateral additions for Path-B+))
 
 **Goal:** Pass M3 (`overlap_pct >= 5%`) without Path C. See [b6-gate/TRACKING.md](../../rpc-patch/docs/b6-gate/TRACKING.md).
 
@@ -324,14 +305,32 @@ Overlap hunt on this branch is **done**. See [DESIGN-b14-parallel-assembly-line.
 | PATCH v3 + EVENT_RECORD channel + HELLO v3 trace_id | **merged** @ `2393538ae` |
 | TSC matrix Plus on/off (hang gate) | **PASS** all cells |
 
-## Phase 1f — Plus=1 TSC identification (pairwise complete — fix design next)
+## Phase 1f — Plus=1 TSC identification (Complete — 2026-07-03)
 
-**Goal:** Identify which Plus mitigation causes output stutter; no production fix until witness confirms.
+**Goal:** Identify which Plus mitigation causes output stutter; design repair before ship.
 
-**Docs:** [BUGFIX-plus1-tsc-semantic-collapse.md](BUGFIX-plus1-tsc-semantic-collapse.md), [BUGFIX-plus1-tsc-REDTEAM.md](BUGFIX-plus1-tsc-REDTEAM.md)
+**Docs:** [BUGFIX-plus1-tsc-semantic-collapse.md](BUGFIX-plus1-tsc-semantic-collapse.md), [BUGFIX-plus1-tsc-REDTEAM.md](BUGFIX-plus1-tsc-REDTEAM.md), [BUGFIX-plus1-tsc-ROOTCAUSE.md](BUGFIX-plus1-tsc-ROOTCAUSE.md), [BUGFIX-plus1-tsc-REPAIR-PATH.md](BUGFIX-plus1-tsc-REPAIR-PATH.md)
 
-**Launchers:** `pathb-plus1-tsc-mitigation-bisect.sh`, `pathb-plus1-tsc-p0p1-bisect.sh`, `pathb-plus1-tsc-pairwise-bisect.sh`
+**Launchers:** `pathb-plus1-tsc-mitigation-bisect.sh`, `pathb-plus1-tsc-p0p1-bisect.sh`, `pathb-plus1-tsc-pairwise-bisect.sh`, `pathb-plus1-tsc-blast-radius.sh`, `pathb-plus1-tsc-s-factorial.sh`
 
-**Stop rule:** Do not ship GDN pin / blanket sync until GDN witness or split-S arm validates S+P0 hypothesis.
+**Result (@ `09e3f0fe3`):** Pairwise matrix on 2-GPU fox. Minimal Plus=1 coherent arm: `sched-p0-legacy` (`SCHED_LEGACY` + `P0_FULL_SYNC`). Blast-radius: generic `pipeline_parallel` + multi-backend; not MTP/MoE/GDN-only.
 
-**Result (2026-07-03 @ `09e3f0fe3`):** Pairwise matrix on 2-GPU fox. Minimal Plus=1 coherent arm: `sched-p0-legacy` (`SCHED_LEGACY` + `P0_FULL_SYNC`; P1 narrow may stay async). All single-surface and most two-surface combos still stutter. Red-team: identification sufficient to **design**, not to **ship**. Next: GDN state hash witness + 3-GPU confirmation.
+## Phase 1g — Plus=1 TSC repair spike (validated — ship R3 next)
+
+**Goal:** Restore sequential cross-backend consistency without blanket Plus-off.
+
+**Knob:** `GGML_PIPELINE_MULTI_BACKEND_SEQ=1` (R1+R2 bundle) @ `9eb10c5ca`
+
+**Validation (@ `6ac048b97`):**
+
+| Gate | canonical-plus1 | seq-repair |
+|------|-----------------|------------|
+| 8-prompt suite (apex 2-GPU) | 0/8 | **8/8** |
+| Multi-turn KV fill | FAIL (2453 tok) | **PASS** (8149 tok) |
+| llama3-8b | 2/8 | **7/8** |
+| gemma3-12b | 0/8 | **8/8** |
+| 3-GPU primary-5060-3060 | 0/8 | **8/8** |
+
+**Handover:** [HANDOVER-SESSION-2026-07-03.md](../../rpc-patch/patch/HANDOVER-SESSION-2026-07-03.md)
+
+**Next:** Selective R3 (GDN split fences), `GGML_PIPELINE_GDN_WITNESS=1`, default-on policy, 4-GPU + b6 overlap re-gate. Do not ship blanket `SCHED_LEGACY` once R1+R2+R3 passes ship criteria.
