@@ -18,21 +18,24 @@ def main() -> int:
     from gguf import GGUFReader  # type: ignore
 
     r = GGUFReader(str(args.gguf))
-    nextn_like: list[str] = []
+    draft_like: list[str] = []
     for t in r.tensors:
         nm = t.name.decode("utf-8") if isinstance(t.name, bytes) else str(t.name)
-        if ".nextn." in nm:
-            nextn_like.append(nm)
+        if ".nextn." in nm or ".mtp." in nm or nm.endswith("pre_projection.weight") or nm.endswith("post_projection.weight"):
+            draft_like.append(nm)
 
-    if not nextn_like:
-        print("error: no NextN-style tensors found (expected names containing '.nextn.')", file=sys.stderr)
+    if not draft_like:
+        print(
+            "error: no NextN/MTP draft tensors found (expected '.nextn.', '.mtp.', or pre/post_projection)",
+            file=sys.stderr,
+        )
         return 1
 
-    print(f"ok: found {len(nextn_like)} NextN-related tensors (showing up to 12):")
-    for nm in sorted(nextn_like)[:12]:
+    print(f"ok: found {len(draft_like)} NextN/MTP-related tensors (showing up to 12):")
+    for nm in sorted(draft_like)[:12]:
         print(f"  {nm}")
-    if len(nextn_like) > 12:
-        print(f"  ... and {len(nextn_like) - 12} more")
+    if len(draft_like) > 12:
+        print(f"  ... and {len(draft_like) - 12} more")
     return 0
 
 

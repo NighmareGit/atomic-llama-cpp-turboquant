@@ -666,6 +666,11 @@ def main() -> int:
         print(f"  # ts-mode: equal (L4 cap-small @ {small_label})")
     print(f"  BENCH_FITT={','.join(str(m) for m in fitt_mib)}")
     print(f"  BENCH_NGL={ngl_rec}")
+    if preset.config in ("romulus-local", "remus", "config-c", "config-g"):
+        print(
+            "  # layer-split RPC: use -ngl 99 (all layers on GPU split by ts). "
+            "Lower ngl fits static VRAM math but corrupts RPC inference."
+        )
     fitt_s = ",".join(str(m) for m in fitt_mib)
     print(
         f"  BENCH_EXTRA='--fit off --fit-target {fitt_s} --verbose -lv 4 --reasoning off'"

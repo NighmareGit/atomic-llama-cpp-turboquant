@@ -19,7 +19,7 @@ CTVD="${CTVD:-f16}"
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-8080}"
 FA="${FA:-on}"
-SPEC="${SPEC:-nextn}"
+SPEC="${SPEC:-draft-mtp}"
 
 ENABLE_METRICS="${ENABLE_METRICS:-1}"
 ENABLE_SLOTS="${ENABLE_SLOTS:-1}"
@@ -36,11 +36,7 @@ if [[ ! -f "$MAIN" ]]; then
   exit 1
 fi
 
-if [[ "$SPEC" == "nextn" ]]; then
-  if [[ ! -f "$DRAFT" ]]; then
-    echo "error: draft path not found: ${DRAFT}" >&2
-    exit 1
-  fi
+if [[ "$SPEC" == "draft-mtp" ]]; then
   if [[ "$VERIFY_GGUF" != "0" ]]; then
     python3 "${ROOT}/scripts/verify-qwen36-nextn-gguf.py" "$MAIN" || exit 1
   fi
@@ -65,13 +61,16 @@ ARGS=(
   --cont-batching
 )
 
-if [[ "$SPEC" == "nextn" ]]; then
+if [[ "$SPEC" == "draft-mtp" ]]; then
   ARGS+=(
-    -md "$DRAFT"
-    --spec-type nextn
-    --draft-max "${DRAFT_MAX:-16}"
-    --draft-min "${DRAFT_MIN:-0}"
+    --spec-type draft-mtp
+    --spec-draft-n-max "${DRAFT_MAX:-16}"
+    --spec-draft-n-min "${DRAFT_MIN:-0}"
   )
+  if [[ -n "$DRAFT" && "$DRAFT" != "$MAIN" ]]; then
+    ARGS+=(-md "$DRAFT")
+    ARGS+=(--spec-draft-ngl "$NGL_DRAFT")
+  fi
 else
   echo "info: speculative decoding disabled (SPEC=${SPEC}); running baseline" >&2
 fi

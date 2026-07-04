@@ -166,6 +166,7 @@ MODEL="$(resolve_model "$MODEL")"
 
 if [[ -z "$SPEC" ]]; then
     if [[ "$MODEL" == *MTP* || "$MODEL" == *NextN* || "$MODEL" == *nextn* || "$MODEL" == *UDT* ]]; then
+        # Qwen 3.x NextN heads: upstream --spec-type draft-mtp (not legacy "nextn").
         SPEC="draft-mtp"
     else
         SPEC="none"
@@ -189,10 +190,9 @@ if [[ "$SKIP_PREFLIGHT" -eq 0 && -z "$TS" ]]; then
     }
     printf '%s\n' "$OUT"
     TS="$(printf '%s\n' "$OUT" | awk -F= '/^  BENCH_TS=/{print $2; exit}')"
-    NGL="$(printf '%s\n' "$OUT" | awk -F= '/^  BENCH_NGL=/{print $2; exit}')"
     FITT="$(printf '%s\n' "$OUT" | awk -F= '/^  BENCH_FITT=/{print $2; exit}')"
-    PASS_NGL="$(printf '%s\n' "$OUT" | sed -n 's/^PASS: ngl=\([0-9]*\).*/\1/p' | head -1)"
-    [[ -n "$PASS_NGL" ]] && NGL="$PASS_NGL"
+    # Keep ngl=99 for layer split across RPC+ROCm. Preflight may suggest lower ngl to
+    # satisfy static VRAM math, but partial CPU offload with --split-mode layer corrupts RPC.
 fi
 
 TS="${TS:-50,50}"
@@ -225,7 +225,6 @@ ARGS=(
     -m "$MODEL"
     -c "$CTX"
     -ngl "$NGL"
-    -ngld "$NGL"
     -ctk "$CTK"
     -ctv "$CTV"
     -fa on
@@ -248,11 +247,19 @@ ARGS=(
 
 if [[ "$SPEC" != "none" ]]; then
     ARGS+=(
-        -md "$MODEL"
         --spec-type "$SPEC"
-        --draft-max "${DRAFT_MAX:-16}"
-        --draft-min "${DRAFT_MIN:-0}"
+        --spec-draft-n-max "${DRAFT_MAX:-16}"
+        --spec-draft-n-min "${DRAFT_MIN:-0}"
     )
+    # Same combined *_MTP.gguf: omit -md so server reuses target llama_model (LLAMA_CONTEXT_TYPE_MTP).
+    # Pass ROMULUS_DRAFT_MODEL only for a separate draft artifact.
+    DRAFT_MODEL="${ROMULUS_DRAFT_MODEL:-}"
+    if [[ -n "$DRAFT_MODEL" ]]; then
+        ARGS+=(-md "$DRAFT_MODEL")
+        if [[ -n "${NGLD:-}" ]]; then
+            ARGS+=(--spec-draft-ngl "$NGLD")
+        fi
+    fi
 fi
 
 echo "=== llama-server ==="

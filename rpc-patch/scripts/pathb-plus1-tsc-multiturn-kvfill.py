@@ -140,6 +140,9 @@ def main() -> int:
     if rep > 0.55:
         print(f"FAIL: final repetition={rep:.2f}")
         ok = False
+    if len(final_content) >= 40 and len(set(final_content.strip())) <= 3:
+        print("FAIL: final output is symbol collapse (few unique chars)")
+        ok = False
     if re.search(r"(here){4,}", final_content.lower()):
         print("FAIL: Here-loop in final output")
         ok = False
