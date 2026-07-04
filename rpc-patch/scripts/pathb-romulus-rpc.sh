@@ -30,7 +30,7 @@ host_git_sync() {
     if [[ "${PATHB_ROMULUS_SKIP_GIT_SYNC:-}" == "1" ]]; then
         return 0
     fi
-    pathb_node_git_sync "${PATHB_ROMULUS_GIT_REPO:-/home/hunter/atomic-llama-cpp-turboquant}"
+    pathb_node_git_sync "${PATHB_ROMULUS_GIT_REPO:-/home/hunter/projects/atomic-llama-cpp-turboquant}"
 }
 
 remote_build() {

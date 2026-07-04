@@ -2,7 +2,8 @@
 
 **Purpose:** How to bring up Path B RPC workers, run benches, and find artifacts. Not tied to any single bug investigation.  
 **Branch:** `Path-B-Event-Support-Pipeline-Plus`  
-**Updated:** 2026-07-03 (probed from remus)
+**Updated:** 2026-07-04  
+**Node layout (read first):** [CLUSTER-NODE-LAYOUT.md](CLUSTER-NODE-LAYOUT.md)
 
 ---
 
@@ -56,11 +57,16 @@ ts:  36,24,24,16   # ROCm0 7900, RPC0 5060, RPC1 5070, RPC2 3060
 
 ## 3. Repo and build locations
 
+**Canonical path (all Linux nodes):** `~/projects/atomic-llama-cpp-turboquant`
+
 | Host | Repo path | Client build | RPC build |
 |------|-----------|--------------|-----------|
-| romulus | `~/atomic-llama-cpp-turboquant` | `build-rocm-docker/bin/llama-server` | via docker image build |
-| remus | `~/projects/atomic-llama-cpp-turboquant` (dev) | usually N/A (worker only) | via docker image build |
+| romulus | `~/projects/atomic-llama-cpp-turboquant` | `build-rocm-docker/bin/llama-server` | via docker image build |
+| remus | `~/projects/atomic-llama-cpp-turboquant` | usually N/A (worker only) | via docker image build |
+| triton | `~/projects/atomic-llama-cpp-turboquant` | usually N/A (worker only) | via docker image build |
 | jupiter | `D:\projects\atomic-llama-cpp-5070ti\...` (Windows) | `build-cuda-b-bin/portable/` | same portable dir |
+
+Legacy `~/atomic-llama-cpp-turboquant` on romulus is deprecated — archive with `scripts/cluster-node-fresh-clone.sh`.
 
 **CMake targets (repo root):**
 

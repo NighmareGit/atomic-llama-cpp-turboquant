@@ -47,6 +47,7 @@ JUPITER_PASS = os.environ.get("B6_JUPITER_PASS", CLUSTER_PASS)
 
 PROFILER_CANDIDATES = [
     os.environ.get("PATHB_ROMULUS_PROFILER", ""),
+    f"/home/{SSH_USER}/projects/atomic-llama-cpp-turboquant/build-rocm-docker/bin/llama-pipeline-profiler",
     f"/home/{SSH_USER}/atomic-llama-cpp-turboquant/build-rocm-docker/bin/llama-pipeline-profiler",
     str(SCRIPT_DIR.parent.parent / "build-rocm-docker/bin/llama-pipeline-profiler"),
 ]
@@ -84,6 +85,23 @@ PRESETS: dict[str, PresetSpec] = {
         ts_default=[50, 50],
         vrams_static=[15.5, 22.0],
         config="remus",
+    ),
+    "b6-2gpu-romulus-local": PresetSpec(
+        name="Romulus local 2-GPU (7900 XTX client + 3060 Ti docker RPC)",
+        rpc="127.0.0.1:50051",
+        devices=[
+            DeviceSpec(
+                "RPC0 romulus 3060 docker",
+                "rpc",
+                endpoint="127.0.0.1:50051",
+                via_host=ROMULUS_HOST,
+                fallback_host=ROMULUS_HOST,
+            ),
+            DeviceSpec("ROCm0 romulus 7900", "rocm", host=ROMULUS_HOST),
+        ],
+        ts_default=[50, 50],
+        vrams_static=[7.0, 22.0],
+        config="romulus-local",
     ),
     "b6-2gpu-f-triton": PresetSpec(
         name="b6-2gpu-f-triton (romulus 7900 client + triton 3090 RPC)",

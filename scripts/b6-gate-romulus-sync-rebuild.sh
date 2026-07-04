@@ -12,7 +12,7 @@
 # env:
 #   B6_ROMULUS_HOST       default hunter@192.168.8.108
 #   B6_ROMULUS_PASS       default 12345
-#   B6_ROMULUS_REPO       default /home/hunter/atomic-llama-cpp-turboquant
+#   B6_ROMULUS_REPO       default ~/projects/atomic-llama-cpp-turboquant
 #   SYNC_MODE             rsync (default) | git
 #   GIT_BRANCH            Path-B-Event-Support-Pipeline-Plus
 #   GIT_REMOTE            gitea
@@ -22,7 +22,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ROMULUS_HOST="${B6_ROMULUS_HOST:-hunter@192.168.8.108}"
 ROMULUS_PASS="${B6_ROMULUS_PASS:-12345}"
-ROMULUS_REPO="${B6_ROMULUS_REPO:-/home/hunter/atomic-llama-cpp-turboquant}"
+ROMULUS_REPO="${B6_ROMULUS_REPO:-${CLUSTER_REPO:-$HOME/projects/atomic-llama-cpp-turboquant}}"
 SYNC_MODE="${SYNC_MODE:-rsync}"
 GIT_BRANCH="${GIT_BRANCH:-Path-B-Event-Support-Pipeline-Plus}"
 GIT_REMOTE="${GIT_REMOTE:-gitea}"

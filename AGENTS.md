@@ -169,6 +169,16 @@ gh pr comment
 gh issue create
 ```
 
+## Cluster fork (Path-B+ private ops)
+
+This repo is also deployed on a multi-GPU Linux cluster (romulus, remus, triton). For ops work, read **[rpc-patch/patch/CLUSTER-NODE-LAYOUT.md](rpc-patch/patch/CLUSTER-NODE-LAYOUT.md)** first:
+
+- Canonical checkout on every Linux node: `~/projects/atomic-llama-cpp-turboquant`
+- Docker deploy dirs: `~/docker/Atomic-Llama-*-PathB/` (not the git repo)
+- Git remotes: **github primary**, **gitea LAN fallback**; scripts pick newest reachable tip (`pathb-cluster-git-remotes.sh`)
+- Romulus-local 2-GPU: `scripts/romulus-local-up.sh` (+ `romulus-local-build.sh`)
+- Legacy cleanup: `scripts/cluster-legacy-inventory.sh` -> `cluster-legacy-salvage.sh` -> `cluster-legacy-archive.sh`
+
 ## Useful Resources
 
 To conserve context space, load these resources as needed:

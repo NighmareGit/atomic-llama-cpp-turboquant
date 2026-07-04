@@ -16,6 +16,22 @@ _Avoid_: A/B test, experiment
 Linux dual-GPU host at `192.168.8.108`: RX **7900 XTX** (ROCm gate **client**) and RTX **3060 Ti** (CUDA RPC docker `127.0.0.1:50051`, container `pathb-rpc-romulus`). Both GPUs live on romulus — the 3060 is **not** on remus.
 _Avoid_: cluster, server
 
+**Canonical cluster repo path**:
+Git checkout location on every Linux node: `~/projects/atomic-llama-cpp-turboquant`. Docker images build from gitea clone inside `~/docker/Atomic-Llama-*-PathB/build.sh` (independent of host checkout path). See `rpc-patch/patch/CLUSTER-NODE-LAYOUT.md`.
+_Avoid_: turboquant root, repo dir
+
+**Romulus-local stack**:
+Single-host 2-GPU path: native ROCm `llama-server` on 7900 XTX + docker `pathb-rpc-romulus` on 3060 Ti (`127.0.0.1:50051`). No remus/triton/jupiter. Launchers: `scripts/romulus-local-up.sh`, `scripts/romulus-local-build.sh`. Default model: Qwen3.6 35B **MTP** GGUF under `/mnt/models`. Default listen `0.0.0.0:8080`. Seq-repair on by default.
+_Avoid_: local cluster, single-node bench
+
+**Romulus-local failure composite**:
+Observed symptom mix on dirty/stale romulus checkouts: input echo (`this is a test` repeated), slash garbage (`/////...`), TSC morpheme stutter, and intermittent RPC docker crash — not a single hang class. Treat as env + checkout hygiene before new code changes.
+_Avoid_: random garbage, model broken
+
+**Seq-repair knob**:
+`GGML_PIPELINE_MULTI_BACKEND_SEQ=1` — TSC repair bundle (R1+R2). Must be set on **both** client and RPC worker processes in multi-backend topologies; not default-on yet.
+_Avoid_: MULTI_BACKEND_SEQ env, pipeline fix flag
+
 **Remus**:
 Linux dual-GPU host at `192.168.8.176`: RTX **5060 Ti** CUDA RPC on `:50051` (active worker) and RX **6600** on `:50052` (present per `rocm-smi`, **excluded** from production 4-GPU and 35B+ MoE paths).
 _Avoid_: worker, remote GPU
