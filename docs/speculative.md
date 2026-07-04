@@ -10,7 +10,7 @@ The `llama-server` application supports several implementations of speculative d
 
 ### Multimodal (`--mmproj`) compatibility (atomic-llama-cpp-turboquant)
 
-When `--mmproj` is set, **`mtp`**, **`nextn`**, and **`eagle3`** speculative types remain **enabled at load**: their draft paths do not depend on `get_text_tokens()` / `prompt_tgt` the way `draft` and `ngram_*` do. Other types are auto-disabled at load with a warning. Mixed speculative chains (e.g. `ngram_simple` + `draft`) are rejected at slot init if any impl is not multimodal-safe.
+When `--mmproj` is set, **`draft-mtp`** and **`draft-eagle3`** speculative types remain **enabled at load**: their draft paths do not depend on `get_text_tokens()` / `prompt_tgt` the way `draft-simple` and `ngram_*` do. Other types are auto-disabled at load with a warning. Mixed speculative chains (e.g. `ngram_simple` + `draft-simple`) are rejected at slot init if any impl is not multimodal-safe.
 
 **Per-turn behaviour:**
 
@@ -26,24 +26,24 @@ See `common_speculative_is_mtmd_safe` / `common_speculative_all_impls_mtmd_safe`
 A much smaller model (called the _draft model_) generates drafts.
 A draft model is the most used approach in speculative decoding.
 
-### Gemma 4 MTP assistant (`mtp`)
+### Gemma 4 MTP assistant (`draft-mtp`)
 
-For **Gemma 4** targets with the **gemma4_assistant** (MTP head) GGUF, use `--spec-type mtp`. The assistant is **not** a second `llama_context`: weights are loaded into the target model via `llama_model_load_mtp_from_file` (done automatically when using the server/CLI init path). Cross-attention in the MTP graph reads **K/V from the target KV cache** (shared full/sliding layers).
+For **Gemma 4** targets with the **gemma4_assistant** (MTP head) GGUF, use `--spec-type draft-mtp` with **`-md`** pointing at the **separate** assistant file. The assistant is **not** a second `llama_context`: weights are loaded into the target model via `llama_model_load_mtp_from_file` (done automatically when using the server/CLI init path). Cross-attention in the MTP graph reads **K/V from the target KV cache** (shared full/sliding layers).
 
-- Prefer **`--mtp-head /path/to/assistant.gguf`** for clarity; **`--model-draft` (`-md`)** is accepted as a backward-compatible alias (same path field).
+- **`--spec-draft-model` (`-md`, `--model-draft`)** — path to the assistant GGUF (required for Gemma; distinct from the target).
 - The draft block size \(B\) is **`--draft-block-size`** (the head proposes `B - 1` tokens per round; default 4).
-- **`--gpu-layers-draft` / `-ngld`** and **`-ctkd` / `-ctvd`** still apply to how the **assistant tensors** are placed and typed when the assistant GGUF is loaded; the target uses `-ngl` and `-ctk`/`-ctv`.
+- **`--spec-draft-ngl` (`-ngld`)** and **`-ctkd` / `-ctvd`** apply to how the **assistant tensors** are placed and typed when the assistant GGUF is loaded; the target uses `-ngl` and `-ctk`/`-ctv`.
 
 Example (paths illustrative). **TurboQuant** KV on the target: `-ctk`/`-ctv`. Assistant-side cache types follow the draft flags if you use them for offload/quant selection.
 
 ```sh
 llama-server \
   -m /path/to/gemma-4-target.gguf \
-  --mtp-head /path/to/gemma-4-assistant.gguf \
-  --spec-type mtp \
+  -md /path/to/gemma-4-assistant.gguf \
+  --spec-type draft-mtp \
   --draft-block-size 4 \
   -c 16384 \
-  -ngl 99 -ngld 99 \
+  -ngl 99 --spec-draft-ngl 99 \
   -ctk turbo3 -ctv turbo3 \
   -ctkd turbo3 -ctvd turbo3 \
   -fa on \
@@ -153,23 +153,23 @@ python convert_hf_to_gguf.py .scratch/gemma-4-26B-A4B-it-assistant \
   --outfile .scratch/gemma-assistant-mtp.gguf --outtype f16
 ```
 
-Use the resulting GGUF as `--mtp-head` (or `-md`) with `--spec-type mtp`. Older assistant GGUFs with `token_embd.weight` first axis 2816 (backbone width) instead of 1024 will fail load; run `scripts/verify-gemma4-assistant-gguf.py` on the file to check.
+Use the resulting GGUF as `-md` with `--spec-type draft-mtp`. Older assistant GGUFs with `token_embd.weight` first axis 2816 (backbone width) instead of 1024 will fail load; run `scripts/verify-gemma4-assistant-gguf.py` on the file to check.
 
-### Qwen 3.x NextN (`nextn`)
+### Qwen 3.x NextN (`draft-mtp`)
 
-For **Qwen3.6** (and compatible) checkpoints that ship NextN head weights in the combined `*_MTP.gguf`, use `--spec-type nextn` with **`--model-draft` (`-md`)** pointing at the **same** GGUF as the main model. The server detects this and **reuses the already-loaded target `llama_model`** — a second `llama_context` is built over the same weights with `llama_context_params.nextn_draft = true`, which routes graph construction to `llm_build_qwen35_nextn` / `llm_build_qwen35moe_nextn` and sizes the draft KV cache only for the NextN layer (`kv_only_nextn = true`, mutated transparently inside `llama_context` ctor). There is **no second mmap of the GGUF**.
+For **Qwen3.6** (and compatible) checkpoints that ship NextN head weights in the combined `*_MTP.gguf`, use **`--spec-type draft-mtp`** and **omit** `-md` / `-hfd`. The server logs `creating MTP draft context against the target model` and builds a second `llama_context` over the already-loaded target weights (`LLAMA_CONTEXT_TYPE_MTP`), which routes graph construction to the NextN draft builders and sizes the draft KV cache only for the NextN layer. There is **no second mmap of the GGUF**.
 
-- Drafting reads **CPU-copied** pre-final-norm hidden states (`embeddings_pre_norm` path); it does **not** use Gemma's `llama_decode_mtp_*` APIs.
-- **`llama_set_nextn`** only pairs target and draft for **`llama_context_nextn_seq_rm`**; see `NEXTN.md` for details.
-- Standalone NEXTN_ONLY GGUFs (`general.architecture = qwen35*_mtp`) are still supported as a fallback for users who ship the draft head as a separate artifact (the server then performs a second `llama_model_load_from_file` with `override_arch`); the shared-model path is preferred whenever `--model` and `--model-draft` point at the same combined `_MTP.gguf`.
+- Drafting reads target hidden states via the NextN embedding path; it does **not** use Gemma's `llama_decode_mtp_*` APIs.
+- **`llama_set_nextn`** pairs target and draft for **`llama_context_nextn_seq_rm`**; see `NEXTN.md` for details.
+- Standalone NEXTN_ONLY GGUFs (`general.architecture = qwen35*_mtp`) are still supported: pass **`-md`** with that separate file (second `llama_model_load_from_file` with `override_arch`).
+- **Do not** pass `-md` with the **same** combined `_MTP.gguf` as `-m` — that triggers a redundant second model load (VRAM OOM on tight GPUs).
 
 ```sh
 llama-server \
   -m /path/to/qwen3.6-MTP.gguf \
-  -md /path/to/qwen3.6-MTP.gguf \
-  --spec-type nextn \
-  --draft-max 2 --draft-min 1 \
-  -c 8192 -ngl 99 -ngld 99 -fa on \
+  --spec-type draft-mtp \
+  --spec-draft-n-max 2 --spec-draft-n-min 1 \
+  -c 8192 -ngl 99 -fa on \
   --host 127.0.0.1 --port 8080
 ```
 

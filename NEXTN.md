@@ -7,8 +7,10 @@
 > builder (`qwen35_nextn` / `qwen35moe_nextn`).
 > Legacy standalone `*_mtp` GGUFs (`override_arch`) are still supported as a fallback for
 > users who ship the draft head as a separate artifact.
-> This path is **named `nextn`** in this fork to coexist with **Gemma 4 MTP** (`--spec-type mtp`), which uses a
-> single target context and `llama_decode_mtp_*` (stubs in Phase R1 per PLAN 1.4).
+> CLI: **`--spec-type draft-mtp`** (upstream name in `tools/server/README.md`). For combined Qwen `*_MTP.gguf`
+> files, pass **only** `-m` / `-hf` — **omit** `-md` / `-hfd` so the server logs
+> `creating MTP draft context against the target model` and reuses the target `llama_model` (no second mmap).
+> Gemma 4 assistant drafting also uses `draft-mtp`, but with a **separate** assistant GGUF via `-md`.
 
 See also `MTP.md` (Gemma) and `docs/speculative.md` for shared CLI concepts.
 
@@ -31,23 +33,20 @@ head (`nextn_predict_layers > 0`) — which all `*-MTP-GGUF` quants do by
 construction. `scripts/verify-qwen36-nextn-gguf.py` will refuse to load a
 file missing the NextN layer.
 
-Quick pull via `-hf` (target) + `-hfd` (draft); the server resolves both to
-the same file in the HF cache and takes the shared-model branch:
+Quick pull via `-hf` only (combined `_MTP.gguf` already contains the NextN head):
 
 ```bash
 # 35B-A3B MoE (headline +24-36 % cell in the matrix)
 llama-server \
-  -hf  AtomicChat/Qwen3.6-35B-A3B-UDT-MTP-GGUF:Q4_K_XL \
-  -hfd AtomicChat/Qwen3.6-35B-A3B-UDT-MTP-GGUF:Q4_K_XL \
-  --spec-type nextn --draft-max 2 --draft-min 1 \
-  -c 8192 -ngl 99 -ngld 99 -fa on
+  -hf AtomicChat/Qwen3.6-35B-A3B-UDT-MTP-GGUF:Q4_K_XL \
+  --spec-type draft-mtp --spec-draft-n-max 2 --spec-draft-n-min 1 \
+  -c 8192 -ngl 99 -fa on
 
 # 27B dense
 llama-server \
-  -hf  AtomicChat/Qwen3.6-27B-UDT-MTP-GGUF:Q4_K_XL \
-  -hfd AtomicChat/Qwen3.6-27B-UDT-MTP-GGUF:Q4_K_XL \
-  --spec-type nextn --draft-max 2 --draft-min 1 \
-  -c 8192 -ngl 99 -ngld 99 -fa on
+  -hf AtomicChat/Qwen3.6-27B-UDT-MTP-GGUF:Q4_K_XL \
+  --spec-type draft-mtp --spec-draft-n-max 2 --spec-draft-n-min 1 \
+  -c 8192 -ngl 99 -fa on
 ```
 
 ---
@@ -71,13 +70,16 @@ that used to OOM the 35B-A3B target on Apple Silicon (38 GB unified memory). See
 
 ## 2. CLI / server
 
-- `--spec-type nextn` — enable NextN drafting (not Gemma `mtp`).
-- `--model-draft` / `-md` — pass the **same** path as `--model`; the server detects this
-  and switches to the shared-model path (no second model load). Pointing at a standalone
-  NEXTN_ONLY GGUF (`general.architecture = qwen35*_mtp`) still works but loads a second
-  `llama_model`.
-- `--draft-max` / `--spec-draft-n-max` — max chained draft tokens per round (see `common` / server arg naming).
-- Gemma MTP flags (`--mtp-head`, `llama_decode_mtp_*`, `llama_model_load_mtp_from_file`) are **unchanged**.
+- `--spec-type draft-mtp` — enable NextN / MTP-head drafting.
+- **Combined `*_MTP.gguf`:** omit `-md` / `-hfd`. The server builds an MTP draft
+  `llama_context` over the already-loaded target model (`LLAMA_CONTEXT_TYPE_MTP`).
+  Passing `-md` with the **same** path triggers a second `llama_model_load_from_file`
+  (OOM on tight VRAM).
+- **Separate NEXTN_ONLY GGUF** (`general.architecture = qwen35*_mtp`): pass `-md` with
+  that file; the server loads a second `llama_model` (`override_arch` fallback).
+- `--spec-draft-n-max` / `--spec-draft-n-min` — chained-draft bounds per round
+  (helper scripts default: `2 / 1`).
+- Gemma 4 assistant: `draft-mtp` + `-md` pointing at the **separate** assistant GGUF.
 
 ---
 
@@ -114,23 +116,21 @@ PYTHONPATH=gguf-py python3 scripts/verify-qwen36-nextn-gguf.py /path/to/model.gg
 - `scripts/run-qwen36-27b-nextn-server.sh`
 - `scripts/run-qwen36-35ba3b-nextn-server.sh`
 
-Set `MAIN_GGUF` to your Qwen3.6 `*_MTP.gguf` (see §0 for the recommended
-unsloth quants); draft defaults to the same path so the server takes the
-shared-model branch. Alternatively use `-hf` (target) + `-hfd` (draft) to
-let `llama-server` pull both from Hugging Face into the local cache:
+Set `MAIN_GGUF` to your Qwen3.6 `*_MTP.gguf` (see §0). The helper scripts use
+`draft-mtp` without `-md` when the draft path equals the main path. Or pull
+from Hugging Face with `-hf` only:
 
 ```bash
 llama-server \
-  -hf  AtomicChat/Qwen3.6-35B-A3B-UDT-MTP-GGUF:Q4_K_XL \
-  -hfd AtomicChat/Qwen3.6-35B-A3B-UDT-MTP-GGUF:Q4_K_XL \
-  --spec-type nextn --draft-max 2 --draft-min 1
+  -hf AtomicChat/Qwen3.6-35B-A3B-UDT-MTP-GGUF:Q4_K_XL \
+  --spec-type draft-mtp --spec-draft-n-max 2 --spec-draft-n-min 1
 ```
 
 ---
 
 ## 7. Performance notes (MacBook Pro M4 Max, 40-core GPU, 48 GB, Metal)
 
-Median TPS over 2 runs, prompt = 50-token instruction, `--draft-max=2 --draft-min=1`,
+Median TPS over 2 runs, prompt = 50-token instruction, `--spec-draft-n-max=2 --spec-draft-n-min=1`,
 NextN draft DM=2 (single async chain), context 8192. Single-slot
 (`--parallel 1 -np 1 --cont-batching`), full GPU offload (`-ngl 99 -ngld 99 -fa on`),
 shared-model draft path (no second mmap of combined `_MTP.gguf`),
@@ -226,8 +226,8 @@ The recipe above ships as two ready-to-pull Hugging Face repos, grouped into one
 
 What's actually in each repo, and why it's a bit unusual for a quant drop:
 
-- **5 quants per model, all `_MTP.gguf`** — `Q3_K_XL` / `Q4_K_XL` / `Q5_K_XL` / `Q6_K` / `Q8_K_XL`. Every file already includes the NextN auxiliary head, so the same path works for `-m` *and* `-md` — no second GGUF, no second mmap, no second tokenizer.
-- **NextN-preserve mask (V1)** — every `blk.*.nextn.*` and `mtp.*` tensor pinned to `Q8_0`. The cost is ~10 MiB of file size; the win is that the draft head stays close to BF16 fidelity, which keeps `acceptance` high under `--spec-type nextn`. Plain UD quants compress the head at the same bit-width as the body and bleed acceptance under `turbo3` KV.
+- **5 quants per model, all `_MTP.gguf`** — `Q3_K_XL` / `Q4_K_XL` / `Q5_K_XL` / `Q6_K` / `Q8_K_XL`. Every file already includes the NextN auxiliary head; launch with `-m` / `-hf` and `--spec-type draft-mtp` (no `-md`).
+- **NextN-preserve mask (V1)** — every `blk.*.nextn.*` and `mtp.*` tensor pinned to `Q8_0`. The cost is ~10 MiB of file size; the win is that the draft head stays close to BF16 fidelity, which keeps `acceptance` high under `--spec-type draft-mtp`. Plain UD quants compress the head at the same bit-width as the body and bleed acceptance under `turbo3` KV.
 - **TurboQuant3-friendly mask (V2)** — attention Q/K bumped to `Q6_K`. This is the piece we tuned specifically for this fork: when KV is compressed to 3-bit via `-ctk turbo3 -ctv turbo3`, the attention scores see extra dequant noise on K, so giving Q/K a little more headroom on the weight side cancels most of it out.
 - **Default release = V3 (V1 ∪ V2)** — the combined mask shipped on Hugging Face. V1-only and V2-only quants exist as ablation artifacts in the build tree but are not published; the V3 file simply has both lifts at once.
 - **mmproj mirrored from Unsloth** — `mmproj-F16.gguf` and `mmproj-BF16.gguf` re-hosted byte-for-byte from the corresponding `unsloth/Qwen3.6-*-MTP-GGUF` repo so a single `-hf` line gets you target + draft + projector.
@@ -242,9 +242,8 @@ The whole pipeline (download → quantize on H100 → bench on M4 Max → upload
 
 Upstream `llama-server` used to disable **all** speculative modes whenever a projector was loaded, so a single Qwen 3.6 / Gemma 4 server could not host vision and a draft head at the same time. In **atomic-llama-cpp-turboquant** the load-time and slot-init gates accept `--mmproj` together with:
 
-- **`--spec-type mtp`** (Gemma 4 assistant)
-- **`--spec-type nextn`** (Qwen3 NextN draft context)
-- **`--spec-type eagle3`** (stub impl; same contract)
+- **`--spec-type draft-mtp`** (Qwen3 NextN / Gemma 4 assistant MTP heads)
+- **`--spec-type draft-eagle3`** (stub impl; same contract)
 
 These three never look at the flattened `prompt_tgt` token stream — they read target hidden states / KV directly — so they can coexist with mtmd image chunks. Other modes stay disabled with a warning: separate **`draft`** models, all **`ngram_*`** modes, **`ctx_shift`** and **`cache_reuse`**.
 
@@ -259,8 +258,8 @@ The reason for the fallback: NextN / MTP `begin()` needs the target's pre-norm h
 
 | Model | Spec | KV | mmproj | Image | Text reply | Decode |
 |---|---|---|---|---|---|---|
-| Qwen 3.6-35B-A3B-UDT-Q4_K_XL_MTP | `nextn` | turbo3 | F16 | recognised | OK | ~69 t/s |
-| Gemma 4-26B-A4B-it-UD-Q4_K_XL    | `mtp`   | turbo3 | F16 | recognised | OK | ~55 t/s |
+| Qwen 3.6-35B-A3B-UDT-Q4_K_XL_MTP | `draft-mtp` | turbo3 | F16 | recognised | OK | ~69 t/s |
+| Gemma 4-26B-A4B-it-UD-Q4_K_XL    | `draft-mtp` | turbo3 | F16 | recognised | OK | ~55 t/s |
 
 Both runs were validated on M4 Max with a single shared model file (no second mmap), `-c 4096`, `-fa on`.
 
