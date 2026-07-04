@@ -90,7 +90,7 @@ bash scripts/cluster-node-fresh-clone.sh    # clean clone at canonical path
 ```bash
 cd ~/projects/atomic-llama-cpp-turboquant
 bash scripts/romulus-local-build.sh                                    # first time / after pull
-bash scripts/romulus-local-up.sh -c 8192                               # default Qwen3.6 35B MTP
+bash scripts/romulus-local-up.sh                                         # default Qwen3.6 35B APEX MTP, ctx=128k
 bash scripts/romulus-local-up.sh -m /mnt/models/other.gguf --mtp off # non-MTP override
 ```
 

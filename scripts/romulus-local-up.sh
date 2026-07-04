@@ -3,14 +3,14 @@
 #
 # usage:
 #   bash scripts/romulus-local-up.sh --build
-#   bash scripts/romulus-local-up.sh                    # default: Qwen3.6 35B MTP GGUF
+#   bash scripts/romulus-local-up.sh                    # default: Qwen3.6 35B APEX MTP, ctx=128k
 #   bash scripts/romulus-local-up.sh -c 4096 --ctk q8_0 --ctv turbo3
 #   bash scripts/romulus-local-up.sh -m /mnt/models/other.gguf --mtp off
 #   bash scripts/romulus-local-up.sh --stop
 #
 # Common flags:
 #   -m, --model PATH     GGUF (default: ROMULUS_DEFAULT_MODEL or *MTP* under /mnt/models)
-#   -c, --ctx N           context slots (default 8192)
+#   -c, --ctx N           context slots (default 131072 = 128k)
 #   --ctk TYPE            cache type K (default q8_0)
 #   --ctv TYPE            cache type V (default turbo3; use q8_0 for non-MTP)
 #   --mtp on|off|TYPE     speculative: default on for MTP GGUF, off for others
@@ -30,10 +30,10 @@ BUILD_DIR="${ROMULUS_BUILD_DIR:-build-rocm-docker}"
 COMPOSE="${ROMULUS_PATHB_COMPOSE:-${ROOT}/scripts/romulus-pathb/docker-compose.yml}"
 SERVER="${LLAMA_SERVER:-${ROOT}/${BUILD_DIR}/bin/llama-server}"
 
-DEFAULT_MTP_MODEL="${ROMULUS_DEFAULT_MODEL:-/mnt/models/Qwen3.6-35B-A3B-UD-Q4_K_XL_MTP.gguf}"
+DEFAULT_MTP_MODEL="${ROMULUS_DEFAULT_MODEL:-/mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf}"
 
 MODEL=""
-CTX=8192
+CTX=131072
 CTK="q8_0"
 CTV="turbo3"
 HOST="0.0.0.0"
