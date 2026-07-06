@@ -179,6 +179,17 @@ This repo is also deployed on a multi-GPU Linux cluster (romulus, remus, triton)
 - Romulus-local 2-GPU: `scripts/romulus-local-up.sh` (+ `romulus-local-build.sh`)
 - Legacy cleanup: `scripts/cluster-legacy-inventory.sh` -> `cluster-legacy-salvage.sh` -> `cluster-legacy-archive.sh`
 
+## Output Discipline (Subagent Communication)
+
+Every subagent call (`spawn_subagent`, `get_command_or_subagent_output`) has a **40,000 character output cap**. When plan agents or review agents write verbose analyses to disk, the output gets truncated mid-stream.
+
+**Write for the cap, not for yourself.** Keep outputs structured and concise:
+
+- Prefer tables, bullet lists, and short code snippets over prose
+- If an analysis needs >40K chars, split it into sequential calls: "part 1: high-level findings", then "part 2: detailed fixes"
+- End with a summary table before the detailed sections — user sees it even if truncated
+- Never write "I cannot see your output file" as an excuse for not delivering results
+
 ## Useful Resources
 
 To conserve context space, load these resources as needed:
