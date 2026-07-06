@@ -181,14 +181,30 @@ This repo is also deployed on a multi-GPU Linux cluster (romulus, remus, triton)
 
 ## Output Discipline (Subagent Communication)
 
-Every subagent call (`spawn_subagent`, `get_command_or_subagent_output`) has a **40,000 character output cap**. When plan agents or review agents write verbose analyses to disk, the output gets truncated mid-stream.
+Every subagent call (`spawn_subagent`, `get_command_or_subagent_output`) has a **40,000 character output cap**. The cap is on the tool output returned to the parent — not configurable. When plan agents or review agents write verbose analyses to disk, the output gets truncated mid-stream.
 
 **Write for the cap, not for yourself.** Keep outputs structured and concise:
 
 - Prefer tables, bullet lists, and short code snippets over prose
-- If an analysis needs >40K chars, split it into sequential calls: "part 1: high-level findings", then "part 2: detailed fixes"
-- End with a summary table before the detailed sections — user sees it even if truncated
-- Never write "I cannot see your output file" as an excuse for not delivering results
+- Never exceed ~3000 words per subagent call
+- End with a summary table first — visible even if truncated
+
+### Split Pattern (Anchored)
+
+When a task needs >3000 words of output, **always split into sequential calls**:
+
+```
+Call 1: "Part 1 of N: cover vectors 1-X. Table format, under 1500 words."
+Call 2: "Part 2 of N: cover vectors X+1-Y. Table format, under 1500 words."
+```
+
+Examples:
+- Red team review → "part 1: vectors 1-3", then "part 2: vectors 4-7"
+- Code analysis → "part 1: architecture + config", then "part 2: request handling + errors"
+- Review feedback → "part 1: HIGH/MEDIUM findings", then "part 2: LOW/OK findings"
+
+If a subagent produces a verbose prose response that exceeds the cap, re-spawn it with:
+"Resume. Your previous output was truncated. Provide ONLY the missing continuation, table format, under 1500 words."
 
 ## Useful Resources
 
