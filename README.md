@@ -984,11 +984,13 @@ To learn more about model quantization, [read this documentation](tools/quantize
 - [completion](tools/completion/README.md)
 - [server](tools/server/README.md)
 - [GBNF grammars](grammars/README.md)
+- [Docker blueprints](dockers/blueprints/README.md) (CUDA server + rpc-server, Blackwell-ready)
 
 #### Development documentation
 
 - [How to build](docs/build.md)
 - [Running on Docker](docs/docker.md)
+- [Blackwell GPU build guide](docs/blackwell/README.md) (RTX 50-series, compute 12.0)
 - [Build on Android](docs/android.md)
 - [Performance troubleshooting](docs/development/token_generation_performance_tips.md)
 - [GGML tips & tricks](https://github.com/ggml-org/llama.cpp/wiki/GGML-Tips-&-Tricks)

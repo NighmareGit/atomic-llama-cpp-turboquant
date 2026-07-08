@@ -202,6 +202,8 @@ To override the default CUDA architectures:
 #### 1. Take note of the `Compute Capability` of your NVIDIA devices: ["CUDA: Your GPU Compute > Capability"](https://developer.nvidia.com/cuda-gpus).
 
 ```text
+GeForce RTX 5090      12.0
+GeForce RTX 5070 Ti   12.0
 GeForce RTX 4090      8.9
 GeForce RTX 3080 Ti   8.6
 GeForce RTX 3070      8.6
@@ -212,6 +214,24 @@ GeForce RTX 3070      8.6
 ```bash
 cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="86;89"
 ```
+
+#### Blackwell (RTX 50-Series, Compute 12.0)
+
+Blackwell GPUs (RTX 5060 Ti, 5070 Ti, 5080, 5090) use compute capability **12.0**. nvcc cannot auto-detect this architecture with `-arch=native` — always specify explicitly:
+
+```bash
+cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="120a-real"
+```
+
+**Required flags for Blackwell:**
+
+| Flag | Purpose |
+|------|---------|
+| `120a-real` | Native Blackwell kernels (required) |
+| `GGML_CUDA_K_QUANTS=ON` | K-quant kernels for turbo2/turbo3/turbo4 KV cache |
+| `GGML_CUDA_MMQ=ON` | Custom MMQ matmul kernels for quantized models |
+
+See [docs/blackwell/README.md](../docs/blackwell/README.md) for the full Blackwell build guide.
 
 ### Overriding the CUDA Version
 

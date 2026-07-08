@@ -232,6 +232,18 @@
 #define GGML_DEFAULT_N_THREADS  4
 #define GGML_DEFAULT_GRAPH_SIZE 2048
 
+#define GGML_SCHED_GPIPE 0
+
+// GPipe scheduler (D2.1 skeleton + D2.2 micro-batching + D2.4 profiler)
+struct ggml_gpipe_context;
+struct ggml_cgraph;
+GGML_API struct ggml_gpipe_context * ggml_gpipe_init(bool enabled, int n_stages, int n_copies);
+GGML_API void ggml_gpipe_free(struct ggml_gpipe_context *ctx);
+GGML_API void ggml_gpipe_set_layers(struct ggml_gpipe_context *ctx, const int * layer_sizes, int n_layers);
+GGML_API int ggml_gpipe_compute(struct ggml_gpipe_context *ctx, struct ggml_cgraph *graph, bool async);
+// D2.4: profile-aware auto-assign
+GGML_API int ggml_gpipe_profile_assign(struct ggml_gpipe_context *ctx, void **backends, int n_backends, const int *layer_sizes, int n_layers, bool profile);
+
 #if UINTPTR_MAX == 0xFFFFFFFF
     #define GGML_MEM_ALIGN 4
 #elif defined(__EMSCRIPTEN__)

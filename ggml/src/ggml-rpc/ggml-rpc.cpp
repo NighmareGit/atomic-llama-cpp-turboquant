@@ -26,6 +26,7 @@
 #include <thread>
 
 static const char * RPC_DEBUG = std::getenv("GGML_RPC_DEBUG");
+static bool g_compute_all = std::getenv("GGML_SCHED_COMPUTE_ALL") != NULL && atoi(getenv("GGML_SCHED_COMPUTE_ALL")) != 0;
 
 #define LOG_DBG(...) \
     do { if (RPC_DEBUG) GGML_LOG_DEBUG(__VA_ARGS__); } while (0)
@@ -2256,6 +2257,7 @@ public:
     void enqueue_graph_compute(std::vector<uint8_t> input);
     void enqueue_graph_recompute(rpc_msg_graph_recompute_req request);
     void wait_compute_idle();
+    void compute_batch();
 
     struct stored_graph {
         std::vector<uint8_t>   buffer;
@@ -2286,6 +2288,10 @@ private:
     std::thread                     compute_worker;
     std::atomic<bool>               compute_shutdown{false};
     std::atomic<int>                compute_inflight{0};
+
+    // Batch mode: collect graph inputs for batch processing
+    std::mutex                      batch_mtx;
+    std::vector<std::vector<uint8_t>> batch_inputs;
 };
 
 void rpc_server::hello(rpc_msg_hello_rsp & response) {
@@ -2917,7 +2923,29 @@ void rpc_server::compute_worker_loop() {
     }
 }
 
+void rpc_server::compute_batch() {
+    // Drain batch queue and compute all graphs in one pass
+    std::lock_guard<std::mutex> lock(batch_mtx);
+    if (batch_inputs.empty()) return;
+
+    size_t n = batch_inputs.size();
+    LOG_DBG("[%s] batch compute %zu graphs\n", __func__, n);
+    for (size_t i = 0; i < n; i++) {
+        graph_compute(batch_inputs[i]);
+    }
+    batch_inputs.clear();
+}
+
 void rpc_server::enqueue_graph_compute(std::vector<uint8_t> input) {
+    if (g_compute_all) {
+        // Batch mode: collect inputs and process in one pass
+        {
+            std::lock_guard<std::mutex> lock(batch_mtx);
+            batch_inputs.push_back(std::move(input));
+        }
+        compute_batch();
+        return;
+    }
     submit_compute_job([this, input = std::move(input)]() mutable {
         if (!graph_compute(input)) {
             GGML_LOG_ERROR("[%s] async graph_compute failed\n", __func__);

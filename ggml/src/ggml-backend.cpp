@@ -158,6 +158,9 @@ static int ggml_sched_pipeline_depth_cfg() {
     return v;
 }
 
+// GPipe client scheduler flag (D2.1 skeleton)
+static int g_gpipe_enabled = getenv("GGML_SCHED_GPIPE") != NULL && atoi(getenv("GGML_SCHED_GPIPE")) != 0;
+
 static bool ggml_backend_is_rpc_backend(ggml_backend_t backend) {
     if (!backend || !backend->iface.get_name) {
         return false;

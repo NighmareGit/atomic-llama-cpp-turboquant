@@ -107,6 +107,18 @@ docker run --gpus all -v /path/to/models:/models local/llama.cpp:light-cuda -m /
 docker run --gpus all -v /path/to/models:/models local/llama.cpp:server-cuda -m /models/7B/ggml-model-q4_0.gguf --port 8080 --host 0.0.0.0 -n 512 --n-gpu-layers 1
 ```
 
+### Blackwell-Ready Docker (Path-B+)
+
+For Blackwell GPUs (RTX 50-series), this fork ships host-compiled Docker images with CUDA 12.9, turbo3 KV cache, MTP speculative decoding, and RPC support. Build on the GPU host, then run in a minimal runtime container:
+
+```bash
+# See dockers/blueprints/atomic-llama-cuda-pathb/
+./build-server.sh   # compiles on host with 120a-real arch
+./run-server.sh -m /path/to/model.gguf -c 256000 --parallel 2
+```
+
+See [dockers/blueprints/README.md](../dockers/blueprints/README.md) and [docs/blackwell/README.md](../docs/blackwell/README.md).
+
 ## Docker With MUSA
 
 Assuming one has the [mt-container-toolkit](https://developer.mthreads.com/musa/native) properly installed on Linux, `muBLAS` should be accessible inside the container.
