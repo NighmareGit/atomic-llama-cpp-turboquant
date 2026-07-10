@@ -2107,11 +2107,14 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
         uint64_t tid = ggml_pipeline_trace_get_trace_id();
         rpc_msg_event_record_req ev_req = {0, rpc_ctx->device, tid};
         size_t ev_sz = sock->server_supports_trace_id ? sizeof(ev_req) : 12;
-        send_rpc_cmd_deferred(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz);
-        tls_pending_event.sock = sock;
-        tls_pending_event.pending = true;
-        rpc_ctx->last_compute_sock = sock;
-        rpc_ctx->last_compute_sent_event = true;
+        // FIX: use blocking send_rpc_cmd instead of send_rpc_cmd_deferred.
+        // The deferred version caused the client's drain_pending_event_response
+        // to fail on the second token because the server's event handler was
+        // blocking on wait_compute_idle(). The blocking version waits for the
+        // response immediately, avoiding the deferred drain entirely.
+        rpc_msg_event_record_rsp ev_rsp = {};
+        status = send_rpc_cmd(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz, &ev_rsp, sizeof(ev_rsp));
+        RPC_STATUS_ASSERT(status);
         const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - t0).count();
         rpc_trace_emit(__func__, "graph_recompute", RPC_CMD_GRAPH_RECOMPUTE, sizeof(request), false, us);
@@ -3367,7 +3370,12 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!recv_msg(sock, &request, req_sz)) {
                     return;
                 }
-                server.wait_compute_idle();
+                // FIX: removed wait_compute_idle() — was blocking command processing
+                // thread until compute worker finished, causing client event drain to
+                // time out on the second token (graph_recompute + event_record sent
+                // back-to-back). The event record is sent by the client AFTER the
+                // compute, so the compute is already complete by the time the server
+                // receives the event record.
                 rpc_msg_event_record_rsp response = {request.event_id, 0, request.trace_id};
                 size_t rsp_sz = sock->server_supports_trace_id ? sizeof(response) : 12;
                 if (!send_response(sock, &response, rsp_sz)) {

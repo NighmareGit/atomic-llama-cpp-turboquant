@@ -1,8 +1,9 @@
 # TRACKING — Path D Full Workflow
 
-**Branch:** Path-D-Gpipeline-Assembly-Line  
-**Date:** 2026-07-10  
+**Branch:** Path-D-Gpipeline-Assembly-Line
+**Date:** 2026-07-10
 **Parent:** `docs/rpc-multi-backend-pipeline-plus/TRACKING.md`
+**Status:** IN PROGRESS — RPC event bug blocking D2.2/D3.2
 
 ---
 
@@ -10,16 +11,42 @@
 
 | Phase | Status | Completion Date |
 |-------|--------|-----------------|
-| Investigation (D0.1-D0.5) | ✅ complete | 2026-07-10 |
-| Specification | ✅ complete | 2026-07-10 |
-| Work Breakdown | ✅ complete | 2026-07-10 |
-| Implementation (D1.1-D1.7) | ✅ complete | 2026-07-10 |
-| Testing (D2.1-D2.3) | ⚠️ partial | 2026-07-10 |
-| Production Hardening (D3.1-D3.3) | ⏳ pending | - |
-| Path C Stepping Stone (D4.1-D4.6) | ⏳ pending | - |
-| Deeper Pipelining (D5.1-D5.7) | ⏳ pending | - |
-| Mode B Microbatch (D6.1-D6.7) | ⏳ pending | - |
-| Advanced Optimization (R3.1-R3.5) | ⏳ pending | - |
+| Investigation (D0.1-D0.5) | COMPLETE | 2026-07-10 |
+| Specification | COMPLETE | 2026-07-10 |
+| Work Breakdown | COMPLETE | 2026-07-10 |
+| Implementation (D1.1-D1.7) | COMPLETE | 2026-07-10 |
+| Testing (D2.1-D2.3) | PARTIAL | 2026-07-10 |
+| Production Hardening (D3.1-D3.3) | IN PROGRESS | - |
+| Path C Stepping Stone (D4.1-D4.6) | PENDING | - |
+| Deeper Pipelining (D5.1-D5.7) | PENDING | - |
+| Mode B Microbatch (D6.1-D6.7) | PENDING | - |
+| Advanced Optimization (R3.1-R3.5) | PENDING | - |
+
+## Blockers
+
+| Blocker | Affects | Status |
+|---------|---------|--------|
+| RPC event drain bug | D2.2, D3.2, D4-R3 | ACTIVE — investigating |
+
+---
+
+## D2 Findings
+
+**Build fix:** Tests required `-DGGML_RPC=ON` (was OFF by default) and
+`target_link_libraries(test-gpipe-* PRIVATE ggml-rpc)` in `tests/CMakeLists.txt`.
+
+**Pre-existing RPC event bug:** `drain_pending_event_response` fails after ~247ms on
+second token decode. Crash occurs with both `GGML_SCHED_GPIPE=1` and `GGML_SCHED_GPIPE=0`.
+Root cause: `ggml-rpc.cpp` event handling blocks on `wait_compute_idle()` in the
+server's event record handler.
+
+**Fixes attempted:**
+1. Removed `wait_compute_idle()` from server event handler — reduced failure time
+   but didn't fix crash
+2. Changed to blocking `send_rpc_cmd` for event record — crash moved to different
+   location (line 2117)
+
+**Performance metrics:** Cannot be collected until RPC event bug is fixed.
 
 ---
 

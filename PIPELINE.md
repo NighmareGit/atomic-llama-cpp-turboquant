@@ -31,6 +31,7 @@ Both layers hide latency that would otherwise sit on the critical path. They are
 |-------|-------|---------------|--------------|
 | **A — depth-2** | MTP / NextN draft graph time between server iterations | `llama-server` speculative loop | `LLAMA_PIPELINE_DEPTH2` |
 | **B — Path B/Plus** | Serial wait between graph splits on different GPUs | `ggml_backend_sched` per `llama_decode` | `GGML_PIPELINE_PLUS` |
+| **C — GPipe** | Serial dispatch across tokens (T+1 waits for T to fully complete) | `llama_context` decode loop + `ggml_backend_sched` stage events | `GGML_SCHED_GPIPE` |
 
 Neither layer replaces speculative decoding or TurboQuant. A typical multi-GPU
 deployment runs **MTP or NextN + TurboQuant KV + depth-2 + Path-B Plus** together.
@@ -354,6 +355,39 @@ Key outputs (4-GPU primary, 2026-06-27):
 
 Source: [rpc-patch/patch/bench-results/cluster-4gpu-primary/summary.md](rpc-patch/patch/bench-results/cluster-4gpu-primary/summary.md).
 
+### Layer C — GPipe stage pipeline (`GGML_SCHED_GPIPE`)
+
+GPipe-style layer pipeline where token T+1 enters Stage 0 (compute) while token T
+is still in Stage 1 (gather + KV write). Decouples dispatch ordering from completion
+ordering via per-stage events.
+
+| Var | Effect |
+|-----|--------|
+| `GGML_SCHED_GPIPE=1` | Enable GPipe client scheduler (2-stage pipeline initial) |
+| `GGML_SCHED_GPIPE=0` | Classic decode path (default) |
+
+Pipeline stages (initial 2-stage):
+
+```text
+Stage 0 (compute): embed(T) + RPC0(T) + RPC1(T) + RPC2(T) + RPC3(T)
+Stage 1 (gather):  gather(T) + KV write + sample(T)
+```
+
+Overlap pattern:
+
+```text
+Token T:   [Stage 0: RPC compute ....................] [Stage 1: gather+KV+sample]
+Token T+1:                                                 [Stage 0: RPC compute ...........]
+```
+
+Entry points:
+- `llama_decode_gpipe()` — GPipe decode entry point (`src/llama-context.cpp`)
+- `ggml_sched_gpipe_init()` — initialize GPipe event state (`ggml-backend.cpp`)
+- `ggml_sched_gpipe_wait()` — wait on stage completion event (`ggml-backend.cpp`)
+
+Status: **Experimental** — Mode A (2-stage, single-seq, MTP-coupled) implemented.
+Deeper pipelining (D5) and multi-seq (D6) deferred to beyond-phases.
+
 ### Trace workflow (multi-GPU)
 
 ```powershell
@@ -435,6 +469,7 @@ Details: [docs/cuda-windows-5070ti/CLUSTER-4GPU-PRIMARY.md](docs/cuda-windows-50
 | **depth-2** | MTP/NextN drafting active; server does non-trivial post-accept I/O | Near-zero when spec off; drain logic required for KV safety |
 | **Path B** | `n_devices > 1`, all backends event-capable | Extra memory for `n_copies = 4` buffer sets |
 | **Path-B Plus** | Graph reuse hot path (steady-state decode) | Must keep `GGML_PIPELINE_PLUS=1`; `=0` reverts to per-token full sync |
+| **GPipe** | Multi-GPU RPC chain; target `global_3bk_pct >= 25%` | 2-stage alone doesn't improve throughput; deeper pipeline (D5) needed |
 
 **Measuring pipeline-specific impact:**
 
@@ -528,6 +563,7 @@ limits G versus 2-GPU when the model fits.
 | `GGML_RPC_TRACE_FILE` | B | unset | RPC trace file path |
 | `GGML_PIPELINE_TRACE` | B | `0` | `decode_id` on sched lines + barrier jsonl |
 | `GGML_PIPELINE_TRACE_FILE` | B | unset | Pipeline barrier trace path |
+| `GGML_SCHED_GPIPE` | C | `0` (off) | GPipe client scheduler; `=1` enables 2-stage pipeline |
 | `BENCH_TRACE` | B (ops) | `0` | Full telemetry on cluster benches |
 
 ### Commands
@@ -561,6 +597,14 @@ common_speculative_set_h_idx(spec, batch_idx);   // last accepted hidden row
 ```c
 ggml_backend_sched_pipeline_barrier(sched);      // Path-B Plus P0
 llama_context::synchronize_sampling();           // Path-B Plus P1 (when Plus on)
+```
+
+### GPipe entry points (Layer C)
+
+```c
+llama_decode_gpipe(ctx, batch, h_prev);           // GPipe decode entry (llama-context.cpp)
+ggml_sched_gpipe_init(sched, n_stages);           // Init GPipe event state (ggml-backend.cpp)
+ggml_sched_gpipe_wait(sched, split_id);           // Wait on stage event (ggml-backend.cpp)
 ```
 
 Further reading: [MTP.md §14](MTP.md), [rpc-patch/docs/rpc-path-b-plus-overview.md](rpc-patch/docs/rpc-path-b-plus-overview.md).
