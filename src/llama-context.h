@@ -39,6 +39,24 @@ struct llama_memory_buffer {
 
 using llama_memory_buffers = std::map<ggml_backend_buffer_type_t, llama_memory_buffer>;
 
+constexpr int LLAMA_GPIPE_MAX_STAGES = 8;
+
+struct llama_gpipe_state {
+    int  n_stages;
+    int  cur_stage;
+    int  microbatch_size;
+    bool enabled;
+
+    std::vector<llama_seq_id> stage_tokens;
+
+    int64_t stage_start_us[LLAMA_GPIPE_MAX_STAGES];
+};
+
+extern "C" bool llama_gpipe_enabled_accessor();
+extern "C" bool llama_gpipe_context_enabled(struct llama_context * ctx);
+
+int32_t llama_decode_gpipe_impl(llama_context * ctx, llama_batch batch, const float * logits);
+
 struct llama_context {
     // init scheduler and compute buffers, reserve worst-case graphs
     llama_context(
@@ -390,4 +408,8 @@ private:
     mutable int32_t n_reused = 0; // number of times the previous graph was reused
     int32_t pipeline_decode_id = 0; // monotonic decode counter for GGML_PIPELINE_TRACE (resets on perf_reset)
     uint64_t trace_id = 0; // server-lifetime monotonic trace_id (per llama_decode); never reset on perf_reset
+
+    friend int32_t llama_decode_gpipe_impl(llama_context * ctx, llama_batch batch, const float * logits);
+
+    llama_gpipe_state gpipe = {};
 };

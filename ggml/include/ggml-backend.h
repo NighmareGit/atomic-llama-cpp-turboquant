@@ -346,6 +346,12 @@ extern "C" {
     // Path-B+: rotate pipeline copy slot and wait on per-slot events (graph reuse path).
     GGML_API void                 ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched);
 
+    // GPipe scheduler extensions
+#define GGML_SCHED_MAX_STAGES 8
+    GGML_API void ggml_sched_gpipe_init(ggml_backend_sched_t sched, int n_stages);
+    GGML_API void ggml_sched_gpipe_wait(ggml_backend_sched_t sched, int split_id);
+    GGML_API void ggml_sched_gpipe_record(ggml_backend_sched_t sched, int stage_id);
+
     // Plus=1 TSC repair spike: sequential handoff for multi-backend pipeline (R1+R2 bundle).
     // When enabled, graph reuse uses full sched sync and Plus async defer is off (see BUGFIX-plus1-tsc-REPAIR-PATH.md).
     GGML_API bool                 ggml_pipeline_multi_backend_seq_enabled(void);

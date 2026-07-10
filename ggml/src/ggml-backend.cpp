@@ -1106,6 +1106,8 @@ struct ggml_backend_sched {
     int cur_copy;
     int next_copy;
     ggml_backend_event_t events[GGML_SCHED_MAX_BACKENDS][GGML_SCHED_MAX_COPIES];
+    int n_gpipe_stages;
+    ggml_backend_event_t gpipe_events[GGML_SCHED_MAX_STAGES];
     struct ggml_tensor * graph_inputs[GGML_SCHED_MAX_SPLIT_INPUTS];
     int n_graph_inputs;
 
@@ -2830,6 +2832,66 @@ ggml_backend_sched_t ggml_backend_sched_new(
     return sched;
 }
 
+void ggml_sched_gpipe_init(ggml_backend_sched_t sched, int n_stages) {
+    GGML_ASSERT(sched);
+    if (n_stages <= 0) {
+        sched->n_gpipe_stages = 0;
+        return;
+    }
+    GGML_ASSERT(n_stages <= GGML_SCHED_MAX_STAGES);
+
+    // GPipe events are created on the last backend (gather device).
+    const int gather_bid = sched->n_backends - 1;
+    ggml_backend_t gather_backend = sched->backends[gather_bid];
+
+    for (int s = 0; s < n_stages; s++) {
+        sched->gpipe_events[s] = ggml_backend_event_new(gather_backend->device);
+    }
+    sched->n_gpipe_stages = n_stages;
+}
+
+void ggml_sched_gpipe_wait(ggml_backend_sched_t sched, int split_id) {
+    GGML_ASSERT(sched);
+    if (sched->n_gpipe_stages == 0) {
+        return;
+    }
+
+    const int gather_bid = sched->n_backends - 1;
+    ggml_backend_t gather_backend = sched->backends[gather_bid];
+
+    if (split_id < 0) {
+        for (int s = 0; s < sched->n_gpipe_stages; s++) {
+            if (sched->gpipe_events[s] != NULL) {
+                if (gather_backend->iface.event_wait != NULL) {
+                    ggml_backend_event_wait(gather_backend, sched->gpipe_events[s]);
+                } else {
+                    ggml_backend_event_synchronize(sched->gpipe_events[s]);
+                }
+            }
+        }
+    } else {
+        if (split_id < sched->n_gpipe_stages && sched->gpipe_events[split_id] != NULL) {
+            if (gather_backend->iface.event_wait != NULL) {
+                ggml_backend_event_wait(gather_backend, sched->gpipe_events[split_id]);
+            } else {
+                ggml_backend_event_synchronize(sched->gpipe_events[split_id]);
+            }
+        }
+    }
+}
+
+void ggml_sched_gpipe_record(ggml_backend_sched_t sched, int stage_id) {
+    GGML_ASSERT(sched);
+    if (stage_id < 0 || stage_id >= sched->n_gpipe_stages) {
+        return;
+    }
+    if (sched->gpipe_events[stage_id] == NULL) {
+        return;
+    }
+    const int gather_bid = sched->n_backends - 1;
+    ggml_backend_event_record(sched->gpipe_events[stage_id], sched->backends[gather_bid]);
+}
+
 void ggml_backend_sched_free(ggml_backend_sched_t sched) {
     if (sched == NULL) {
         return;
@@ -2838,6 +2900,9 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
         for (int c = 0; c < sched->n_copies; c++) {
             ggml_backend_event_free(sched->events[b][c]);
         }
+    }
+    for (int s = 0; s < sched->n_gpipe_stages; s++) {
+        ggml_backend_event_free(sched->gpipe_events[s]);
     }
     ggml_gallocr_free(sched->galloc);
     ggml_free(sched->ctx);
