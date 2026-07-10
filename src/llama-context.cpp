@@ -40,6 +40,70 @@ static bool llama_pipeline_plus_enabled() {
     return v != 0;
 }
 
+static bool llama_gpipe_enabled() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_SCHED_GPIPE");
+        v = (e != nullptr && atoi(e) != 0) ? 1 : 0;
+    }
+    return v != 0;
+}
+
+extern "C" bool llama_gpipe_enabled_accessor() {
+    return llama_gpipe_enabled();
+}
+
+extern "C" bool llama_gpipe_context_enabled(struct llama_context * ctx) {
+    return ctx->get_cparams().gpipe_enabled;
+}
+
+int32_t llama_decode_gpipe_impl(llama_context * ctx, llama_batch /*batch*/, const float * /*logits*/) {
+    if (!ctx->gpipe.enabled) {
+        return -1;
+    }
+    ggml_backend_sched_t sched = ctx->get_sched();
+    int32_t result = 0;
+
+    switch (ctx->gpipe.cur_stage) {
+        case 0: {
+            // Stage 0: compute - embed + RPC compute splits
+            // Dispatch compute graph (embed + RPC compute splits) through scheduler.
+            // Graph build/allocate is handled by sched_reserve() on first call.
+            {
+                ggml_cgraph * gf = ctx->gf_res_prev->get_gf();
+                if (gf) {
+                    ggml_backend_sched_graph_compute_async(sched, gf);
+                }
+            }
+            // Record compute_done event for stage 0
+            ggml_sched_gpipe_record(sched, 0);
+            ctx->gpipe.cur_stage = 1;
+            break;
+        }
+        case 1: {
+            // Stage 1: gather - wait for compute_done + KV write + sample
+            // Wait on compute_done event from Stage 0
+            ggml_sched_gpipe_wait(sched, 0);
+            // Dispatch gather graph (split 5) - includes KV write
+            // Graph build/allocate is handled by sched_reserve() on first call.
+            {
+                ggml_cgraph * gf = ctx->gf_res_prev->get_gf();
+                if (gf) {
+                    ggml_backend_sched_graph_compute_async(sched, gf);
+                }
+            }
+            // Record kv_ready event for next token's Stage 0
+            ggml_sched_gpipe_record(sched, 1);
+            ctx->gpipe.cur_stage = 0;
+            break;
+        }
+        default:
+            result = -1;
+            break;
+    }
+    return result;
+}
+
 // Phase 1f bisect: Tier-0 Plus split (P0 graph-reuse barrier vs P1 narrow sampling sync).
 static bool llama_pipeline_p0_full_sync() {
     static int v = -1;
@@ -248,6 +312,9 @@ llama_context::llama_context(
 
     // initialized later
     cparams.pipeline_parallel = false;
+
+    cparams.gpipe_enabled = llama_gpipe_enabled();
+    gpipe.enabled = cparams.gpipe_enabled;
 
     {
         const char * LLAMA_GRAPH_REUSE_DISABLE = getenv("LLAMA_GRAPH_REUSE_DISABLE");
@@ -495,6 +562,10 @@ void llama_context::sched_reserve() {
     gf_res_reserve.reset(new llm_graph_result(max_nodes));
 
     sched.reset(ggml_backend_sched_new(backend_ptrs.data(), backend_buft.data(), backend_ptrs.size(), max_nodes, cparams.pipeline_parallel, cparams.op_offload));
+
+    if (gpipe.enabled) {
+        ggml_sched_gpipe_init(sched.get(), gpipe.n_stages);
+    }
 
     llama_memory_context_ptr mctx;
     if (memory) {
