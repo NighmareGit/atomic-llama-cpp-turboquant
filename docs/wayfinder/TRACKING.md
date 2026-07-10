@@ -14,7 +14,7 @@
 | Specification | ✅ complete | 2026-07-10 |
 | Work Breakdown | ✅ complete | 2026-07-10 |
 | Implementation (D1.1-D1.7) | ✅ complete | 2026-07-10 |
-| Testing (D2.1-D2.3) | ⏳ pending | - |
+| Testing (D2.1-D2.3) | ⚠️ partial | 2026-07-10 |
 | Production Hardening (D3.1-D3.3) | ⏳ pending | - |
 | Path C Stepping Stone (D4.1-D4.6) | ⏳ pending | - |
 | Deeper Pipelining (D5.1-D5.7) | ⏳ pending | - |
@@ -37,13 +37,21 @@
 | D1.6 | ✅ complete | `ggml_sched_gpipe_wait()` implemented |
 | D1.7 | ✅ complete | Stage state machine dispatch logic complete |
 
-### D2 — Testing (pending)
+### D2 — Testing (partial)
 
 | Ticket | Status | Notes |
 |--------|--------|-------|
-| D2.1 | ⏳ pending | Correctness: logits hash, KV fill, MoE routing |
-| D2.2 | ⏳ pending | Performance: `global_3bk_pct`, `overlap_pct`, G targets |
-| D2.3 | ⏳ pending | Regression: Path-B+ baseline unchanged |
+| D2.1 | ✅ complete | All 8 GPipe unit tests pass (state, enabled, env, init, wait, stage, stage-full, decode-skel) |
+| D2.2 | ⚠️ blocked | Model loads, first token decodes, event drain crashes on second token — pre-existing RPC bug |
+| D2.3 | ⚠️ confirmed | GPipe OFF also crashes — confirms crash is NOT a GPipe regression |
+
+### D2 Findings
+
+**Build fix:** Tests required `-DGGML_RPC=ON` (was OFF by default) and `target_link_libraries(test-gpipe-* PRIVATE ggml-rpc)` in `tests/CMakeLists.txt`.
+
+**Pre-existing RPC event bug:** `drain_pending_event_response` fails after ~247ms on second token decode. Crash occurs with both `GGML_SCHED_GPIPE=1` and `GGML_SCHED_GPIPE=0`. Root cause: `ggml-rpc.cpp` event handling race condition, not GPipe-specific.
+
+**Performance metrics:** Cannot be collected until RPC event bug is fixed. The 2-stage GPipe pipeline's event record/wait logic is exercised but the crash prevents multi-token measurement.
 
 ### D3 — Production Hardening (pending)
 
