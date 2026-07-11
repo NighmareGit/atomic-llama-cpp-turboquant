@@ -11,7 +11,7 @@
 > [MTP.md](MTP.md) and [NEXTN.md](NEXTN.md); this doc isolates **Plus-specific**
 > A/B value on top of those wins.
 
-See also [benches/path-b-plus/](benches/path-b-plus/), [docs/llama-pipeline-profiler/OVERVIEW.md](docs/llama-pipeline-profiler/OVERVIEW.md), [rpc-patch/docs/rpc-path-b-plus-spikes.md](rpc-patch/docs/rpc-path-b-plus-spikes.md), [docs/cuda-windows-5070ti/PROFILING.md](docs/cuda-windows-5070ti/PROFILING.md).
+See also [benches/path-b-plus/](benches/path-b-plus/), [docs/llama-pipeline-profiler/OVERVIEW.md](docs/llama-pipeline-profiler/OVERVIEW.md), [tools/llama-gpipe-profiler/README.md](tools/llama-gpipe-profiler/README.md), [rpc-patch/docs/rpc-path-b-plus-spikes.md](rpc-patch/docs/rpc-path-b-plus-spikes.md), [docs/cuda-windows-5070ti/PROFILING.md](docs/cuda-windows-5070ti/PROFILING.md).
 
 ---
 
@@ -306,6 +306,13 @@ BENCH_MODEL=/path/model.gguf BENCH_RPC_ENDPOINT=192.168.8.176:50051 BENCH_TS=50,
 cmake --build build --target llama-pipeline-profiler
 ./build/bin/llama-pipeline-profiler -m MODEL.gguf --topology 2gpu -n 128 \
   --mode trace --out-dir ./profiler-out
+
+# T1: task-stratified profiler with server telemetry
+cmake --build build --target llama-gpipe-profiler
+GGML_RPC_SERVER_TELEMETRY=1 \
+./build/bin/llama-gpipe-profiler -m MODEL.gguf \
+  -rpc 192.168.1.10:50051 --tensor-split 50,50 \
+  --server-telemetry --tasks pp,tg --out-dir ./profiler-out
 
 # T1: 4-GPU cluster profiler (romulus SSH)
 ./scripts/llama-pipeline-profiler-cluster.sh profiler-4gpu-primary

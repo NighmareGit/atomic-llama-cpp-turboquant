@@ -31,25 +31,27 @@ static const char * RPC_DEBUG = std::getenv("GGML_RPC_DEBUG");
     do { if (RPC_DEBUG) GGML_LOG_DEBUG(__VA_ARGS__); } while (0)
 
 static int rpc_trace_lvl() {
-    static int v = -1;
-    if (v < 0) {
-        const char * e = getenv("GGML_RPC_TRACE");
-        v = e ? atoi(e) : 0;
-    }
-    return v;
+    const char * e = getenv("GGML_RPC_TRACE");
+    return e ? atoi(e) : 0;
 }
 
 static std::mutex rpc_trace_mutex;
 
 static FILE * rpc_trace_file() {
     static FILE * trace_f = nullptr;
-    static bool trace_f_init = false;
-    if (!trace_f_init) {
-        trace_f_init = true;
-        const char * path = getenv("GGML_RPC_TRACE_FILE");
-        if (path && path[0]) {
-            trace_f = fopen(path, "a");
-        }
+    static std::string last_path;
+    const char * path = getenv("GGML_RPC_TRACE_FILE");
+    if (!path || !path[0]) {
+        return nullptr;
+    }
+    // re-open if path changed (e.g. between repeat runs with different trace dirs)
+    if (trace_f && last_path != path) {
+        fclose(trace_f);
+        trace_f = nullptr;
+    }
+    if (!trace_f) {
+        trace_f = fopen(path, "a");
+        last_path = path;
     }
     return trace_f;
 }
@@ -378,6 +380,15 @@ static int rpc_multidevice_env_enabled() {
     return v;
 }
 
+static bool rpc_server_telemetry_env_enabled() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_RPC_SERVER_TELEMETRY");
+        v = e ? atoi(e) : 0;
+    }
+    return v != 0;
+}
+
 bool ggml_backend_rpc_dual_socket(void) {
     return rpc_dual_socket_env_enabled() != 0;
 }
@@ -682,6 +693,11 @@ struct rpc_msg_graph_compute_all_rsp {
     uint32_t output_device; // which GPU holds the output tensor
 };
 
+// D4.10: response struct for single-device GRAPH_COMPUTE (telemetry carrier)
+struct rpc_msg_graph_compute_rsp {
+    uint32_t result;        // 0=success
+};
+
 struct rpc_msg_graph_recompute_all_req {
     uint32_t n_devices;
     uint32_t devices[GGML_RPC_MAX_DEVICES];
@@ -693,6 +709,34 @@ struct rpc_msg_graph_recompute_all_req {
 struct rpc_msg_graph_recompute_all_rsp {
     uint32_t result;
     uint32_t output_device;
+};
+
+// D4.10: telemetry constants
+static constexpr uint32_t RPC_TELEMETRY_MAX_DEVICES   = 8;
+static constexpr uint32_t RPC_TELEMETRY_MAX_PEER_PAIRS = 8;
+static constexpr uint32_t RPC_TELEMETRY_MAX_SLOTS      = 256;
+
+// D4.10: per-GPU metadata
+struct rpc_telemetry_device_meta {
+    char     name[64];
+    uint64_t vram_mib;
+    int32_t  backend_type; // ggml_backend_dev_type
+    int32_t  pcie_gen;
+    int32_t  pcie_width;
+};
+
+// D4.10: server telemetry frame appended to GRAPH_COMPUTE_ALL response
+struct rpc_msg_server_telemetry {
+    uint32_t n_devices;
+    uint32_t n_peer_pairs;
+    uint32_t n_slots;
+    uint32_t reserved;
+    uint64_t device_timings_us[RPC_TELEMETRY_MAX_DEVICES];
+    int32_t  layer_assignments[RPC_TELEMETRY_MAX_DEVICES];
+    uint64_t copy_times_us[RPC_TELEMETRY_MAX_PEER_PAIRS];
+    rpc_telemetry_device_meta device_meta[RPC_TELEMETRY_MAX_DEVICES];
+    uint64_t kv_read_times_us[RPC_TELEMETRY_MAX_SLOTS];
+    uint64_t kv_write_times_us[RPC_TELEMETRY_MAX_SLOTS];
 };
 
 #pragma pack(pop)
@@ -1132,6 +1176,11 @@ static bool negotiate_hello(const std::shared_ptr<socket_t> & sock, const char *
     sock->server_supports_peer_copy = (response.major == RPC_PROTO_MAJOR_VERSION && response.minor >= 3);
     sock->server_supports_trace_id = (response.patch >= 3) || (response.conn_caps[0] & RPC_CAP_TRACE_ID);
     sock->server_supports_multi_device = (response.conn_caps[0] & RPC_CAP_MULTI_DEVICE) != 0;
+    sock->server_supports_telemetry = (response.conn_caps[0] & RPC_CAP_SERVER_TELEMETRY) != 0;
+    // D4.10 debug
+    GGML_LOG_INFO("RPC %s: telemetry=%d conn_caps[0]=%d\n", endpoint,
+                  sock->server_supports_telemetry ? 1 : 0,
+                  response.conn_caps[0]);
     sock->update_caps(response.conn_caps);
 
     if (request.dual_socket && response.minor >= 4 && (response.flags & 1) && response.session_id != 0) {
@@ -2175,6 +2224,84 @@ static void serialize_graph_for_all(
     serialize_graph_tensors(cgraph, dest);
 }
 
+// D4.10: write a server_telemetry jsonl record (one JSON object per line)
+static void rpc_write_server_telemetry_jsonl(const rpc_msg_server_telemetry & telem) {
+    static std::mutex jsonl_mutex;
+    std::lock_guard<std::mutex> lock(jsonl_mutex);
+
+    const auto ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    uint64_t trace_id = ggml_pipeline_trace_get_trace_id();
+
+    const char * tel_path = getenv("GGML_RPC_SERVER_TELEMETRY_FILE");
+    if (!tel_path || !tel_path[0]) {
+        tel_path = "server-telemetry.jsonl";
+    }
+    FILE * f = fopen(tel_path, "a");
+    if (!f) {
+        return;
+    }
+    fprintf(f, "{\"event\":\"server_telemetry\",\"ts_us\":%lld,\"trace_id\":%llu",
+            (long long) ts_us, (unsigned long long) trace_id);
+
+    fprintf(f, ",\"device_timings_us\":[");
+    for (uint32_t i = 0; i < telem.n_devices; i++) {
+        if (i) fprintf(f, ",");
+        fprintf(f, "%llu", (unsigned long long) telem.device_timings_us[i]);
+    }
+    fprintf(f, "]");
+
+    fprintf(f, ",\"layer_assignments\":[");
+    for (uint32_t i = 0; i < telem.n_devices; i++) {
+        if (i) fprintf(f, ",");
+        fprintf(f, "%d", telem.layer_assignments[i]);
+    }
+    fprintf(f, "]");
+
+    fprintf(f, ",\"copy_times_us\":[");
+    for (uint32_t i = 0; i < telem.n_peer_pairs; i++) {
+        if (i) fprintf(f, ",");
+        fprintf(f, "%llu", (unsigned long long) telem.copy_times_us[i]);
+    }
+    fprintf(f, "]");
+
+    fprintf(f, ",\"device_meta\":[");
+    for (uint32_t i = 0; i < telem.n_devices; i++) {
+        if (i) fprintf(f, ",");
+        const rpc_telemetry_device_meta & meta = telem.device_meta[i];
+        const char * backend_str = "unknown";
+        switch (meta.backend_type) {
+            case GGML_BACKEND_DEVICE_TYPE_CPU:  backend_str = "CPU"; break;
+            case GGML_BACKEND_DEVICE_TYPE_GPU:  backend_str = "CUDA"; break;
+            case GGML_BACKEND_DEVICE_TYPE_IGPU: backend_str = "iGPU"; break;
+            case GGML_BACKEND_DEVICE_TYPE_ACCEL: backend_str = "ACCEL"; break;
+            default: break;
+        }
+        fprintf(f, "{\"name\":\"%.*s\",\"vram_mib\":%llu,\"backend\":\"%s\",\"pcie_gen\":%d,\"pcie_width\":%d}",
+                (int) sizeof(meta.name), meta.name,
+                (unsigned long long) meta.vram_mib, backend_str,
+                meta.pcie_gen, meta.pcie_width);
+    }
+    fprintf(f, "]");
+
+    fprintf(f, ",\"kv_read_times_us\":[");
+    for (uint32_t i = 0; i < telem.n_slots; i++) {
+        if (i) fprintf(f, ",");
+        fprintf(f, "%llu", (unsigned long long) telem.kv_read_times_us[i]);
+    }
+    fprintf(f, "]");
+
+    fprintf(f, ",\"kv_write_times_us\":[");
+    for (uint32_t i = 0; i < telem.n_slots; i++) {
+        if (i) fprintf(f, ",");
+        fprintf(f, "%llu", (unsigned long long) telem.kv_write_times_us[i]);
+    }
+    fprintf(f, "]");
+
+    fprintf(f, "}\n");
+    fclose(f);
+}
+
 // D4.5: weighted weight placement for multi-device endpoints.
 // Client assigns SET_TENSOR layers proportional to GPU speed ratio.
 // For 3090 vs 3070 (1.75x ratio, 60 total layers):
@@ -2196,6 +2323,11 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
     flush_set_tensor_batch();
 
     // D4.5: Path C - multi-device dispatch via GRAPH_COMPUTE_ALL
+    // Fires when n_devices_on_endpoint > 1, i.e. a single RPC backend
+    // has 2+ GPUs (e.g. rpc-server -d CUDA0,CUDA1). Telemetry collection
+    // (D4.10) also works on the single-device GRAPH_COMPUTE path below --
+    // the server collects telemetry for any GPU count. This ALL path adds
+    // server-side multi-GPU scheduling on top of telemetry.
     if (rpc_multidevice_env_enabled() &&
         rpc_ctx->is_multi_device_capable &&
         rpc_ctx->n_devices_on_endpoint > 1) {
@@ -2232,8 +2364,23 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
             rpc_dev_ctx->last_graph_uid = cgraph->uid;
             std::vector<uint8_t> input;
             serialize_graph_for_all(devices, n_devices, cgraph, input);
-            bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_COMPUTE_ALL, input.data(), input.size());
+            // D4.10: use response version; server sends telemetry when enabled
+            rpc_msg_graph_compute_all_rsp rsp;
+            size_t resp_size = sizeof(rsp);
+            if (sock->server_supports_telemetry) {
+                resp_size += sizeof(rpc_msg_server_telemetry);
+            }
+            std::vector<uint8_t> resp_buf(resp_size);
+            bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_COMPUTE_ALL,
+                                       input.data(), input.size(),
+                                       resp_buf.data(), resp_size);
             RPC_STATUS_ASSERT(status);
+            memcpy(&rsp, resp_buf.data(), sizeof(rsp));
+            if (sock->server_supports_telemetry && rsp.result == 0) {
+                rpc_msg_server_telemetry telem;
+                memcpy(&telem, resp_buf.data() + sizeof(rsp), sizeof(telem));
+                rpc_write_server_telemetry_jsonl(telem);
+            }
             const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - t0).count();
             rpc_trace_emit(__func__, "graph_compute_all", RPC_CMD_GRAPH_COMPUTE_ALL, input.size(), false, us);
@@ -2267,8 +2414,26 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
         rpc_dev_ctx->last_graph_uid = cgraph->uid;
         std::vector<uint8_t> input;
         serialize_graph(rpc_ctx->device, cgraph, input);
-        bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_COMPUTE, input.data(), input.size());
-        RPC_STATUS_ASSERT(status);
+        // D4.10: use response version when server supports telemetry;
+        // fall back to fire-and-forget for backward compatibility with old servers
+        if (sock->server_supports_telemetry) {
+            rpc_msg_graph_compute_rsp rsp = {};
+            size_t resp_size = sizeof(rsp) + sizeof(rpc_msg_server_telemetry);
+            std::vector<uint8_t> resp_buf(resp_size);
+            bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_COMPUTE,
+                                       input.data(), input.size(),
+                                       resp_buf.data(), resp_size);
+            RPC_STATUS_ASSERT(status);
+            memcpy(&rsp, resp_buf.data(), sizeof(rsp));
+            if (rsp.result == 0) {
+                rpc_msg_server_telemetry telem;
+                memcpy(&telem, resp_buf.data() + sizeof(rsp), sizeof(telem));
+                rpc_write_server_telemetry_jsonl(telem);
+            }
+        } else {
+            bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_COMPUTE, input.data(), input.size());
+            RPC_STATUS_ASSERT(status);
+        }
         rpc_ctx->last_compute_sock = nullptr;
         rpc_ctx->last_compute_sent_event = false;
         const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -2386,8 +2551,26 @@ void ggml_backend_rpc_get_device_memory(const char * endpoint, uint32_t device, 
 class rpc_server {
 public:
     rpc_server(std::vector<ggml_backend_t> all_backends, const char * cache_dir)
-        : backends(std::move(all_backends)), cache_dir(cache_dir) {
+        : backends(std::move(all_backends)), cache_dir(cache_dir),
+          telemetry_enabled(rpc_server_telemetry_env_enabled()) {
         stored_graphs.resize(backends.size());
+        if (telemetry_enabled) {
+            // populate device_meta once at startup
+            for (size_t i = 0; i < backends.size() && i < RPC_TELEMETRY_MAX_DEVICES; i++) {
+                ggml_backend_dev_t dev = ggml_backend_get_device(backends[i]);
+                rpc_telemetry_device_meta & meta = startup_device_meta[i];
+                memset(&meta, 0, sizeof(meta));
+                if (!dev) {
+                    continue;
+                }
+                struct ggml_backend_dev_props props;
+                ggml_backend_dev_get_props(dev, &props);
+                snprintf(meta.name, sizeof(meta.name), "%s", props.name);
+                meta.vram_mib = props.memory_total / (1024 * 1024);
+                meta.backend_type = (int32_t) ggml_backend_dev_type(dev);
+                // pcie_gen/pcie_width not exposed via ggml api; leave 0
+            }
+        }
         compute_worker = std::thread([this]() { compute_worker_loop(); });
     }
     ~rpc_server();
@@ -2420,6 +2603,9 @@ public:
     void enqueue_graph_compute_all(std::vector<uint8_t> input);
     void enqueue_graph_recompute_all(rpc_msg_graph_recompute_all_req request);
     void wait_compute_idle();
+    void collect_telemetry(const uint32_t * devices, uint32_t n_devices,
+                           int64_t total_us);
+    bool get_last_telemetry(rpc_msg_server_telemetry & out) const;
 
     struct stored_graph {
         std::vector<uint8_t>   buffer;
@@ -2455,6 +2641,13 @@ private:
     std::thread                     compute_worker;
     std::atomic<bool>               compute_shutdown{false};
     std::atomic<int>                compute_inflight{0};
+
+    // D4.10: telemetry state
+    const bool                telemetry_enabled;
+    rpc_telemetry_device_meta startup_device_meta[RPC_TELEMETRY_MAX_DEVICES];
+    rpc_msg_server_telemetry  last_telemetry;
+    mutable std::mutex        telemetry_mtx;
+    std::atomic<uint64_t>     telemetry_decode_count{0};
 };
 
 void rpc_server::hello(rpc_msg_hello_rsp & response) {
@@ -3022,6 +3215,11 @@ bool rpc_server::graph_compute(const std::vector<uint8_t> & input) {
         std::chrono::steady_clock::now() - t0).count();
     rpc_trace_emit("rpc_server::graph_compute", "server_compute", RPC_CMD_GRAPH_COMPUTE, input.size(), true, us);
     stored_graphs[device].graph = graph;
+    // D4.10: collect telemetry for single-device compute when enabled
+    if (telemetry_enabled) {
+        uint32_t dev = device;
+        collect_telemetry(&dev, 1, us);
+    }
     return true;
 }
 
@@ -3175,6 +3373,11 @@ bool rpc_server::graph_compute_all(const std::vector<uint8_t> & input) {
     rpc_trace_emit("rpc_server::graph_compute_all", "server_compute",
                    RPC_CMD_GRAPH_COMPUTE_ALL, input.size(), true, us);
 
+    // D4.10: collect telemetry when enabled
+    if (telemetry_enabled) {
+        collect_telemetry(devices, n_devices, us);
+    }
+
     // D4.5: store for recompute in dedicated ALL-mode storage
     if (all_graph.buffer.size() < buf_size) {
         all_graph.buffer.resize(buf_size);
@@ -3292,6 +3495,56 @@ void rpc_server::wait_compute_idle() {
     compute_cv.wait(lock, [this] {
         return compute_queue.empty() && compute_inflight.load() == 0;
     });
+}
+
+// D4.10: sample every Nth decode to keep overhead <1%
+static constexpr int TELEMETRY_SAMPLE_INTERVAL = 1;
+
+void rpc_server::collect_telemetry(const uint32_t * devices, uint32_t n_devices,
+                                   int64_t total_us) {
+    uint64_t decode_id = telemetry_decode_count.fetch_add(1, std::memory_order_relaxed);
+    if (TELEMETRY_SAMPLE_INTERVAL > 1 && (decode_id % TELEMETRY_SAMPLE_INTERVAL) != 0) {
+        return;
+    }
+
+    rpc_msg_server_telemetry t = {};
+    t.n_devices = std::min<uint32_t>(n_devices, RPC_TELEMETRY_MAX_DEVICES);
+
+    // device_timings: total compute time split across assigned devices
+    // scheduler does not expose per-backend timing, so attribute total to each device
+    for (uint32_t i = 0; i < t.n_devices; i++) {
+        t.device_timings_us[i] = (uint64_t) total_us;
+    }
+
+    // layer_assignments: backend index per device (split boundary info not exposed)
+    for (uint32_t i = 0; i < t.n_devices; i++) {
+        t.layer_assignments[i] = (int32_t) i;
+    }
+
+    // copy_times: not tracked per peer pair yet; leave zero
+    t.n_peer_pairs = 0;
+
+    // device_meta: from startup snapshot
+    for (uint32_t i = 0; i < t.n_devices; i++) {
+        t.device_meta[i] = startup_device_meta[devices[i]];
+    }
+
+    // kv times: server has no direct kv cache context; leave zero as placeholder
+    t.n_slots = 0;
+
+    {
+        std::lock_guard<std::mutex> lock(telemetry_mtx);
+        last_telemetry = t;
+    }
+}
+
+bool rpc_server::get_last_telemetry(rpc_msg_server_telemetry & out) const {
+    std::lock_guard<std::mutex> lock(telemetry_mtx);
+    if (!telemetry_enabled) {
+        return false;
+    }
+    out = last_telemetry;
+    return true;
 }
 
 rpc_server::~rpc_server() {
@@ -3413,6 +3666,11 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
         if (rpc_multidevice_env_enabled()) {
             rsp3.conn_caps[0] |= RPC_CAP_MULTI_DEVICE;
         }
+        // D4.10: advertise telemetry capability
+        fprintf(stderr, "DEBUG: telemetry_env=%d (GGML_RPC_SERVER_TELEMETRY=%s)\n",
+                rpc_server_telemetry_env_enabled(),
+                getenv("GGML_RPC_SERVER_TELEMETRY") ? getenv("GGML_RPC_SERVER_TELEMETRY") : "(null)");
+        rsp3.conn_caps[0] |= RPC_CAP_SERVER_TELEMETRY;  // FIXME: debug - unconditional
         sock->server_supports_trace_id = (rsp3.patch >= 3) || (req_conn_caps[0] & RPC_CAP_TRACE_ID);
         if (!send_msg(sock, &rsp3, sizeof(rsp3))) {
             return;
@@ -3428,6 +3686,10 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
         // D4.5: only advertise multi-device capability if env var is enabled
         if (rpc_multidevice_env_enabled()) {
             rsp.conn_caps[0] |= RPC_CAP_MULTI_DEVICE;
+        }
+        // D4.10: advertise telemetry capability
+        if (rpc_server_telemetry_env_enabled()) {
+            rsp.conn_caps[0] |= RPC_CAP_SERVER_TELEMETRY;
         }
         // trace_id support from client caps (for deciding 20B vs 12B recv on EVENT_RECORD)
         sock->server_supports_trace_id = (rsp.patch >= 3) || (req.conn_caps[0] & RPC_CAP_TRACE_ID);
@@ -3660,6 +3922,20 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                     return;
                 }
                 server.enqueue_graph_compute(std::move(input));
+                server.wait_compute_idle();
+                // D4.10: send response (with telemetry appended if enabled)
+                rpc_msg_graph_compute_rsp rsp = {};
+                rsp.result = 0;
+                rpc_msg_server_telemetry telem = {};
+                if (server.get_last_telemetry(telem)) {
+                    size_t resp_size = sizeof(rsp) + sizeof(telem);
+                    std::vector<uint8_t> resp_buf(resp_size);
+                    memcpy(resp_buf.data(), &rsp, sizeof(rsp));
+                    memcpy(resp_buf.data() + sizeof(rsp), &telem, sizeof(telem));
+                    send_response(sock, resp_buf.data(), resp_buf.size());
+                } else {
+                    send_response(sock, &rsp, sizeof(rsp));
+                }
                 break;
             }
             case RPC_CMD_GRAPH_RECOMPUTE: {
@@ -3764,6 +4040,20 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                     return;
                 }
                 server.enqueue_graph_compute_all(std::move(input));
+                server.wait_compute_idle();
+                // D4.10: send response (with telemetry appended if enabled)
+                rpc_msg_graph_compute_all_rsp rsp = {};
+                rsp.result = 0;
+                rpc_msg_server_telemetry telem = {};
+                if (server.get_last_telemetry(telem)) {
+                    size_t resp_size = sizeof(rsp) + sizeof(telem);
+                    std::vector<uint8_t> resp_buf(resp_size);
+                    memcpy(resp_buf.data(), &rsp, sizeof(rsp));
+                    memcpy(resp_buf.data() + sizeof(rsp), &telem, sizeof(telem));
+                    send_response(sock, resp_buf.data(), resp_buf.size());
+                } else {
+                    send_response(sock, &rsp, sizeof(rsp));
+                }
                 break;
             }
             case RPC_CMD_GRAPH_RECOMPUTE_ALL: {

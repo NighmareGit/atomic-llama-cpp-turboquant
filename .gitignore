@@ -178,3 +178,10 @@ rpc-patch/patch/bench-results/72b-matrix/debug/
 /terminals/
 /ggml-backend.cpp
 /ggml-rpc.cpp
+*.gguf
+# Docker build artifacts
+[0-9a-f]*
+server-telemetry.jsonl
+build-rocm-docker/
+build-hip/
+build/

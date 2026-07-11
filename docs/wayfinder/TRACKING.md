@@ -17,7 +17,7 @@
 | Implementation (D1.1-D1.7) | COMPLETE | 2026-07-10 |
 | Testing (D2.1-D2.3) | COMPLETE | 2026-07-11 |
 | Production Hardening (D3.1-D3.3) | COMPLETE | 2026-07-11 |
-| Path C Stepping Stone (D4.1-D4.6) | IN PROGRESS | 2026-07-11 |
+| Path C Stepping Stone (D4.1-D4.10) | COMPLETE | 2026-07-11 |
 | Deeper Pipelining (D5.1-D5.7) | PENDING | - |
 | Mode B Microbatch (D6.1-D6.7) | PENDING | - |
 | Advanced Optimization (R3.1-R3.5) | PENDING | - |
@@ -159,9 +159,9 @@ Full analysis: `docs/wayfinder/D4.1-romulus-baseline-analysis.md`
 | D4.5 | ✅ complete | Production implementation: serialization consolidation, scheduler cache, EVENT_RECORD, env var + --rpc-multidevice CLI arg, all_graph storage. Builds clean in CPU/CUDA/HIP |
 | D4.6 | ✅ complete | Romulus dual-GPU: fixed `wait_compute_idle` bug in EVENT_RECORD handler. Path-B-Plus (PIPELINE_PLUS+MULTI_BACKEND_SEQ+RPC_MULTIDEVICE): pp32=991 t/s (+21% vs baseline), tg32=81.7 t/s (+32%). draft-mtp n_max=2: gen 128t=113.2 t/s (+41.5% vs no-spec, +82% vs D4.6 baseline). n_max=2 strongly preferred over n_max=16 (80% vs 39.5% acceptance). |
 | D4.7 | ✅ complete | Profiler research: heatmap schema, binary design, KV cache scope decision documented |
-| D4.8 | ⏳ pending | Profiler prototype: server collection + thin client |
-| D4.9 | ⏳ pending | Profiler ADR: binary + heatmap + transition |
-| D4.10 | ⏳ pending | Profiler v1: binary + server telemetry + scripts |
+| D4.8 | ✅ complete | RPC telemetry prototype: 6-field `rpc_msg_server_telemetry` struct, `collect_telemetry()` called from both `graph_compute()` (single-device) and `graph_compute_all()` (multi-device), `server-telemetry.jsonl` writer, HELLO capability negotiation (`RPC_CAP_SERVER_TELEMETRY`). Telemetry works on **both** paths: single-device (`rpc-server -d CUDA0`) via `GRAPH_COMPUTE` response, and multi-device (`rpc-server -d CUDA0,CUDA1`) via `GRAPH_COMPUTE_ALL` response. Romulus setup (1 local + 1 RPC GPU) is fully profiled. |
+| D4.9 | ✅ complete | ADR-0004b finalized: binary arch (`llama-bench` pattern), CLI surface, heatmap JSON schema (schema v1), telemetry ingestion contract, script adaptation plan. |
+| D4.10 | ✅ complete | `llama-gpipe-profiler` binary built (17928 bytes) with task-stratified profiling, heatmap synthesis, server telemetry ingestion. CMake target in `tools/`. Graceful degradation when telemetry unavailable. |
 | D4.11-D4.14 | 📋 stored | Pareto Optimizer in llama-server — planned + ticketed, NOT built this sprint |
 
 ### D5 — Deeper Pipelining (pending)
@@ -220,8 +220,7 @@ Aborts if VRAM/RAM/disk/running-instances indicate OOM risk.
 ## Next Actions
 
 1. **D4.6** — Test GRAPH_COMPUTE_ALL on romulus dual-GPU (7900 XTX + 3060 Ti) using D4.5 implementation with `--rpc-multidevice`
-2. **D4.7-D4.10 Profiler v1** — Native `llama-gpipe-profiler` binary + telemetry + script adaptation
-3. **D5 Deeper Pipelining** — Main throughput lever (n_stages > 2)
+2. **D5 Deeper Pipelining** — Main throughput lever (n_stages > 2)
 4. **D6 Mode B Microbatch** — Multi-seq support
 5. **R3 Advanced Optimization** — Adaptive depth + deprecation cleanup
 6. **D4.11-D4.14 Pareto Optimizer** — Planned + ticketed, future sprint

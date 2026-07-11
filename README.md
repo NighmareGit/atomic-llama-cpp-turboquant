@@ -385,6 +385,42 @@ is the recommended default on the MoE target (Qwen 3.6 35B-A3B,
 the dense Qwen 3.6 27B by ~5 % on top of `turbo3-base` despite the model
 being draft-compute-bound.
 
+## Profiling and benchmarking
+
+This fork ships two profiling tools for performance analysis:
+
+| Tool | Description |
+|------|-------------|
+| **`llama-bench`** | Generic throughput benchmarking — single- and multi-GPU throughput matrices without pipeline internals. Built as part of the standard llama.cpp build. |
+| **`llama-pipeline-profiler`** | Native pipeline trace, diagnose, Plus A/B, spike gates, and R5 RPC preflight. Tied to existing B+6 gate scripts. [Docs](docs/llama-pipeline-profiler/OVERVIEW.md). |
+| **`llama-gpipe-profiler`** | Task-stratified profiler (pp vs tg) with server-side telemetry ingestion, heatmap JSON synthesis, and graceful degradation. Covers single-device and multi-device RPC servers. [Docs](tools/llama-gpipe-profiler/README.md). |
+
+### `llama-gpipe-profiler` — Quick start
+
+```sh
+# Build (requires GGML_RPC for RPC profiling)
+cmake -B build -DGGML_RPC=ON
+cmake --build build --target llama-gpipe-profiler -j
+
+# Local-only profile
+./build/bin/llama-gpipe-profiler -m /models/model.gguf --tasks pp,tg
+
+# Dual-GPU with server telemetry (Romulus: local + RPC)
+GGML_RPC_SERVER_TELEMETRY=1 \
+./build/bin/llama-gpipe-profiler -m /models/model.gguf \
+  -rpc 127.0.0.1:50051 --tensor-split 50,50 \
+  --server-telemetry --tasks pp,tg --out-dir ./profiler-out
+```
+
+Key features:
+- Task-stratified profiling: separate timing and heatmap for prompt processing (pp) and token generation (tg)
+- Server telemetry: per-device compute timing, layer assignments, device metadata returned in RPC response
+- Graceful degradation: falls back to client-side traces when telemetry unavailable
+- Heatmap JSON output: consumed by the Pareto optimizer (planned, D4.11+)
+- Full CLI: `--model`, `--rpc`, `--tasks`, `--server-telemetry`, `--trace`, `--repeat`
+
+For detailed usage, telemetry schema, and architecture: [tools/llama-gpipe-profiler/README.md](tools/llama-gpipe-profiler/README.md).
+
 <details>
 <summary>Models</summary>
 

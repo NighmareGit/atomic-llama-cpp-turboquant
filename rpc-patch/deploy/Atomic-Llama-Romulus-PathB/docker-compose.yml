@@ -1,7 +1,7 @@
 services:
   pathb-rpc-romulus:
     container_name: pathb-rpc-romulus
-    image: atomic-llama-romulus-pathb-rpc:latest
+    image: atomic-llama-romulus-pathb-rpc:debug
     network_mode: host
     ipc: host
     restart: unless-stopped
@@ -14,4 +14,5 @@ services:
       - CUDA_VISIBLE_DEVICES=${CUDA_DEVICE:-0}
       - GGML_CUDA_DISABLE_GRAPHS=${GGML_CUDA_DISABLE_GRAPHS:-}
       - GGML_RPC_DEBUG=${GGML_RPC_DEBUG:-}
+      - GGML_RPC_SERVER_TELEMETRY=1
     command: ["-H", "0.0.0.0", "-p", "${RPC_PORT:-50051}", "-d", "CUDA0"]

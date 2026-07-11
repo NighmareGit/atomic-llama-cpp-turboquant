@@ -27,6 +27,7 @@ C++ binary (llama-bench parity) with in-process diagnose, sampling, and regressi
 | Tool | When to use |
 |------|-------------|
 | **llama-pipeline-profiler** | Native-client pipeline trace, Plus A/B, spike gates, R5 RPC preflight |
+| **llama-gpipe-profiler** | Task-stratified native profiler with server telemetry, heatmap synthesis. Use for new gpipe/heatmap work. See [tools/llama-gpipe-profiler/README.md](../../tools/llama-gpipe-profiler/README.md). |
 | **llama-bench** | Generic throughput matrices (no pipeline internals) |
 | **rpc-server-bench.sh** | HTTP production gate (`BENCH_HTTP=1` fallback in T1 stub) |
 | **bench-pipeline-depth2.sh** | T0 depth-2 A/B via live `llama-server` |

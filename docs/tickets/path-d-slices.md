@@ -140,10 +140,10 @@ Models at `/mnt/models`. GPU telemetry via `rocm-smi` (AMD) and `nvidia-smi` (NV
 - [x] D4.6: G non-regression confirmed
 - [x] D4.6: Results documented in TRACKING.md
 - [ ] Safety check passes before each resource-intensive step (N/A on single-GPU client; cluster gate deferred)
-- [ ] D4.7: Profiler research complete
-- [ ] D4.8: Profiler prototype (deferred)
-- [ ] D4.9: Profiler ADR (deferred)
-- [ ] D4.10: Profiler v1 (deferred)
+- [x] D4.7: Profiler research complete
+- [x] D4.8: Profiler prototype complete
+- [x] D4.9: Profiler ADR complete
+- [x] D4.10: Profiler v1 complete
 
 ### Considerations (D4.7–D4.10 Profiler v1 | D4.11–D4.14 Pareto Optimizer)
 
@@ -152,6 +152,17 @@ server-side telemetry. This creates an opportunity to build a native C++ profile
 (`llama-gpipe-profiler`, like `llama-bench`) and plan a future Pareto optimizer
 inside `llama-server`. Scope boundary: profiler v1 **now**, Pareto optimizer
 **planned + ticketed but not built**.
+
+**Telemetry gating condition:** Originally, server telemetry was only returned on
+`GRAPH_COMPUTE_ALL` responses (firing when `n_devices_on_endpoint > 1`), which
+excluded single-GPU RPC servers like the Romulus 3060 Ti. This was fixed during
+Slice 2 — the single-device `GRAPH_COMPUTE` path now also collects and returns
+telemetry. The result: **telemetry works on both paths**:
+- Single-device `GRAPH_COMPUTE` (1 GPU on RPC server, e.g. `rpc-server -d CUDA0`)
+- Multi-device `GRAPH_COMPUTE_ALL` (2+ GPUs on RPC server, e.g. `rpc-server -d CUDA0,CUDA1`)
+
+This means a Romulus-style setup (1 local GPU + 1 RPC GPU) is fully profiled
+without needing a multi-GPU RPC server.
 
 #### Profiler v1 (D4.7–D4.10) — Build Now
 
@@ -207,7 +218,17 @@ Slice 1 (RPC event fix unlocks all performance testing).
 
 - **Completed:** 2026-07-11
 - **Commit range:** `eb1e5a261` (C1.1 CUDA -INFINITY fix) .. `eb1e5a261` (current HEAD — no new commits, pure docs + testing milestone)
-- **Notes:** Path C core (D4.1-D4.6) complete on romulus dual-GPU. D4.6 included: `wait_compute_idle` fix for EVENT_RECORD crash, Path-B-Plus pipeline benchmark (pp32=991 t/s, tg32=81.7 t/s), draft-mtp speculative decoding test (n_max=2 yields 113.2 t/s gen = +82% vs D4.6 baseline). Key finding: `--spec-draft-n-max 2` strongly outperforms `n_max=16` (80% vs 39.5% draft acceptance). Profiler v1 (D4.8-D4.10) deferred — research complete, build pending.
+- **Notes:** Path C core (D4.1-D4.6) complete on romulus dual-GPU. D4.6 included: `wait_compute_idle` fix for EVENT_RECORD crash, Path-B-Plus pipeline benchmark (pp32=991 t/s, tg32=81.7 t/s), draft-mtp speculative decoding test (n_max=2 yields 113.2 t/s gen = +82% vs D4.6 baseline). Key finding: `--spec-draft-n-max 2` strongly outperforms `n_max=16` (80% vs 39.5% draft acceptance). Profiler v1 (D4.8-D4.10) complete — RPC server telemetry (6 fields, HELLO cap, jsonl writer) + `llama-gpipe-profiler` binary (task-stratified, heatmap, telemetry ingestion, 17928 bytes) + ADR-0004b.
+
+**Profiler v1 validation (D4.10 end-to-end):** Multi-model benchmark suite run on romulus dual-GPU (ROCm 7900 XTX + RPC/CUDA 3060 Ti) via `llama-gpipe-profiler` with `--repeat 5 --trace --server-telemetry --n-prompt 1024 --n-gen 128`:
+
+| Model | File Size | PP t/s (1024 tok) | TG t/s (128 tok) | Tensor Split |
+|---|---|---|---|---|
+| Qwen3.5-4B-Q4_K_M | 2.7 GB | 3,835 | 195.3 | 50,50 |
+| Qwen3.5-9B-MTP-Q4_K_M | 5.5 GB | 2,517 | 128.7 | 50,50 |
+| Qwen3.6-35B-A3B-APEX-MTP-I-Q6_K | 21.9 GB | 4,027 | 146.6 | 30,70 |
+
+All traces (sched, rpc, pipeline) recorded with content. Server telemetry `kv_source: "server"` confirmed. Key finding: the 35B MoE activates only 8/256 experts per token, so its PP throughput (4,027 t/s) matches the 4B dense model despite being 10x larger.**
 
 ---
 

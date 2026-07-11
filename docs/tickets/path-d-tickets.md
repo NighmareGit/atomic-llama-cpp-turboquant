@@ -296,10 +296,10 @@
 **Goal:** Establish read-only Path C baseline on romulus dual-GPU (7900 XTX client + 3060 Ti RPC server).
 
 **Acceptance Criteria:**
-- [ ] Per-device RPC splits documented for 7900 XTX + 3060 Ti
-- [ ] RTT counts and GPU utilization captured (rocm-smi for AMD, nvidia-smi for NVIDIA)
-- [ ] Models loaded from `/mnt/models`
-- [ ] Baseline artifact in `docs/wayfinder/D4.1-romulus-baseline-analysis.md`
+- [x] Per-device RPC splits documented for 7900 XTX + 3060 Ti
+- [x] RTT counts and GPU utilization captured (rocm-smi for AMD, nvidia-smi for NVIDIA)
+- [x] Models loaded from `/mnt/models`
+- [x] Baseline artifact in `docs/wayfinder/D4.1-romulus-baseline-analysis.md`
 
 **Implementation Notes:**
 - Hardware: romulus — AMD 7900 XTX (client, ROCm), NVIDIA 3060 Ti (RPC server, CUDA)
@@ -318,9 +318,9 @@
 **Goal:** Produce ADR for server-side scheduling on co-localized GPUs.
 
 **Acceptance Criteria:**
-- [ ] ADR-004 created in `docs/adr/`
-- [ ] Decision: server-side sched model for Path C
-- [ ] Alternatives considered and rejected with rationale
+- [x] ADR-004 created in `docs/adr/`
+- [x] Decision: server-side sched model for Path C
+- [x] Alternatives considered and rejected with rationale
 
 **Implementation Notes:**
 - Output: `docs/adr/0004-server-side-scheduling.md`
@@ -337,9 +337,9 @@
 **Goal:** Add Path C spec section to `docs/path-d-spec.md`.
 
 **Acceptance Criteria:**
-- [ ] Spec section added for server-side scheduling
-- [ ] API contracts for Path C functions defined
-- [ ] Acceptance criteria for C2 defined
+- [x] Spec section added for server-side scheduling
+- [x] API contracts for Path C functions defined
+- [x] Acceptance criteria for C2 defined
 
 **Implementation Notes:**
 - File: `docs/path-d-spec.md`
@@ -356,9 +356,9 @@
 **Goal:** Throwaway code to validate server-side scheduling concept.
 
 **Acceptance Criteria:**
-- [ ] Prototype demonstrates `GRAPH_COMPUTE_ALL` feasibility
-- [ ] Key risks identified (or ruled out)
-- [ ] Findings documented for D4.5 implementation
+- [x] Prototype demonstrates `GRAPH_COMPUTE_ALL` feasibility
+- [x] Key risks identified (or ruled out)
+- [x] Findings documented for D4.5 implementation
 
 **Implementation Notes:**
 - Skill: `/prototype`
@@ -375,9 +375,9 @@
 **Goal:** Implement server-side scheduler with `GRAPH_COMPUTE_ALL`.
 
 **Acceptance Criteria:**
-- [ ] Server-side sched implemented for co-localized GPUs
-- [ ] Target: 2x server GPU duty cycle
-- [ ] G non-regression vs C1 baseline
+- [x] Server-side sched implemented for co-localized GPUs
+- [x] Target: 2x server GPU duty cycle
+- [x] G non-regression vs C1 baseline
 
 **Implementation Notes:**
 - File: `ggml/src/ggml-rpc/ggml-rpc.cpp`
@@ -799,14 +799,14 @@ Architecture section: standalone binary, KV cache profiling included, task-aware
 heatmap schema, and KV cache profiling scope.
 
 **Acceptance Criteria:**
-- [ ] `llama-bench` source structure analyzed as pattern template
-- [ ] Client-side trace formats mapped: `sched-trace.jsonl`, `rpc-trace.jsonl`
-- [ ] Existing profiler pipeline mapped: `llama-pipeline-profiler`, `diagnose.json`, gate scripts
-- [ ] Binary CLI designed: `--model`, `--endpoints`, `--tasks pp,tg`, `--output`, `--repeat`, `--warmup`
-- [ ] Heatmap JSON schema drafted: per-layer timing, GPU util, KV cache timing, task stratification
-- [ ] KV cache scope decided: instrument `llama_kv_cache` directly or collect via RPC telemetry
-- [ ] Task-awareness: how to drive pp vs tg workloads through the profiler
-- [ ] Output: `docs/wayfinder/D4.7-profiler-research.md`
+- [x] `llama-bench` source structure analyzed as pattern template
+- [x] Client-side trace formats mapped: `sched-trace.jsonl`, `rpc-trace.jsonl`
+- [x] Existing profiler pipeline mapped: `llama-pipeline-profiler`, `diagnose.json`, gate scripts
+- [x] Binary CLI designed: `--model`, `--endpoints`, `--tasks pp,tg`, `--output`, `--repeat`, `--warmup`
+- [x] Heatmap JSON schema drafted: per-layer timing, GPU util, KV cache timing, task stratification
+- [x] KV cache scope decided: instrument `llama_kv_cache` directly or collect via RPC telemetry
+- [x] Task-awareness: how to drive pp vs tg workloads through the profiler
+- [x] Output: `docs/wayfinder/D4.7-profiler-research.md`
 
 ---
 
@@ -820,13 +820,13 @@ heatmap schema, and KV cache profiling scope.
 with KV cache fields, plus a thin C client to validate the end-to-end pipeline.
 
 **Acceptance Criteria:**
-- [ ] Server-side overhead measured: collection + formatting cost vs baseline
-- [ ] `rpc_msg_server_telemetry` wire format prototyped with all 6 fields (including KV)
-- [ ] KV cache read/write timing capture validated on server side
-- [ ] Thin C client connects to RPC endpoints, exercises `GRAPH_COMPUTE_ALL`, parses telemetry, writes raw JSON
-- [ ] End-to-end pipeline validated before full profiler binary build
-- [ ] Key risks identified (or ruled out)
-- [ ] Output: `docs/wayfinder/D4.8-profiler-prototype-findings.md`
+- [x] Server-side overhead measured: collection + formatting cost vs baseline
+- [x] `rpc_msg_server_telemetry` wire format prototyped with all 6 fields (including KV)
+- [x] KV cache read/write timing capture validated on server side
+- [x] Thin C client connects to RPC endpoints, exercises `GRAPH_COMPUTE_ALL`, parses telemetry, writes raw JSON
+- [x] End-to-end pipeline validated before full profiler binary build
+- [x] Key risks identified (or ruled out)
+- [x] Output: `docs/wayfinder/D4.8-profiler-prototype-findings.md`
 
 **Implementation Notes:**
 - Skill: `/prototype`
@@ -844,16 +844,16 @@ with KV cache fields, plus a thin C client to validate the end-to-end pipeline.
 telemetry protocol, and Python-to-native transition plan.
 
 **Acceptance Criteria:**
-- [ ] Binary design decided: standalone `llama-gpipe-profiler`, patterned after `llama-bench`
-- [ ] CLI surface decided: `--model`, `--endpoints`, `--tasks`, `--output`, `--repeat`, `--warmup`
-- [ ] CMake target location decided: `tools/llama-gpipe-profiler/`
-- [ ] Telemetry frame format and versioning strategy decided
-- [ ] Opt-in mechanism decided: `GGML_RPC_SERVER_TELEMETRY=0|1`
-- [ ] Heatmap JSON schema finalized with task stratification, KV cache fields
-- [ ] Client ingestion path decided: `server-telemetry.jsonl`
-- [ ] Transition plan: Python profiler stays alive; phased deprecation milestones defined
-- [ ] Future hook: forward-compatible schema for Pareto optimizer (D4.11-D4.14)
-- [ ] Output: `docs/adr/0004b-profiler-architecture.md` or section in `docs/adr/0004-server-side-scheduling.md`
+- [x] Binary design decided: standalone `llama-gpipe-profiler`, patterned after `llama-bench`
+- [x] CLI surface decided: `--model`, `--endpoints`, `--tasks`, `--output`, `--repeat`, `--warmup`
+- [x] CMake target location decided: `tools/llama-gpipe-profiler/`
+- [x] Telemetry frame format and versioning strategy decided
+- [x] Opt-in mechanism decided: `GGML_RPC_SERVER_TELEMETRY=0|1`
+- [x] Heatmap JSON schema finalized with task stratification, KV cache fields
+- [x] Client ingestion path decided: `server-telemetry.jsonl`
+- [x] Transition plan: Python profiler stays alive; phased deprecation milestones defined
+- [x] Future hook: forward-compatible schema for Pareto optimizer (D4.11-D4.14)
+- [x] Output: `docs/adr/0004b-profiler-architecture.md` or section in `docs/adr/0004-server-side-scheduling.md`
 
 ---
 
@@ -867,19 +867,19 @@ telemetry protocol, and Python-to-native transition plan.
 existing script adaptation. Keep Python profiler working.
 
 **Acceptance Criteria:**
-- [ ] Server: per-backend timing collected after `ggml_backend_sched_graph_compute()`
-- [ ] Server: KV cache read/write timing collected per slot
-- [ ] Server: `rpc_msg_server_telemetry` with 6 fields, appended to `GRAPH_COMPUTE_ALL` response
-- [ ] Server: gated by `GGML_RPC_SERVER_TELEMETRY` env var
-- [ ] Client: telemetry frame parsed, written to `server-telemetry.jsonl`
-- [ ] Profiler binary: `llama-gpipe-profiler` CMake target in `tools/llama-gpipe-profiler/`
-- [ ] Profiler binary: CLI working (`--model`, `--endpoints`, `--tasks pp,tg`, `--output`, `--repeat`, `--warmup`)
-- [ ] Profiler binary: task orchestration drives real inference through RPC endpoints
-- [ ] Profiler binary: synthesizes task-stratified heatmap JSON
-- [ ] Scripts: `b6-gate-phase0-assembly-bounds.py` consumes server telemetry fields when present
-- [ ] Scripts: `diagnose.json` schema extended with all 6 telemetry fields (optional)
-- [ ] Scripts: existing `llama-pipeline-profiler` continues working; new fields are optional extensions
-- [ ] Files: `ggml/src/ggml-rpc/ggml-rpc.cpp` (server + client), `tools/llama-gpipe-profiler/`, `tools/llama-pipeline-profiler/`
+- [x] Server: per-backend timing collected after `ggml_backend_sched_graph_compute()`
+- [x] Server: KV cache read/write timing collected per slot
+- [x] Server: `rpc_msg_server_telemetry` with 6 fields, appended to `GRAPH_COMPUTE_ALL` response **and** `GRAPH_COMPUTE` (single-device) response
+- [x] Server: gated by `GGML_RPC_SERVER_TELEMETRY` env var
+- [x] Client: telemetry frame parsed, written to `server-telemetry.jsonl`
+- [x] Profiler binary: `llama-gpipe-profiler` CMake target in `tools/llama-gpipe-profiler/`
+- [x] Profiler binary: CLI working (`--model`, `--endpoints`, `--tasks pp,tg`, `--output`, `--repeat`, `--warmup`)
+- [x] Profiler binary: task orchestration drives real inference through RPC endpoints
+- [x] Profiler binary: synthesizes task-stratified heatmap JSON
+- [x] Scripts: `b6-gate-phase0-assembly-bounds.py` consumes server telemetry fields when present
+- [x] Scripts: `diagnose.json` schema extended with all 6 telemetry fields (optional)
+- [x] Scripts: existing `llama-pipeline-profiler` continues working; new fields are optional extensions
+- [x] Files: `ggml/src/ggml-rpc/ggml-rpc.cpp` (server + client), `tools/llama-gpipe-profiler/`, `tools/llama-pipeline-profiler/`
 
 ---
 

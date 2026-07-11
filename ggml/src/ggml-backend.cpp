@@ -22,15 +22,12 @@
 #include <string.h>
 #include <algorithm>
 #include <chrono>
+#include <string>
 #include <vector>
 
 static int sched_trace_lvl() {
-    static int v = -1;
-    if (v < 0) {
-        const char * e = getenv("GGML_SCHED_TRACE");
-        v = e ? atoi(e) : 0;
-    }
-    return v;
+    const char * e = getenv("GGML_SCHED_TRACE");
+    return e ? atoi(e) : 0;
 }
 
 static thread_local int32_t g_pipeline_decode_id = -1;
@@ -39,12 +36,8 @@ static thread_local int32_t g_hotpath_backend_id = -1;
 static thread_local uint64_t g_trace_id = 0; // monotonic per llama_decode; never reset on perf_reset; 0 = unset/legacy
 
 static int pipeline_trace_lvl() {
-    static int v = -1;
-    if (v < 0) {
-        const char * e = getenv("GGML_PIPELINE_TRACE");
-        v = e ? atoi(e) : 0;
-    }
-    return v;
+    const char * e = getenv("GGML_PIPELINE_TRACE");
+    return e ? atoi(e) : 0;
 }
 
 // Plus=1 TSC repair: sequential cross-backend handoff (bundles P0 full sync + sched legacy async off).
@@ -168,13 +161,18 @@ static bool ggml_backend_is_rpc_backend(ggml_backend_t backend) {
 
 static FILE * pipeline_trace_file() {
     static FILE * trace_f = nullptr;
-    static bool trace_f_init = false;
-    if (!trace_f_init) {
-        trace_f_init = true;
-        const char * path = getenv("GGML_PIPELINE_TRACE_FILE");
-        if (path && path[0]) {
-            trace_f = fopen(path, "a");
-        }
+    static std::string last_path;
+    const char * path = getenv("GGML_PIPELINE_TRACE_FILE");
+    if (!path || !path[0]) {
+        return nullptr;
+    }
+    if (trace_f && last_path != path) {
+        fclose(trace_f);
+        trace_f = nullptr;
+    }
+    if (!trace_f) {
+        trace_f = fopen(path, "a");
+        last_path = path;
     }
     return trace_f;
 }
@@ -234,13 +232,18 @@ void ggml_hotpath_trace_get_sched_ctx(int32_t * split_id, int32_t * backend_id) 
 
 static FILE * sched_trace_file() {
     static FILE * trace_f = nullptr;
-    static bool trace_f_init = false;
-    if (!trace_f_init) {
-        trace_f_init = true;
-        const char * path = getenv("GGML_SCHED_TRACE_FILE");
-        if (path && path[0]) {
-            trace_f = fopen(path, "a");
-        }
+    static std::string last_path;
+    const char * path = getenv("GGML_SCHED_TRACE_FILE");
+    if (!path || !path[0]) {
+        return nullptr;
+    }
+    if (trace_f && last_path != path) {
+        fclose(trace_f);
+        trace_f = nullptr;
+    }
+    if (!trace_f) {
+        trace_f = fopen(path, "a");
+        last_path = path;
     }
     return trace_f;
 }

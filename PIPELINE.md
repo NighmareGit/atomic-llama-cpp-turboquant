@@ -405,9 +405,15 @@ BENCH_TRACE=1 ./rpc-patch/scripts/pathb-romulus-4gpu-bench.sh trace-g-4gpu-prima
 cmake --build build --target llama-pipeline-profiler
 ./scripts/llama-pipeline-profiler-cluster.sh profiler-4gpu-primary
 ./scripts/llama-pipeline-diagnose.sh <out>/telemetry --gen-only
+
+# Task-stratified profiler with server telemetry (gpipe/heatmap)
+cmake --build build --target llama-gpipe-profiler
+./build/bin/llama-gpipe-profiler -m model.gguf --rpc host:50051 \
+  --tasks pp,tg --server-telemetry --out-dir ./profiler-out
 ```
 
-See [docs/llama-pipeline-profiler/OVERVIEW.md](docs/llama-pipeline-profiler/OVERVIEW.md).
+See [docs/llama-pipeline-profiler/OVERVIEW.md](docs/llama-pipeline-profiler/OVERVIEW.md) and
+[tools/llama-gpipe-profiler/README.md](tools/llama-gpipe-profiler/README.md).
 
 ---
 
