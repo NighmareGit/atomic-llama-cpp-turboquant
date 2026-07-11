@@ -79,7 +79,18 @@ Recommended: `-ctk turbo3 -ctv turbo3` for ~4.3x KV compression with dedicated C
 
 ## MTP Speculative Decoding + Blackwell
 
-MTP speculative decoding (`--spec-type draft-mtp --spec-draft-n-max 2`) works with Blackwell. The server logs `speculative decoding will use checkpoints` when enabled.
+MTP speculative decoding (`--spec-type draft-mtp --spec-draft-n-max 2`) works with Blackwell. The server logs `creating MTP draft context` and `adding speculative implementation 'draft-mtp'` when enabled.
+
+**Windows 5070 Ti validated config** (single slot, 20k context):
+
+```powershell
+llama-server.exe -m model.gguf -c 20480 -ngl 99 -np 1 --no-kv-unified `
+  -ctk turbo3 -ctv q8_0 -ctkd f16 -ctvd f16 `
+  --spec-type draft-mtp --spec-draft-n-max 2 --draft-p-min 0.6 `
+  -b 2048 -ub 1024 --flash-attn on
+```
+
+Post-fix result (2026-07-09): ~128 t/s generation, ~91% draft acceptance. See [blackwell-sm120-server-crash-investigation/mtp-20k-test/](../../blackwell-sm120-server-crash-investigation/mtp-20k-test/).
 
 ## Known Issues
 
@@ -90,6 +101,14 @@ nvcc warning : Cannot find valid GPU for '-arch=native', default arch is used
 ```
 
 Always specify `-DCMAKE_CUDA_ARCHITECTURES="120a-real"` explicitly.
+
+### llama-server silent crash on Windows sm_120 (RESOLVED 2026-07-09)
+
+Pre-fix, `llama-server` could exit silently during multi-slot decoding on RTX 5070 Ti while `llama-cli` worked. Root cause: MSVC/nvcc `#221-D` from `-INFINITY` -> `-((float)(1e+300))` in CUDA softmax/MoE kernels.
+
+**Fix**: `neg_inf_f32()` helpers in `ggml/src/ggml-cuda/common.cuh`. Clean rebuild required after update.
+
+Investigation **CLOSED**: [blackwell-sm120-server-crash-investigation/](../../blackwell-sm120-server-crash-investigation/README.md). Windows build: [blackwell-windows-build-guide/](../../blackwell-windows-build-guide/README.md).
 
 ### rpc-server abort on 5070 Ti
 
@@ -102,12 +121,15 @@ If `rpc-server.exe` crashes with an abort dialog during `GRAPH_COMPUTE`, the bui
 | RTX 5060 Ti (16GB) | Qwen3.5-9B-MTP | turbo3 + MTP | ~70 tok/s | 128k/slot |
 | RTX 5070 Ti (16GB) | gemma-4-E4B | turbo3 + MTP | ~67.8 tok/s | 128 |
 | RTX 5070 Ti (16GB) | gemma-4-E4B | turbo3 + MTP | ~64.5 tok/s | 512 |
+| RTX 5070 Ti (16GB) | Qwen3.5-9B-MTP | turbo3 + MTP 20k | ~128 tok/s | 20480 |
 
 See [../cuda-windows-5070ti/benchmarks/](../cuda-windows-5070ti/benchmarks/) for full benchmark results.
 
 ## Related Docs
 
-- [CUDA Build Guide](../build.md#cuda) — general CUDA build instructions
-- [Windows 5070 Ti](../cuda-windows-5070ti/README.md) — Windows build + multi-node RPC
-- [Docker](../docker.md) — official llama.cpp Docker images
-- [Docker Path-B+](../../docker/Atomic-Llama-CUDA-PathB/README.md) — host-compiled Docker images with RPC
+- [CUDA Build Guide](../build.md#cuda) - general CUDA build instructions
+- [Windows Blackwell Build Guide](../../blackwell-windows-build-guide/README.md) - sm_120 native Windows build (CUDA 12.9.2)
+- [Windows 5070 Ti](../cuda-windows-5070ti/README.md) - ops, smoke, multi-node RPC
+- [Server Crash Investigation (CLOSED)](../../blackwell-sm120-server-crash-investigation/README.md) - `-INFINITY` fix archive
+- [Docker](../docker.md) - official llama.cpp Docker images
+- [Docker Path-B+](../../docker/Atomic-Llama-CUDA-PathB/README.md) - host-compiled Docker images with RPC

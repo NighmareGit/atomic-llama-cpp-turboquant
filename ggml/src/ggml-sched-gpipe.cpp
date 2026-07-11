@@ -166,17 +166,12 @@ static void gpipe_auto_assign_layers(struct ggml_gpipe_context *ctx,
     }
 }
 
-// Forward declaration
-static int gpipe_profile_and_assign(struct ggml_gpipe_context *ctx,
-                                     ggml_backend_t **backends, int n_backends,
-                                     const int *layer_sizes, int n_layers, bool profile);
-
-// Public API: profile-aware auto-assign
+// Public API: profile-aware auto-assign (stub — upstream not yet implemented)
 int ggml_gpipe_profile_assign(struct ggml_gpipe_context *ctx,
                                void **backends, int n_backends,
                                const int *layer_sizes, int n_layers, bool profile) {
-    ggml_backend_t **be = (ggml_backend_t **)backends;
-    return gpipe_profile_and_assign(ctx, be, n_backends, layer_sizes, n_layers, profile);
+    GGML_LOG_WARN("gpipe: profile_assign not yet implemented\n");
+    return GGML_STATUS_FAILED;
 }
 
 void ggml_gpipe_free(struct ggml_gpipe_context *ctx) {

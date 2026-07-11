@@ -1,0 +1,4 @@
+smoke=PASS
+model=D:\models\gemma-4-E4B-Gemini-3.1-Pro-Reasoning-Distill-Q6_K.gguf
+port=8080
+timestamp=20260708-002708

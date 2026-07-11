@@ -37,6 +37,18 @@ scripts\b6-gate-jupiter-rebuild-rpc.cmd                            # -t rpc-serv
 
 `b6-gate-jupiter-start-rpc-task.ps1` warns if `CMakeCache.txt` lacks `120a`.
 
+## Blackwell native build (5070 Ti sm_120)
+
+For a from-scratch Windows build with CUDA 12.9.2 nvcc (bypasses VS CUDA 13.x integration):
+
+```powershell
+.\blackwell-windows-build-guide\build-blackwell.ps1
+```
+
+Full steps: [blackwell-windows-build-guide/README.md](../../blackwell-windows-build-guide/README.md).
+
+**CUDA `-INFINITY` fix (2026-07-09)**: `ggml/src/ggml-cuda/common.cuh` uses `neg_inf_f32()` bit-casts instead of `-INFINITY` (MSVC/nvcc #221-D). Required for stable `llama-server` on Blackwell. After pulling the fix, **clean rebuild** - stale `ggml-cuda.dll` can still crash.
+
 ## Smoke test
 
 ```powershell
@@ -44,17 +56,26 @@ scripts\b6-gate-jupiter-rebuild-rpc.cmd                            # -t rpc-serv
 .\scripts\cuda-windows-5070ti\smoke-llama-server.ps1 -ModelPath "D:\models\Qwen3.5-9B-MTP-Q4_K_M.gguf"
 ```
 
+Smoke resolves binaries in order: `portable/` -> `bin/Release/` -> `bin/`. Ninja Multi-Config output lives in `build-cuda-b-bin/bin/Release/`.
+
 Logs: `docs/cuda-windows-5070ti/benchmarks/<timestamp>/`
+
+Latest PASS: `benchmarks/20260709-100701/` (Qwen3.5-9B-MTP, SMOKE_OK).
 
 Monitor VRAM: `nvidia-smi -l 2`
 
-## Portable layout
+## Binary layout
 
 ```
-build-cuda-b-bin/portable/
-  rpc-server.exe      # Config G worker :50053
-  ggml-cuda.dll       # must include 120a-real for 5070 Ti
-  llama-server.exe    # Config E/F Windows client
+build-cuda-b-bin/bin/Release/   # Ninja Multi-Config (local dev + smoke fallback)
+  llama-server.exe
+  ggml-cuda.dll                 # must include 120a-real for 5070 Ti
+  ...
+
+build-cuda-b-bin/portable/      # copy-to-node folder (RPC worker deploy)
+  rpc-server.exe                # Config G worker :50053
+  ggml-cuda.dll
+  llama-server.exe              # Config E/F Windows client
   ...
 ```
 

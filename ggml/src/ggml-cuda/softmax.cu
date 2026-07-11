@@ -47,6 +47,8 @@ struct soft_max_params {
 
 // When ncols_template == 0 the bounds for the loops in this function are not known and can't be unrolled.
 // As we want to keep pragma unroll for all other cases we suppress the clang transformation warning here.
+// -INFINITY expands to -((float)(1e+300)) under nvcc on MSVC, triggering warning #221-D.
+// neg_inf_f32() is defined in common.cuh for device code.
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wpass-failed"
@@ -82,7 +84,7 @@ static __global__ void soft_max_f32(
     // shared memory buffer to cache values between iterations:
     float * vals = use_shared ? buf_iw + WARP_SIZE : dst;
 
-    float max_val = sinks ? sinks[i02] : -INFINITY;
+    float max_val = sinks ? sinks[i02] : neg_inf_f32();
 
 #pragma unroll
     for (int col0 = 0; col0 < ncols; col0 += block_size) {
@@ -151,8 +153,8 @@ static __device__ void soft_max_f32_parallelize_cols_single_row(const float * __
     const int col_start         = blockIdx.x * blockDim.x + tid;
     const int n_elem_per_thread = 4;
 
-    float     local_vals[n_elem_per_thread] = { -INFINITY, -INFINITY, -INFINITY, -INFINITY };
-    float     local_max                     = -INFINITY;
+    float     local_vals[n_elem_per_thread] = { neg_inf_f32(), neg_inf_f32(), neg_inf_f32(), neg_inf_f32() };
+    float     local_max                     = neg_inf_f32();
     const int step_size                     = gridDim.x * blockDim.x;
     __shared__ float shared_vals[32];
 
@@ -161,7 +163,7 @@ static __device__ void soft_max_f32_parallelize_cols_single_row(const float * __
 #pragma unroll
         for (int i = 0; i < n_elem_per_thread; i++) {
             const int idx = col + i * step_size;
-            local_vals[i] = idx < p.ncols ? x[idx] : -INFINITY;
+            local_vals[i] = idx < p.ncols ? x[idx] : neg_inf_f32();
         }
 #pragma unroll
         for (int i = 0; i < n_elem_per_thread; i++) {
@@ -184,7 +186,7 @@ static __device__ void soft_max_f32_parallelize_cols_single_row(const float * __
     if (tid < gridDim.x) {
         local_max = tmp_maxs[tid];
     } else {
-        local_max = -INFINITY;
+        local_max = neg_inf_f32();
     }
     local_max = block_reduce<block_reduce_method::MAX>(local_max, shared_vals);
 
@@ -194,7 +196,7 @@ static __device__ void soft_max_f32_parallelize_cols_single_row(const float * __
 #pragma unroll
         for (int i = 0; i < n_elem_per_thread; i++) {
             const int idx = col + i * step_size;
-            local_vals[i] = idx < p.ncols ? x[idx] : -INFINITY;
+            local_vals[i] = idx < p.ncols ? x[idx] : neg_inf_f32();
         }
 #pragma unroll
         for (int i = 0; i < n_elem_per_thread; i++) {
@@ -230,7 +232,7 @@ static __device__ void soft_max_f32_parallelize_cols_single_row(const float * __
 #pragma unroll
         for (int i = 0; i < n_elem_per_thread; i++) {
             const int idx = col + i * step_size;
-            local_vals[i] = idx < p.ncols ? dst[idx] : -INFINITY;
+            local_vals[i] = idx < p.ncols ? dst[idx] : neg_inf_f32();
         }
 #pragma unroll
         for (int i = 0; i < n_elem_per_thread; i++) {

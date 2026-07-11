@@ -51,6 +51,7 @@ function Invoke-CmdBuild {
 @echo off
 call "$VcVars" x64
 cd /d "$RepoRoot"
+set "GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F=1"
 $Command
 "@ | Set-Content -Path $bat -Encoding ASCII
     cmd /c $bat
@@ -93,8 +94,9 @@ if (-not (Get-Command nvidia-smi -ErrorAction SilentlyContinue)) {
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
 
 $cudaPath = $env:CUDA_PATH
-if (-not $cudaPath) {
-    $cudaPath = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8"
+if (-not $cudaPath -or -not (Test-Path (Join-Path $cudaPath "bin\nvcc.exe"))) {
+    $cudaPath = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9"
+    $env:CUDA_PATH = $cudaPath
 }
 if (-not (Test-Path (Join-Path $cudaPath "bin\nvcc.exe"))) {
     throw "nvcc not found at $cudaPath\bin\nvcc.exe"
@@ -110,28 +112,35 @@ if ($Clean -and (Test-Path $BuildDir)) {
     Remove-Item $BuildDir -Recurse -Force
 }
 
+$env:GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F = "1"  # bypass ALGO 66 on sm_120 — cuBLAS uses FP32 compute cores
 $nvcc = (Join-Path $cudaPath "bin\nvcc.exe").Replace('\', '/')
 $cmakeArgs = @(
     "-S", ".",
     "-B", "build-cuda-b-bin",
     "-G", "Ninja Multi-Config",
+    "-DCMAKE_CONFIGURATION_TYPES=Release",
+    "-DCMAKE_BUILD_TYPE=Release",
     "-DCMAKE_CUDA_COMPILER=`"$nvcc`"",
     "-DGGML_CUDA=ON",
     "-DGGML_RPC=ON",
     "-DGGML_NATIVE=OFF",
     "-DGGML_BACKEND_DL=ON",
-    "-DGGML_CPU_ALL_VARIANTS=ON",
+    "-DGGML_CPU_ALL_VARIANTS=OFF",
     "-DCMAKE_CUDA_ARCHITECTURES=$CudaArch",
     "-DGGML_SCHED_MAX_COPIES=4",
-    "-DGGML_CUDA_CUB_3DOT2=ON",
+    "-DGGML_CUDA_F16=ON",
+    "-DGGML_CUDA_K_QUANTS=ON",
+    "-DGGML_CUDA_MMQ=ON",
+    #"-DGGML_CUDA_FORCE_MMQ=ON",  # disabled — let cuBLAS handle quantized matmul, measure prefill speedup
+    #"-DGGML_CUDA_CUB_3DOT2=ON",  # disabled — causes ? output on Blackwell + CUDA 12.x
     "-DLLAMA_BUILD_SERVER=ON",
     "-DLLAMA_BUILD_TOOLS=ON",
     "-DLLAMA_BUILD_TESTS=OFF",
     "-DLLAMA_BUILD_EXAMPLES=OFF",
     "-DLLAMA_CURL=OFF",
     "-DLLAMA_OPENSSL=OFF",
-    "-DCMAKE_CXX_FLAGS_RELEASE=/FS",
-    "-DCMAKE_C_FLAGS_RELEASE=/FS"
+    "-DCMAKE_CXX_FLAGS_RELEASE=`"/FS /O2 /Ob2 /DNDEBUG`"",
+    "-DCMAKE_C_FLAGS_RELEASE=`"/FS /O2 /Ob2 /DNDEBUG`""
 )
 $cmakeLine = "cmake " + ($cmakeArgs -join " ")
 $MaxJobs = [Math]::Min(8, [Math]::Max(1, $env:NUMBER_OF_PROCESSORS - 1))
@@ -172,6 +181,12 @@ Get-ChildItem $BinDir | Where-Object {
 } | Copy-Item -Destination $PortableDir -Force
 
 Copy-CudaRuntimeDlls -Dest $PortableDir -CudaPath $cudaPath
+
+# Also copy runtime DLLs into bin/ so llama-server.exe finds them without CUDA_PATH
+Copy-Item (Join-Path $cudaPath "bin\cudart64_12.dll") -Destination $BinDir -Force -ErrorAction SilentlyContinue
+Copy-Item (Join-Path $cudaPath "bin\cublas64_12.dll") -Destination $BinDir -Force -ErrorAction SilentlyContinue
+Copy-Item (Join-Path $cudaPath "bin\cublasLt64_12.dll") -Destination $BinDir -Force -ErrorAction SilentlyContinue
+Write-Host "Bundled CUDA runtime DLLs into bin/"
 
 Write-Host "=== Portable manifest ==="
 Get-ChildItem $PortableDir | Sort-Object Name | Format-Table Name, @{N='MiB';E={[math]::Round($_.Length/1MB,2)}} -AutoSize

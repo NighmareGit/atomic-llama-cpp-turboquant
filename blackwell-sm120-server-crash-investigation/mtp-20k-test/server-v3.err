@@ -1,0 +1,2 @@
+0.02.232.516 W llama_context: n_ctx_seq (20480) < n_ctx_train (262144) -- the full capacity of the model will not be utilized
+0.02.300.002 W llama_context: n_ctx_seq (20480) < n_ctx_train (262144) -- the full capacity of the model will not be utilized

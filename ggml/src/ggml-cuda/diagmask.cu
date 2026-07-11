@@ -9,9 +9,11 @@ static __global__ void diag_mask_inf_f32(const float * x, float * dst, const int
     }
 
     const int i = row*ncols + col;
-    //dst[i] = col > (n_past + row % rows_per_channel) ? -INFINITY : x[i];
-    //dst[i] = x[i] - (col > n_past + row % rows_per_channel) * INT_MAX; // equivalent within rounding error but slightly faster on GPU
-    dst[i] = x[i] - (col > n_past + row % rows_per_channel) * FLT_MAX;
+    if (col > n_past + row % rows_per_channel) {
+        dst[i] = -FLT_MAX;
+    } else {
+        dst[i] = x[i];
+    }
 }
 
 static void diag_mask_inf_f32_cuda(const float * x, float * dst, const int ncols_x, const int nrows_x, const int rows_per_channel, const int n_past, cudaStream_t stream) {

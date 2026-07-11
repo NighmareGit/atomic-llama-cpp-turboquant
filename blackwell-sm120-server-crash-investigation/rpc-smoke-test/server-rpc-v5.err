@@ -1,0 +1,53 @@
+0.00.066.374 I log_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.066.376 I device_info:
+0.00.137.666 I   - CUDA0   : NVIDIA GeForce RTX 5070 Ti (16302 MiB, 15037 MiB free)
+0.00.137.675 I   - CPU     : 13th Gen Intel(R) Core(TM) i7-13700K (65220 MiB, 47357 MiB free)
+0.00.184.177 I   - RPC0    : 127.0.0.1:50099 (16302 MiB, 15037 MiB free)
+0.00.184.228 I system_info: n_threads = 16 (n_threads_batch = 16) / 24 | CUDA : ARCHS = 500,610,700,750,800,860,890,900,1200,1210 | USE_GRAPHS = 1 | PEER_MAX_BATCH_SIZE = 128 | BLACKWELL_NATIVE_FP4 = 1 | CPU : LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 | 
+0.00.184.290 I srv          init: using 23 threads for HTTP server
+0.00.184.451 I srv         start: binding port with default address family
+0.00.187.770 I srv  llama_server: loading model
+0.00.187.777 I srv    load_model: loading model 'D:\models\nerdsking-python-coder-3B-i_Q6_K.gguf'
+0.00.187.811 I common_init_result: fitting params to device memory ...
+0.00.187.812 I common_init_result: (for bugs during this step try to reproduce them with -fit off, or provide --verbose logs if the bug only occurs with -fit on)
+0.00.880.833 W load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+0.03.358.816 W llama_context: n_ctx_seq (1024) < n_ctx_train (32768) -- the full capacity of the model will not be utilized
+0.03.363.837 I common_init_from_params: warming up the model with an empty run - please wait ... (--no-warmup to disable)
+0.03.396.435 I srv    load_model: initializing slots, n_slots = 1
+0.03.403.870 W common_speculative_init: no implementations specified for speculative decoding
+0.03.403.875 I slot   load_model: id  0 | task -1 | new slot, n_ctx = 1024
+0.03.403.912 I srv    load_model: prompt cache is enabled, size limit: 8192 MiB
+0.03.403.912 I srv    load_model: use `--cache-ram 0` to disable the prompt cache
+0.03.403.912 I srv    load_model: for more info see https://github.com/ggml-org/llama.cpp/pull/16391
+0.03.403.913 I srv    load_model: context checkpoints enabled, max = 32, min spacing = 256
+0.03.403.930 I srv          init: idle slots will be saved to prompt cache upon starting a new task
+0.03.408.576 I init: chat template, example_format: '<|im_start|>system
+You are a helpful assistant<|im_end|>
+<|im_start|>user
+Hello<|im_end|>
+<|im_start|>assistant
+Hi there<|im_end|>
+<|im_start|>user
+How are you?<|im_end|>
+<|im_start|>assistant
+'
+0.03.411.458 I srv          init: init: chat template, thinking = 0
+0.03.411.472 I srv  llama_server: model loaded
+0.03.411.473 I srv  llama_server: server is listening on http://127.0.0.1:8082
+0.03.411.482 I srv  update_slots: all slots are idle
+0.04.035.619 I srv  params_from_: Chat format: peg-native
+0.04.035.716 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = -1
+0.04.035.717 I srv  get_availabl: updating prompt cache
+0.04.035.720 I srv          load:  - looking for better prompt, base f_keep = -1.000, sim = 0.000
+0.04.035.724 I srv        update:  - cache state: 0 prompts, 0.000 MiB (limits: 8192.000 MiB, 1024 tokens, 8589934592 est)
+0.04.035.725 I srv  get_availabl: prompt cache update took 0.01 ms
+0.04.035.743 I slot launch_slot_: id  0 | task 0 | processing task, is_child = 0
+0.04.154.905 I slot print_timing: id  0 | task 0 | prompt eval time =      33.15 ms /    45 tokens (    0.74 ms per token,  1357.38 tokens per second)
+0.04.154.910 I slot print_timing: id  0 | task 0 |        eval time =      86.00 ms /    16 tokens (    5.37 ms per token,   186.05 tokens per second)
+0.04.154.911 I slot print_timing: id  0 | task 0 |       total time =     119.15 ms /    61 tokens
+0.04.154.911 I slot print_timing: id  0 | task 0 |    graphs reused =         15
+0.04.154.931 I slot      release: id  0 | task 0 | stop processing: n_tokens = 60, truncated = 0
+0.04.154.934 I srv  update_slots: all slots are idle
+0.04.157.600 W srv          stop: cancel task, id_task = 0
+0.04.157.614 I srv  update_slots: all slots are idle
+0.04.157.789 W srv   operator (): got exception: {"error":{"code":500,"message":"Failed to parse input at pos 22:    生 � 生 � 学     �学学 ","type":"server_error"}}

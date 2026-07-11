@@ -1,0 +1,4 @@
+smoke=PASS
+model=D:\models\Qwen3.5-9B-MTP-Q4_K_M.gguf
+port=18090
+timestamp=20260709-100701

@@ -1,0 +1,36 @@
+{
+    "choices":  [
+                    {
+                        "finish_reason":  "length",
+                        "index":  0,
+                        "message":  {
+                                        "role":  "assistant",
+                                        "content":  "Hi \u003c|im_start|\u003e\n\u003c|im_start|\u003e\n\u003c|im_start|\u003e\n\u003c|im_start|\u003e\n\u003c|im_start|\u003e\n\u003c|im_start|\u003e\n\u003c|im_start|\u003e\n\u003c|im_start|\u003e\n\u003c|im_start|\u003e\n"
+                                    }
+                    }
+                ],
+    "created":  1783463198,
+    "model":  "gemma-4-E4B.i1-Q4_K_M.gguf",
+    "system_fingerprint":  "b10096-df87cc673",
+    "object":  "chat.completion",
+    "usage":  {
+                  "completion_tokens":  64,
+                  "prompt_tokens":  30,
+                  "total_tokens":  94,
+                  "prompt_tokens_details":  {
+                                                "cached_tokens":  0
+                                            }
+              },
+    "id":  "chatcmpl-7tpHAdNwA6Aujz3ffBIAVB8VAAx5fg8M",
+    "timings":  {
+                    "cache_n":  0,
+                    "prompt_n":  30,
+                    "prompt_ms":  346.811,
+                    "prompt_per_token_ms":  11.560366666666665,
+                    "prompt_per_second":  86.5024465775307,
+                    "predicted_n":  64,
+                    "predicted_ms":  1088.308,
+                    "predicted_per_token_ms":  17.0048125,
+                    "predicted_per_second":  58.806881875351465
+                }
+}

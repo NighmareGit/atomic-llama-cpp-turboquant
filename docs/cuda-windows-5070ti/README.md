@@ -56,6 +56,8 @@ From repo root (any cwd; scripts resolve paths automatically):
 .\scripts\cuda-windows-5070ti\smoke-llama-server.ps1
 ```
 
+**Blackwell native build** (CUDA 12.9.2 + explicit nvcc, sm_120): see [blackwell-windows-build-guide/README.md](../../blackwell-windows-build-guide/README.md) or `.\blackwell-windows-build-guide\build-blackwell.ps1`.
+
 Build details: [BUILD.md](BUILD.md)
 
 **Config G RPC worker (romulus 4-GPU client):**
@@ -70,11 +72,16 @@ If `rpc-server.exe` shows a Windows **abort()** dialog during load/gen, rebuild 
 
 ## Phase 1 scope
 
-- Single-node `llama-server` on local CUDA GPU
-- Portable `build-cuda-b-bin/portable/` for copy to other Windows nodes (3070/3090/5070 Ti)
+- Single-node `llama-server` on local CUDA GPU (Blackwell sm_120 supported; see [blackwell-sm120-server-crash-investigation](../../blackwell-sm120-server-crash-investigation/README.md) - **CLOSED**)
+- Binaries: `build-cuda-b-bin/bin/Release/` (Ninja Multi-Config) or `build-cuda-b-bin/portable/` after copy
 - Smoke uses **>= 4B chat** GGUFs only (skips `FIM/`, embedding, VL)
 
-Latest PASS: `benchmarks/20260627-042947/` - `gemma-4-E4B.i1-Q4_K_M.gguf`.
+Latest PASS:
+
+| Date | Benchmark | Model | Notes |
+|------|-----------|-------|-------|
+| 2026-07-09 | `benchmarks/20260709-100701/` | Qwen3.5-9B-MTP-Q4_K_M | Post `-INFINITY` fix, SMOKE_OK |
+| 2026-06-27 | `benchmarks/20260627-042947/` | gemma-4-E4B.i1-Q4_K_M | Baseline |
 
 ## Path B / RPC context
 

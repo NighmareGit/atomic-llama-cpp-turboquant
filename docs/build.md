@@ -233,6 +233,8 @@ cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="120a-real"
 
 See [docs/blackwell/README.md](../docs/blackwell/README.md) for the full Blackwell build guide.
 
+**Windows sm_120**: use [blackwell-windows-build-guide/README.md](../blackwell-windows-build-guide/README.md) (CUDA 12.9.2 nvcc, explicit arch). A CUDA `-INFINITY` fix in `ggml/src/ggml-cuda/common.cuh` is required for stable `llama-server` on Blackwell - see [blackwell-sm120-server-crash-investigation/README.md](../blackwell-sm120-server-crash-investigation/README.md) (CLOSED).
+
 ### Overriding the CUDA Version
 
 If you have multiple CUDA installations on your system and want to compile llama.cpp for a specific one, e.g. for CUDA 11.7 installed under `/opt/cuda-11.7`:

@@ -1,0 +1,36 @@
+{
+    "choices":  [
+                    {
+                        "finish_reason":  "length",
+                        "index":  0,
+                        "message":  {
+                                        "role":  "assistant",
+                                        "content":  "\u003ctool_call|\u003e\u003cunused17\u003e\u003cunused35\u003e\u003cunused30\u003e\u003cunused25\u003e\u003cunused48\u003e\u003cunused15\u003e\u003cunused29\u003e\u003cunused22\u003e\u003cunused50\u003e\u003cunused27\u003e\u003cunused5\u003e\u003cunused16\u003e\u003cunused31\u003e\u003cunused26\u003e\u003cunused17\u003e\u003cunused16\u003e\u003cunused18\u003e\u003cunused6\u003e\u003cunused41\u003e"
+                                    }
+                    }
+                ],
+    "created":  1783589208,
+    "model":  "gemma-4-E4B.i1-Q4_K_M.gguf",
+    "system_fingerprint":  "b10099-5760544b4",
+    "object":  "chat.completion",
+    "usage":  {
+                  "completion_tokens":  24,
+                  "prompt_tokens":  29,
+                  "total_tokens":  53,
+                  "prompt_tokens_details":  {
+                                                "cached_tokens":  0
+                                            }
+              },
+    "id":  "chatcmpl-FNulU69d3ttHjT571ZEMMBD8Q3pc6U9K",
+    "timings":  {
+                    "cache_n":  0,
+                    "prompt_n":  29,
+                    "prompt_ms":  154.508,
+                    "prompt_per_token_ms":  5.327862068965517,
+                    "prompt_per_second":  187.6925466642504,
+                    "predicted_n":  24,
+                    "predicted_ms":  188.313,
+                    "predicted_per_token_ms":  7.846374999999999,
+                    "predicted_per_second":  127.44738812508962
+                }
+}

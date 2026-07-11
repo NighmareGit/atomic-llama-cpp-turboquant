@@ -216,6 +216,20 @@ set_target_properties(ggml-base PROPERTIES
 )
 
 target_include_directories(ggml-base PRIVATE .)
+# ggml-backend.cpp includes ggml-rpc.h and calls RPC functions directly.
+# When GGML_BACKEND_DL=ON, backends become MODULE libraries, so the RPC
+# symbols won't be available at link time.  Statically inject the RPC
+# source into ggml-base on Windows so the symbols resolve.
+if (WIN32)
+    target_sources(ggml-base PRIVATE
+        ggml-rpc/ggml-rpc.cpp
+        ggml-rpc/transport.cpp
+    )
+    # Do NOT define GGML_RPC_RDMA on Windows — the header uses #ifdef which
+    # treats -DGGML_RPC_RDMA=0 as defined.  Leaving it undefined ensures the
+    # RDMA code path is skipped while still compiling transport.cpp.
+    target_link_libraries(ggml-base PRIVATE ws2_32)
+endif()
 if (GGML_BACKEND_DL)
     target_compile_definitions(ggml-base PUBLIC GGML_BACKEND_DL)
 endif()

@@ -11,7 +11,10 @@ $ErrorActionPreference = "Stop"
 $CollateralRoot = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $CollateralRoot "..\..")).Path
 $Portable = Join-Path $RepoRoot "build-cuda-b-bin\portable"
-$BinDir   = if (Test-Path (Join-Path $Portable "llama-server.exe")) { $Portable } else { Join-Path $RepoRoot "build-cuda-b-bin\bin" }
+$Release  = Join-Path $RepoRoot "build-cuda-b-bin\bin\Release"
+$BinDir   = if (Test-Path (Join-Path $Portable "llama-server.exe")) { $Portable }
+            elseif (Test-Path (Join-Path $Release "llama-server.exe")) { $Release }
+            else { Join-Path $RepoRoot "build-cuda-b-bin\bin" }
 $BenchDir = Join-Path $RepoRoot "docs\cuda-windows-5070ti\benchmarks"
 $Stamp    = Get-Date -Format "yyyyMMdd-HHmmss"
 $LogDir   = Join-Path $BenchDir $Stamp
@@ -67,6 +70,11 @@ $ErrorActionPreference = "Continue"
 cmd /c "`"$serverExe`" --version 2>&1" | Tee-Object -FilePath (Join-Path $LogDir "version.txt")
 cmd /c "`"$serverExe`" --help 2>&1" | Select-String "cache-type-k" | Tee-Object -FilePath (Join-Path $LogDir "help-cache-type.txt")
 $ErrorActionPreference = $prevEap
+
+$env:GGML_PIPELINE_PLUS = "1"
+$env:GGML_PIPELINE_MULTI_BACKEND_SEQ = "1"
+$env:GGML_RPC_DUAL_SOCKET = "0"
+$env:GGML_SCHED_WAVEFRONT_DISPATCH = "0"
 
 $serverLog = Join-Path $LogDir "server.log"
 $serverArgs = @(

@@ -567,6 +567,22 @@ enum class block_reduce_method {
 template<block_reduce_method method_t, typename T>
 struct block_reduce_policy;
 
+// -INFINITY expands to -((float)(1e+300)) under nvcc on MSVC, triggering warning #221-D.
+// Use raw IEEE-754 bit-cast instead. See: ggml-org/llama.cpp#22824
+
+// Host-compatible version (plain C++ bit-cast)
+static inline float neg_inf_f32_host() {
+    uint32_t bits = 0xFF800000U;
+    float result;
+    memcpy(&result, &bits, sizeof(result));
+    return result;
+}
+
+// Device-compatible version (CUDA intrinsic)
+static __device__ __forceinline__ float neg_inf_f32() {
+    return __int_as_float(0xFF800000);
+}
+
 template <typename T, typename... Ts>
 inline constexpr bool is_any = (std::is_same_v<T, Ts> || ...);
 
@@ -608,9 +624,9 @@ template <typename T> struct block_reduce_policy<block_reduce_method::MAX, T> {
 
     static __device__ T sentinel() {
         if constexpr (std::is_same_v<T, float>) {
-            return -INFINITY;
+            return __int_as_float(0xFF800000); // -INFINITY as raw bits
         } else if constexpr (std::is_same_v<T, half2>) {
-            return make_half2(-INFINITY, -INFINITY);
+            return make_half2(__float2half(-1e30f), __float2half(-1e30f)); // largest finite for block reduce
         } else {
             static_assert(ggml_cuda_dependent_false_v<T>, "Unsupported type for block reduce max");
         }

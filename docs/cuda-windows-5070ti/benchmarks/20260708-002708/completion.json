@@ -1,0 +1,36 @@
+{
+    "choices":  [
+                    {
+                        "finish_reason":  "stop",
+                        "index":  0,
+                        "message":  {
+                                        "role":  "assistant",
+                                        "content":  "Hi there!"
+                                    }
+                    }
+                ],
+    "created":  1783463245,
+    "model":  "gemma-4-E4B-Gemini-3.1-Pro-Reasoning-Distill-Q6_K.gguf",
+    "system_fingerprint":  "b10096-df87cc673",
+    "object":  "chat.completion",
+    "usage":  {
+                  "completion_tokens":  4,
+                  "prompt_tokens":  22,
+                  "total_tokens":  26,
+                  "prompt_tokens_details":  {
+                                                "cached_tokens":  0
+                                            }
+              },
+    "id":  "chatcmpl-I2Putemz1XJGbgWJUjdlcoQws8cEITLh",
+    "timings":  {
+                    "cache_n":  0,
+                    "prompt_n":  22,
+                    "prompt_ms":  182.203,
+                    "prompt_per_token_ms":  8.281954545454546,
+                    "prompt_per_second":  120.7444443834624,
+                    "predicted_n":  4,
+                    "predicted_ms":  78.432,
+                    "predicted_per_token_ms":  19.608,
+                    "predicted_per_second":  50.99959200326397
+                }
+}
