@@ -1139,6 +1139,9 @@ struct ggml_backend_sched {
     // B+14 W2: cross-decode wavefront depth guard
     int wavefront_inflight;
     int wavefront_oldest_copy;
+
+    // Per-backend compute timing (us) aggregated across all splits in last sched run
+    int64_t per_backend_compute_us[GGML_SCHED_MAX_BACKENDS];
 };
 
 #define hash_id(tensor) ggml_hash_find_or_insert(&sched->hash_set, tensor)
@@ -2300,6 +2303,11 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
     struct ggml_backend_sched_split * splits = sched->splits;
     g_rpc_producer_ready_mask = 0;
 
+    // Reset per-backend timing for this run
+    for (int i = 0; i < sched->n_backends; i++) {
+        sched->per_backend_compute_us[i] = 0;
+    }
+
     ggml_tensor * prev_ids_tensor = nullptr;
     std::vector<int32_t> ids;
     std::vector<ggml_bitset_t> used_ids;
@@ -2716,6 +2724,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
             const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - compute_t0).count();
             sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "graph_compute_async", us);
+            sched->per_backend_compute_us[split_backend_id] += us;
         }
 
         // record the event of this copy
@@ -3140,6 +3149,14 @@ int ggml_backend_sched_get_n_splits(ggml_backend_sched_t sched) {
 int ggml_backend_sched_get_n_copies(ggml_backend_sched_t sched) {
     GGML_ASSERT(sched);
     return sched->n_copies;
+}
+
+int64_t ggml_backend_sched_get_backend_timing_us(ggml_backend_sched_t sched, int backend_id) {
+    GGML_ASSERT(sched);
+    if (backend_id < 0 || backend_id >= sched->n_backends) {
+        return 0;
+    }
+    return sched->per_backend_compute_us[backend_id];
 }
 
 int ggml_backend_sched_get_n_backends(ggml_backend_sched_t sched) {

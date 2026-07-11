@@ -2604,7 +2604,7 @@ public:
     void enqueue_graph_recompute_all(rpc_msg_graph_recompute_all_req request);
     void wait_compute_idle();
     void collect_telemetry(const uint32_t * devices, uint32_t n_devices,
-                           int64_t total_us);
+                           const int64_t * per_device_us);
     bool get_last_telemetry(rpc_msg_server_telemetry & out) const;
 
     struct stored_graph {
@@ -3218,7 +3218,8 @@ bool rpc_server::graph_compute(const std::vector<uint8_t> & input) {
     // D4.10: collect telemetry for single-device compute when enabled
     if (telemetry_enabled) {
         uint32_t dev = device;
-        collect_telemetry(&dev, 1, us);
+        int64_t per_device_us = us;
+        collect_telemetry(&dev, 1, &per_device_us);
     }
     return true;
 }
@@ -3373,9 +3374,13 @@ bool rpc_server::graph_compute_all(const std::vector<uint8_t> & input) {
     rpc_trace_emit("rpc_server::graph_compute_all", "server_compute",
                    RPC_CMD_GRAPH_COMPUTE_ALL, input.size(), true, us);
 
-    // D4.10: collect telemetry when enabled
+    // D4.10: collect telemetry with per-device timing from scheduler when enabled
     if (telemetry_enabled) {
-        collect_telemetry(devices, n_devices, us);
+        int64_t per_device_us[RPC_TELEMETRY_MAX_DEVICES];
+        for (uint32_t i = 0; i < n_devices && i < RPC_TELEMETRY_MAX_DEVICES; i++) {
+            per_device_us[i] = ggml_backend_sched_get_backend_timing_us(sched, (int)i);
+        }
+        collect_telemetry(devices, n_devices, per_device_us);
     }
 
     // D4.5: store for recompute in dedicated ALL-mode storage
@@ -3501,7 +3506,7 @@ void rpc_server::wait_compute_idle() {
 static constexpr int TELEMETRY_SAMPLE_INTERVAL = 1;
 
 void rpc_server::collect_telemetry(const uint32_t * devices, uint32_t n_devices,
-                                   int64_t total_us) {
+                                   const int64_t * per_device_us) {
     uint64_t decode_id = telemetry_decode_count.fetch_add(1, std::memory_order_relaxed);
     if (TELEMETRY_SAMPLE_INTERVAL > 1 && (decode_id % TELEMETRY_SAMPLE_INTERVAL) != 0) {
         return;
@@ -3510,10 +3515,9 @@ void rpc_server::collect_telemetry(const uint32_t * devices, uint32_t n_devices,
     rpc_msg_server_telemetry t = {};
     t.n_devices = std::min<uint32_t>(n_devices, RPC_TELEMETRY_MAX_DEVICES);
 
-    // device_timings: total compute time split across assigned devices
-    // scheduler does not expose per-backend timing, so attribute total to each device
+    // device_timings: per-device compute time from scheduler or caller
     for (uint32_t i = 0; i < t.n_devices; i++) {
-        t.device_timings_us[i] = (uint64_t) total_us;
+        t.device_timings_us[i] = per_device_us ? (uint64_t)per_device_us[i] : 0;
     }
 
     // layer_assignments: backend index per device (split boundary info not exposed)
