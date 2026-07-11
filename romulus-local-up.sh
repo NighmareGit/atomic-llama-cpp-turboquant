@@ -3,14 +3,14 @@
 #
 # usage:
 #   bash scripts/romulus-local-up.sh --build
-#   bash scripts/romulus-local-up.sh                    # default: Qwen3.6 35B APEX MTP, ctx=128k
+#   bash scripts/romulus-local-up.sh                    # default: Qwen3.6 35B MTP GGUF
 #   bash scripts/romulus-local-up.sh -c 4096 --ctk q8_0 --ctv turbo3
 #   bash scripts/romulus-local-up.sh -m /mnt/models/other.gguf --mtp off
 #   bash scripts/romulus-local-up.sh --stop
 #
 # Common flags:
 #   -m, --model PATH     GGUF (default: ROMULUS_DEFAULT_MODEL or *MTP* under /mnt/models)
-#   -c, --ctx N           context slots (default 131072 = 128k)
+#   -c, --ctx N           context slots (default 8192)
 #   --ctk TYPE            cache type K (default q8_0)
 #   --ctv TYPE            cache type V (default turbo3; use q8_0 for non-MTP)
 #   --mtp on|off|TYPE     speculative: default on for MTP GGUF, off for others
@@ -30,10 +30,10 @@ BUILD_DIR="${ROMULUS_BUILD_DIR:-build-rocm-docker}"
 COMPOSE="${ROMULUS_PATHB_COMPOSE:-${ROOT}/scripts/romulus-pathb/docker-compose.yml}"
 SERVER="${LLAMA_SERVER:-${ROOT}/${BUILD_DIR}/bin/llama-server}"
 
-DEFAULT_MTP_MODEL="${ROMULUS_DEFAULT_MODEL:-/mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf}"
+DEFAULT_MTP_MODEL="${ROMULUS_DEFAULT_MODEL:-/mnt/models/Qwen3.6-35B-A3B-UD-Q4_K_XL_MTP.gguf}"
 
 MODEL=""
-CTX=140000 #262144 #131072
+CTX=8192
 CTK="q8_0"
 CTV="turbo3"
 HOST="0.0.0.0"
@@ -166,7 +166,6 @@ MODEL="$(resolve_model "$MODEL")"
 
 if [[ -z "$SPEC" ]]; then
     if [[ "$MODEL" == *MTP* || "$MODEL" == *NextN* || "$MODEL" == *nextn* || "$MODEL" == *UDT* ]]; then
-        # Qwen 3.x NextN heads: upstream --spec-type draft-mtp (not legacy "nextn").
         SPEC="draft-mtp"
     else
         SPEC="none"
@@ -225,6 +224,7 @@ ARGS=(
     -m "$MODEL"
     -c "$CTX"
     -ngl "$NGL"
+    -ngld "$NGL"
     -ctk "$CTK"
     -ctv "$CTV"
     -fa on
@@ -247,19 +247,11 @@ ARGS=(
 
 if [[ "$SPEC" != "none" ]]; then
     ARGS+=(
+        -md "$MODEL"
         --spec-type "$SPEC"
-        --spec-draft-n-max "${DRAFT_MAX:-3}"
-        --spec-draft-n-min "${DRAFT_MIN:-1}"
+        --spec-draft-n-max "${DRAFT_MAX:-16}"
+        --spec-draft-n-min "${DRAFT_MIN:-0}"
     )
-    # Same combined *_MTP.gguf: omit -md so server reuses target llama_model (LLAMA_CONTEXT_TYPE_MTP).
-    # Pass ROMULUS_DRAFT_MODEL only for a separate draft artifact.
-    DRAFT_MODEL="${ROMULUS_DRAFT_MODEL:-}"
-    if [[ -n "$DRAFT_MODEL" ]]; then
-        ARGS+=(-md "$DRAFT_MODEL")
-        if [[ -n "${NGLD:-}" ]]; then
-            ARGS+=(--spec-draft-ngl "$NGLD")
-        fi
-    fi
 fi
 
 echo "=== llama-server ==="
