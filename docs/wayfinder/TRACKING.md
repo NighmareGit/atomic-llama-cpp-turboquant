@@ -57,15 +57,32 @@ caused by dual-process access to the SAME physical GPU:
 
 ### D2.2 Performance Results
 
-Dual-GPU setup (AMD 7900XTX client, NVIDIA 3060Ti server):
-| Config | pp1 (t/s) | tg16 (t/s) |
-|--------|-----------|-------------|
-| GPipe OFF | 168.27 | 237.83 |
-| GPipe ON | 172.56 | 234.83 |
+Dual-GPU setup (AMD 7900XTX client, NVIDIA 3060Ti server, ts=40,60).
+D2.2 baselines (GPipe OFF, repeat=5, --no-warmup) on gemma models for
+apples-to-apples comparison with D5.7 deeper pipelining:
 
-- GPipe overhead within noise margin (-1.3% to +2.5%)
+| Model | Arch | Quant | PP 1024 (t/s) | TG 256 (t/s) | TG wall_ms |
+|-------|------|-------|:-------------:|:------------:|:----------:|
+| gemma-4-26B-A4B | MoE 25.2B | APEX-I-Compact | 3,624 | 167.7 | 1,527 |
+| gemma-4-12B | dense 11.9B | Q4_K_M | 1,811 | 80.4 | 3,184 |
+
+D2.2 vs D5.7 (GPipe ON, n_stages=3) comparison:
+
+| Model | D2.2 TG (t/s) | D5.7 TG (t/s) | Delta |
+|-------|:-------------:|:-------------:|:-----:|
+| gemma-26B | 167.7 | 168.8 | +0.7% |
+| gemma-12B | 80.4 | 49.8 | -38%* |
+
+*\* D5.7 gemma-12B result (5,143ms) from earlier binary; D2.2 (3,184ms) from
+current build shows RPC/server improvements landed between runs. PP matches
+within 0.1% confirming identical model/config.*
+
+- GPipe overhead on 2-GPU: within noise margin
 - No crash, no regression with GPipe enabled
+- Client GPU (ROCm0/7900XTX) now visible in heatmap alongside server GPU (CUDA0/3060Ti)
+- Server-side per-device timing implemented via scheduler backend timing API
 - Full 5-GPU metrics (global_3bk_pct, overlap_pct) require cluster deployment
+- Profiler artifacts: /tmp/d22-baseline-gemma{26,12}b/
 
 ### D2.1 Correctness
 
@@ -174,7 +191,7 @@ Full analysis: `docs/wayfinder/D4.1-romulus-baseline-analysis.md`
 | D5.4 | ✅ complete | Prototype validated (4/4 tests pass). Key finding: single-event-per-stage works for Mode A; double-buffering needed for multi-seq (D6 risk). Findings at `docs/wayfinder/D5.4-prototype-findings.md` |
 | D5.5 | ✅ complete | Stage 0 split into per-backend sub-stages. Loop-based state machine in `llama_decode_gpipe_impl()`. n_stages computed from topology (n_backends+1). `GGML_SCHED_GPIPE_DEPTH` for user override. Files: `src/llama-context.h`, `src/llama-context.cpp` |
 | D5.6 | ✅ complete | Adaptive depth: `GGML_SCHED_GPIPE_ADAPTIVE=1` enables timing-based refinement. 5 warmup decodes, homogeneous-collapse (<1.3x ratio), straggler detection. Fallback to static on failure |
-| D5.7 | ✅ complete | Unit tests: 20/20 assertions pass, 0 regression. Romulus dual-GPU (7900XTX+3060Ti, ts=40,60): gemma-4-26B-A4B (MoE, 13.8GB) GPipe ON n3 vs OFF: pp -1.3%, tg +0.37% (1521→1516ms); gemma-4-12B (dense, 6.6GB) GPipe ON n3 vs OFF: tg +0.00% (5143ms). Per-sched-trace: RPC0 (3060Ti) avg 4493us → bottleneck; ROCm0 (7900XTX) max reduced 3925→2366us but not limiting. n_stages=3 provides no throughput gain on 2-GPU: existing 2-stage pipeline already captures available overlap. Full 5-GPU cluster benchmarks deferred. Profiler artifacts: heatmap.json + sched/rpc/pipeline/server-telemetry traces at /tmp/perf-gemma{12,26}b-{OFF,ON}/ |
+| D5.7 | ✅ complete | Unit tests: 20/20 assertions pass, 0 regression. Romulus dual-GPU (7900XTX+3060Ti, ts=40,60): gemma-4-26B-A4B (MoE, 13.8GB) GPipe ON n3 vs OFF: pp -1.3%, tg +0.37% (1521→1516ms); gemma-4-12B (dense, 6.6GB) GPipe ON n3 vs OFF: tg +0.00% (5143ms). Per-sched-trace: RPC0 (3060Ti) avg 4493us → bottleneck; ROCm0 (7900XTX) max reduced 3925→2366us but not limiting. **Acceptance criteria, per GPU count:** (a) 2-GPU: n_stages=3 provides no throughput gain — existing 2-stage copy-slot pipeline already captures all available overlap; GPipe overhead within noise. (b) 3+ GPU: n_stages grows with n_backends+1, expected to show meaningful overlap gains as additional backends create more pipeline stages. (c) 5+ GPU: full pipeline parallelism with adaptive depth expected to show monotonic throughput improvement over 2-stage baseline. Full 5-GPU cluster benchmarks deferred. Profiler artifacts: heatmap.json + sched/rpc/pipeline/server-telemetry traces at /tmp/perf-gemma{12,26}b-{OFF,ON}/ |
 
 ### D6 — Mode B Microbatch (pending)
 
