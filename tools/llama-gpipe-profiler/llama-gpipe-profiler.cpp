@@ -19,6 +19,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -452,6 +453,14 @@ struct gpu_device_meta {
     int pcie_width = 0;
 };
 
+struct client_backend_timing {
+    int backend_id;
+    uint64_t avg_us;
+    uint64_t min_us;
+    uint64_t max_us;
+    int count;
+};
+
 struct telemetry_data {
     bool valid = false;
     std::vector<uint64_t> device_timings_us;
@@ -460,6 +469,9 @@ struct telemetry_data {
     std::vector<gpu_device_meta> devices;
     std::vector<uint64_t> kv_read_times_us;
     std::vector<uint64_t> kv_write_times_us;
+    // Client-side GPU data (enumerated from ggml devices + sched-trace)
+    std::vector<gpu_device_meta> client_devices;
+    std::vector<client_backend_timing> client_timings;
 };
 
 // Parse one device_meta object from a substring like:
@@ -553,6 +565,86 @@ static telemetry_data parse_server_telemetry(const fs::path & path) {
         }
     }
     return tel;
+}
+
+// Collect GPU-type devices from ggml registry for client-side metadata.
+static std::vector<gpu_device_meta> collect_client_devices() {
+    std::vector<gpu_device_meta> out;
+    size_t n_dev = ggml_backend_dev_count();
+    fprintf(stderr, ">>> collect_client_devices: %zu total devices registered\n", n_dev);
+    for (size_t i = 0; i < n_dev; ++i) {
+        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+        if (!dev) continue;
+        enum ggml_backend_dev_type dtype = ggml_backend_dev_type(dev);
+        const char * _name = ggml_backend_dev_name(dev);
+        const char * _desc = ggml_backend_dev_description(dev);
+        fprintf(stderr, ">>>   dev[%zu]: name=%s desc=%s type=%d\n", i, _name ? _name : "null", _desc ? _desc : "null", (int)dtype);
+        if (dtype != GGML_BACKEND_DEVICE_TYPE_GPU && dtype != GGML_BACKEND_DEVICE_TYPE_IGPU) continue;
+        gpu_device_meta d;
+        const char * name = ggml_backend_dev_name(dev);
+        d.name = name ? name : "unknown";
+        const char * desc = ggml_backend_dev_description(dev);
+        d.backend = desc ? desc : "unknown";
+        size_t free_mem = 0, total_mem = 0;
+        ggml_backend_dev_memory(dev, &free_mem, &total_mem);
+        d.vram_mib = total_mem / (1024 * 1024);
+        // PCIe info not directly available from props; use 0 as default.
+        d.pcie_gen = 0;
+        d.pcie_width = 0;
+        out.push_back(d);
+    }
+    return out;
+}
+
+// Parse sched-trace to extract per-backend compute timing (graph_compute_async aggregates).
+static std::vector<client_backend_timing> parse_sched_trace_for_client_timing(const fs::path & trace_dir) {
+    std::vector<client_backend_timing> out;
+    fs::path sched_path = trace_dir / "sched-trace.jsonl";
+    std::ifstream in(sched_path);
+    if (!in) return out;
+
+    // Aggregate per backend_id: sum, min, max, count
+    struct agg { uint64_t sum; uint64_t min_val; uint64_t max_val; int count; };
+    std::map<int, agg> backends;
+
+    std::string line;
+    while (std::getline(in, line)) {
+        // Only look at graph_compute_async phases
+        if (line.find("\"graph_compute_async\"") == std::string::npos) continue;
+        // Extract backend
+        size_t pos = line.find("\"backend\"");
+        if (pos == std::string::npos) continue;
+        size_t colon = line.find(':', pos);
+        if (colon == std::string::npos) continue;
+        size_t comma = line.find_first_of(",}", colon + 1);
+        std::string bstr = line.substr(colon + 1, comma - colon - 1);
+        int bid = std::stoi(bstr);
+        // Extract elapsed_us
+        pos = line.find("\"elapsed_us\"");
+        if (pos == std::string::npos) continue;
+        colon = line.find(':', pos);
+        if (colon == std::string::npos) continue;
+        comma = line.find_first_of(",}", colon + 1);
+        std::string estr = line.substr(colon + 1, comma - colon - 1);
+        uint64_t eus = (uint64_t)std::stoull(estr);
+
+        auto & a = backends[bid];
+        a.sum += eus;
+        if (a.count == 0 || eus < a.min_val) a.min_val = eus;
+        if (a.count == 0 || eus > a.max_val) a.max_val = eus;
+        a.count++;
+    }
+
+    for (const auto & kv : backends) {
+        client_backend_timing t;
+        t.backend_id = kv.first;
+        t.avg_us = kv.second.sum / kv.second.count;
+        t.min_us = kv.second.min_val;
+        t.max_us = kv.second.max_val;
+        t.count = kv.second.count;
+        out.push_back(t);
+    }
+    return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -674,35 +766,73 @@ static void write_heatmap_json(const fs::path & path, const heatmap_data & hm) {
 
     f << "\n  },\n";
 
-    // GPU metadata.
+    // GPU metadata: combine server telemetry devices + client-side GPU devices.
     f << "  \"gpu_metadata\": [\n";
+    bool first_dev = true;
+    // Server-side (RPC) devices
     if (hm.has_telemetry && !hm.telemetry.devices.empty()) {
         for (size_t i = 0; i < hm.telemetry.devices.size(); ++i) {
+            if (!first_dev) f << ",\n";
+            first_dev = false;
             const auto & d = hm.telemetry.devices[i];
-            f << "    { \"id\": " << i
+            f << "    { \"id\": " << (int)hm.telemetry.devices.size() + (int)hm.telemetry.client_devices.size() + i
               << ", \"name\": \"" << escape_json_string(d.name) << "\""
               << ", \"backend\": \"" << escape_json_string(d.backend) << "\""
               << ", \"vram_total_mib\": " << d.vram_mib
               << ", \"pci_link_gen\": " << d.pcie_gen
               << ", \"pci_link_width\": " << d.pcie_width
-              << " }";
-            if (i + 1 < hm.telemetry.devices.size()) f << ",";
-            f << "\n";
+              << ", \"source\": \"rpc_server\" }";
         }
     }
-    f << "  ],\n";
+    // Client-side (local) GPU devices
+    for (size_t i = 0; i < hm.telemetry.client_devices.size(); ++i) {
+        if (!first_dev) f << ",\n";
+        first_dev = false;
+        const auto & d = hm.telemetry.client_devices[i];
+        // Match client timing by backend_id (where backend_id == device index)
+        uint64_t avg_us = 0, max_us = 0, min_us = 0;
+        for (const auto & t : hm.telemetry.client_timings) {
+            if (t.backend_id == (int)i) {
+                avg_us = t.avg_us;
+                max_us = t.max_us;
+                min_us = t.min_us;
+                break;
+            }
+        }
+        f << "    { \"id\": " << i
+          << ", \"name\": \"" << escape_json_string(d.name) << "\""
+          << ", \"backend\": \"" << escape_json_string(d.backend) << "\""
+          << ", \"vram_total_mib\": " << d.vram_mib
+          << ", \"pci_link_gen\": " << d.pcie_gen
+          << ", \"pci_link_width\": " << d.pcie_width
+          << ", \"source\": \"client\""
+          << ", \"compute_avg_us\": " << avg_us
+          << ", \"compute_max_us\": " << max_us
+          << ", \"compute_min_us\": " << min_us
+          << " }";
+    }
+    f << "\n  ],\n";
 
     // Summary.
     f << "  \"summary\": {\n";
-    if (hm.has_telemetry && !hm.telemetry.device_timings_us.empty()) {
-        // Straggler: GPU with highest total device time.
-        // device_timings_us is per-backend; index = gpu id.
+    bool has_any_timing = (hm.has_telemetry && !hm.telemetry.device_timings_us.empty())
+                       || !hm.telemetry.client_timings.empty();
+    if (has_any_timing) {
+        // Straggler: GPU with highest avg compute time
         uint64_t max_time = 0;
         int straggler = 0;
+        // Check server telemetry timings
         for (size_t i = 0; i < hm.telemetry.device_timings_us.size(); ++i) {
             if (hm.telemetry.device_timings_us[i] > max_time) {
                 max_time = hm.telemetry.device_timings_us[i];
-                straggler = (int) i;
+                straggler = (int)(hm.telemetry.client_devices.size() + i);
+            }
+        }
+        // Check client timings
+        for (const auto & t : hm.telemetry.client_timings) {
+            if (t.avg_us > max_time) {
+                max_time = t.avg_us;
+                straggler = t.backend_id;
             }
         }
         f << "    \"straggler_gpu\": " << straggler << ",\n";
@@ -886,7 +1016,9 @@ int llama_gpipe_profiler(int argc, char ** argv) {
     llama_backend_init();
     ggml_backend_load_all();
 
+    // Collect client-side GPU device metadata before model load.
     heatmap_data hm;
+    hm.telemetry.client_devices = collect_client_devices();
     hm.git_sha      = llama_commit();
     hm.generated_at = current_timestamp_iso();
     hm.model_path   = cfg.model_path;
@@ -947,11 +1079,16 @@ int llama_gpipe_profiler(int argc, char ** argv) {
     // Ingest server telemetry if requested.
     if (cfg.server_telemetry && cfg.enable_trace) {
         fs::path tel_path = fs::path(cfg.trace_dir) / "server-telemetry.jsonl";
+        // Preserve client-side data that was collected earlier.
+        auto client_devices_saved = std::move(hm.telemetry.client_devices);
         hm.telemetry = parse_server_telemetry(tel_path);
+        hm.telemetry.client_devices = std::move(client_devices_saved);
         hm.has_telemetry = hm.telemetry.valid;
         if (!hm.has_telemetry) {
             fprintf(stderr, "warning: server telemetry unavailable; heatmap kv fields omitted\n");
         }
+        // Also parse sched-trace for client-side per-backend compute timing.
+        hm.telemetry.client_timings = parse_sched_trace_for_client_timing(cfg.trace_dir);
     }
 
     // Write heatmap.
