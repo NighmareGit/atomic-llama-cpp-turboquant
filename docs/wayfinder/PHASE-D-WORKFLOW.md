@@ -145,14 +145,15 @@ docs/
   - Does MTP coupling require layer-local h_prev persistence?
   - What is the KV-ordering model for GPipe-style pipeline?
 
-### D0.4 — Path C C1 Triton Baseline
+### D0.4 — Path C C1 Romulus Baseline
 - **Type:** prototype
-- **Goal:** Establish read-only Path C baseline on triton
-- **Deliverable:** `docs/wayfinder/D0.4-path-c-baseline.md`
+- **Goal:** Establish read-only Path C baseline on romulus dual-GPU (7900 XTX + 3060 Ti)
+- **Deliverable:** `docs/wayfinder/D0.4-romulus-local-baseline.md`
 - **Tasks:**
   - Clone current state to isolated branch
-  - Run `llama-server` on triton `:50054` + `:50055`
-  - Capture baseline metrics (G, overlap, stall)
+  - Run `llama-server` on romulus local dual-GPU
+  - Capture baseline metrics (G, overlap, stall) via `rocm-smi` + `nvidia-smi`
+  - Cluster (triton 5-GPU) deferred to later session
 
 ### D0.5 — Deploy Tag Creation
 - **Type:** task
@@ -214,7 +215,7 @@ On success:
 ## Stage 8: Beyond Mode A — Path C Stepping Stone (D4)
 
 **Entry point:** `docs/wayfinder/D4-PATH-C-AGENT-PLAN.md`  
-**Goal:** Prove server-side scheduling on triton dual-GPU  
+**Goal:** Prove server-side scheduling on romulus dual-GPU (7900 XTX + 3060 Ti); cluster (triton) deferred  
 **Workflow loop:** research → design → spec → prototype → implement → test → review
 
 ## Stage 9: Deeper Pipelining (D5)

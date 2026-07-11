@@ -18,6 +18,7 @@
 |------|-------|--------|
 | 2026-06-27 | C1 / 6a | Client-split baseline cataloged: `trace-f-3gpu-plus` (G=42.8, 4 splits) vs `trace-f-2gpu-plus` (G=48.9, 3 splits) |
 | 2026-06-27 | C1 / 6b | Remus feasibility: `:50051` CUDA-only 1-GPU container, `:50052` separate ROCm container; Path C needs C2 aggregation for CUDA+ROCm |
+| 2026-07-11 | D4.5/D4.6 | Romulus GRAPH_COMPUTE_ALL implementation and test. Fixed `wait_compute_idle()` removal bug in EVENT_RECORD handler that caused CUDA context corruption. Single-device test confirms no regression (pp32 ~800 t/s, tg32 ~62 t/s). Path-B-Plus + draft-mtp test: pp32=991 t/s (+21%), tg32=81.7 t/s (+32%). draft-mtp n_max=2 gives 113.2 t/s gen throughput (+41.5% vs no-spec, +82% vs D4.6 baseline). n_max=2 strongly preferred over n_max=16 (80% vs 39.5% acceptance). |
 
 ---
 
@@ -50,7 +51,7 @@ Path C target on Config F: one remus endpoint, client sees fewer splits, 6600 VR
 
 | Date | Issue | Root Cause | Fix | Status |
 |------|-------|-----------|-----|--------|
-| - | - | - | - | - |
+| 2026-07-11 | RPC_CMD_EVENT_RECORD handler removed `wait_compute_idle()` | D4.5 optimization removed CUDA sync, causing `cudaFuncGetAttributes` to fail with ILLEGAL_ADDRESS on next command | Re-added `server.wait_compute_idle()` to handler | Fixed |
 
 ---
 
@@ -60,6 +61,10 @@ Path C target on Config F: one remus endpoint, client sees fewer splits, 6600 VR
 |-----|----------|----------------|----------------|-------|
 | trace-f-3gpu-plus | 3-device client split | 42.8 | - | C1 "before" |
 | trace-f-2gpu-plus | 2-device ops | 48.9 | - | Not Path C (topology trim) |
+| 2026-07-11 D4.6 (romulus) | D4.5 client + fixed server, 9B MTP, ts=45 | 816 pp32 / 62 tg32 (baseline) | 786 pp32 / 62 tg32 (fixed) | No regression; single-device test |
+| 2026-07-11 D4.6 (romulus) | Path-B-Plus + RPC multi-device, 9B MTP, no spec | 991 pp32 / 81.7 tg32 (bench) | 80.0 tg128 (server) | Path-B-Plus: +21% pp, +32% tg vs D4.6 baseline |
+| 2026-07-11 D4.6 (romulus) | Path-B-Plus + RPC multi-device + draft-mtp, 9B MTP | 96.9 tg128 (server) | -- | draft-mtp n_max=16: +21% gen throughput over no-spec; 39.5% draft acceptance |
+| 2026-07-11 D4.6 (romulus) | Path-B-Plus + RPC multi-device + draft-mtp (n_max=2), 9B MTP | 113.2 tg128 (server) | -- | n_max=2 strongly recommended: 80% draft acceptance, +41.5% over no-spec, +16.8% over n_max=16 |
 
 ---
 

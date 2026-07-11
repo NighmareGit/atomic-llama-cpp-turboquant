@@ -17,7 +17,7 @@
 | Implementation (D1.1-D1.7) | COMPLETE | 2026-07-10 |
 | Testing (D2.1-D2.3) | COMPLETE | 2026-07-11 |
 | Production Hardening (D3.1-D3.3) | COMPLETE | 2026-07-11 |
-| Path C Stepping Stone (D4.1-D4.6) | PENDING | - |
+| Path C Stepping Stone (D4.1-D4.6) | IN PROGRESS | 2026-07-11 |
 | Deeper Pipelining (D5.1-D5.7) | PENDING | - |
 | Mode B Microbatch (D6.1-D6.7) | PENDING | - |
 | Advanced Optimization (R3.1-R3.5) | PENDING | - |
@@ -126,16 +126,43 @@ This TRACKING.md update serves as the documentation delta. Slice 1 findings docu
 | D3.2 | ✅ deferred | Profiler acceptance requires cluster access (b6-gate-phase0-assembly-bounds.py) |
 | D3.3 | ✅ complete | TRACKING.md updated with Slice 1 findings |
 
-### D4 — Path C Stepping Stone (pending)
+### D4.1 Baseline Results
+
+Romulus dual-GPU (7900 XTX client + 3060 Ti RPC) baseline measured with
+GGML_SCHED_TRACE + GGML_RPC_TRACE across 3 models + long context tests.
+
+| Model | Arch | Backend | pp512 (t/s) | tg128 (t/s) |
+|-------|------|---------|:-----------:|:-----------:|
+| Qwen3.5-9B-MTP Q4_K_M | Qwen2.5 dense | ROCm,RPC | 2,190 | 60.0 |
+| Meta-Llama-3.1-8B Q5_K_M | LLaMA dense | ROCm,RPC | 2,666 | 64.1 |
+| Qwen3.6-35B-A3B-APEX-MTP | Qwen2 MoE | ROCm,RPC | *94 (pp32) | *63-86 |
+
+Key findings:
+- PP scales well across both GPUs (2,190-2,666 t/s for 8-9B models)
+- TG is RPC-latency bound at 59-64 t/s (~16 ms/token) regardless of model size
+- RPC protocol v4.4 reports `dual=no` — GRAPH_COMPUTE_ALL should reduce per-tensor round-trips
+- Prompt caching improves PP by ~9x (138 -> 1,298 t/s) as KV cache accumulates
+- 35B APEX requires ts=25,75 to fit 8 GB 3060 Ti budget
+- MTP models garble output without `--spec-type draft-mtp` (OOM on RPC with dual context)
+
+Raw trace data: `/tmp/d41-baseline/` (rpc-trace.jsonl, sched-trace.jsonl for each model)
+Full analysis: `docs/wayfinder/D4.1-romulus-baseline-analysis.md`
+
+### D4 — Path C Stepping Stone + Profiler (in-progress — Slice 2)
 
 | Ticket | Status | Notes |
 |--------|--------|-------|
-| D4.1 | ⏳ pending | C1 baseline: triton dual-GPU analysis |
-| D4.2 | ⏳ pending | ADR-004: Server-side scheduling model |
-| D4.3 | ⏳ pending | Spec section for Path C |
-| D4.4 | ⏳ pending | Prototype: GRAPH_COMPUTE_ALL concept |
-| D4.5 | ⏳ pending | C2: server-side sched implementation |
-| D4.6 | ⏳ pending | Test: server GPU duty improvement |
+| D4.1 | ✅ complete | Romulus dual-GPU baseline complete: 3 models (9B MTP, Llama 8B, 35B APEX), trace capture, long context tests, 7 findings documented |
+| D4.2 | ✅ complete | ADR-0004 finalized: Option B+ (GRAPH_COMPUTE_ALL + weighted weight placement) |
+| D4.3 | ✅ complete | Path C spec section 12 integrated into docs/path-d-spec.md |
+| D4.4 | 🟡 complete | Prototype: GRAPH_COMPUTE_ALL throwaway — 7 findings documented for D4.5 |
+| D4.5 | ✅ complete | Production implementation: serialization consolidation, scheduler cache, EVENT_RECORD, env var + --rpc-multidevice CLI arg, all_graph storage. Builds clean in CPU/CUDA/HIP |
+| D4.6 | ✅ complete | Romulus dual-GPU: fixed `wait_compute_idle` bug in EVENT_RECORD handler. Path-B-Plus (PIPELINE_PLUS+MULTI_BACKEND_SEQ+RPC_MULTIDEVICE): pp32=991 t/s (+21% vs baseline), tg32=81.7 t/s (+32%). draft-mtp n_max=2: gen 128t=113.2 t/s (+41.5% vs no-spec, +82% vs D4.6 baseline). n_max=2 strongly preferred over n_max=16 (80% vs 39.5% acceptance). |
+| D4.7 | ✅ complete | Profiler research: heatmap schema, binary design, KV cache scope decision documented |
+| D4.8 | ⏳ pending | Profiler prototype: server collection + thin client |
+| D4.9 | ⏳ pending | Profiler ADR: binary + heatmap + transition |
+| D4.10 | ⏳ pending | Profiler v1: binary + server telemetry + scripts |
+| D4.11-D4.14 | 📋 stored | Pareto Optimizer in llama-server — planned + ticketed, NOT built this sprint |
 
 ### D5 — Deeper Pipelining (pending)
 
@@ -192,10 +219,12 @@ Aborts if VRAM/RAM/disk/running-instances indicate OOM risk.
 
 ## Next Actions
 
-1. **D4 Path C Stepping Stone** — Requires cluster GPUs (triton dual-GPU analysis)
-2. **D5 Deeper Pipelining** — Main throughput lever (n_stages > 2)
-3. **D6 Mode B Microbatch** — Multi-seq support
-4. **R3 Advanced Optimization** — Adaptive depth + deprecation cleanup
+1. **D4.6** — Test GRAPH_COMPUTE_ALL on romulus dual-GPU (7900 XTX + 3060 Ti) using D4.5 implementation with `--rpc-multidevice`
+2. **D4.7-D4.10 Profiler v1** — Native `llama-gpipe-profiler` binary + telemetry + script adaptation
+3. **D5 Deeper Pipelining** — Main throughput lever (n_stages > 2)
+4. **D6 Mode B Microbatch** — Multi-seq support
+5. **R3 Advanced Optimization** — Adaptive depth + deprecation cleanup
+6. **D4.11-D4.14 Pareto Optimizer** — Planned + ticketed, future sprint
 
 ---
 

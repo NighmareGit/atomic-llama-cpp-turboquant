@@ -40,12 +40,15 @@ Documentation Phase (/wayfinder or manual)
 | Specification | ✅ complete | `docs/path-d-spec.md` |
 | Work Breakdown | ✅ complete | `docs/tickets/path-d-tickets.md` |
 | Implementation (D1) | ✅ complete | D1.1-D1.7 tickets |
-| Testing (D2) | ⏳ pending | D2.1-D2.3 tickets |
-| Production Hardening (D3) | ⏳ pending | D3.1-D3.3 tickets |
-| Path C Stepping Stone (D4) | ⏳ pending | D4.1-D4.6 tickets |
+| Testing (D2) | ✅ complete | D2.1-D2.3 — RPC event bug fixed, dual-GPU validated |
+| Production Hardening (D3) | ✅ complete | D3.1-D3.3 — TRACKING.md updated |
+| Path C Stepping Stone (D4) | 🔄 in-progress | D4.1-D4.6 core + D4.7-D4.10 profiler v1 (romulus local) |
+| Pareto Optimizer (D4 ext.) | 📋 planned | D4.11-D4.14 — ticketed, NOT built this sprint |
 | Deeper Pipelining (D5) | ⏳ pending | D5.1-D5.7 tickets |
 | Mode B Microbatch (D6) | ⏳ pending | D6.1-D6.7 tickets |
 | Advanced Optimization (R3) | ⏳ pending | R3.1-R3.5 tickets |
+
+**Hardware:** Romulus local — AMD 7900 XTX (client, ROCm) + NVIDIA 3060 Ti (RPC server, CUDA). Models at `/mnt/models`. GPU telemetry via `rocm-smi` + `nvidia-smi`. Cluster (triton 5-GPU, remus) deferred to later sessions.
 
 ---
 
@@ -96,7 +99,8 @@ Each beyond-phase follows the workflow loop: research → design → spec → pr
 
 | Phase | Tickets | Agent Plan |
 |-------|---------|------------|
-| D4 Path C Stepping Stone | D4.1-D4.6 | `D4-PATH-C-AGENT-PLAN.md` |
+| D4 Path C + Profiler v1 | D4.1-D4.10 | `D4-PATH-C-AGENT-PLAN.md` (romulus local) |
+| D4 Pareto Optimizer | D4.11-D4.14 | Stored in `docs/tickets/path-d-tickets.md` — future sprint |
 | D5 Deeper Pipelining | D5.1-D5.7 | `D5-DEEPER-PIPELINE-AGENT-PLAN.md` |
 | D6 Mode B Microbatch | D6.1-D6.7 | `D6-MODE-B-AGENT-PLAN.md` |
 | R3 Advanced Optimization | R3.1-R3.5 | `R3-ADVANCED-OPT-AGENT-PLAN.md` |

@@ -287,21 +287,24 @@
 
 ## Path C Stepping Stone Tickets
 
-### D4.1 -- C1 Baseline: Triton Dual-GPU Analysis
+### D4.1 -- C1 Baseline: Romulus Dual-GPU Analysis
 
 **Type:** research  
 **Blocks:** D4.2  
 **Blocked by:** D3.3
 
-**Goal:** Establish read-only Path C baseline on triton `:50054`+`:50055`.
+**Goal:** Establish read-only Path C baseline on romulus dual-GPU (7900 XTX client + 3060 Ti RPC server).
 
 **Acceptance Criteria:**
-- [ ] Per-device RPC splits documented
-- [ ] RTT count and server GPU util captured
-- [ ] Baseline artifact in `docs/wayfinder/D4.1-triton-baseline-analysis.md`
+- [ ] Per-device RPC splits documented for 7900 XTX + 3060 Ti
+- [ ] RTT counts and GPU utilization captured (rocm-smi for AMD, nvidia-smi for NVIDIA)
+- [ ] Models loaded from `/mnt/models`
+- [ ] Baseline artifact in `docs/wayfinder/D4.1-romulus-baseline-analysis.md`
 
 **Implementation Notes:**
-- Output: `docs/wayfinder/D4.1-triton-baseline-analysis.md`
+- Hardware: romulus — AMD 7900 XTX (client, ROCm), NVIDIA 3060 Ti (RPC server, CUDA)
+- Cluster (triton 5-GPU) deferred to later session
+- Output: `docs/wayfinder/D4.1-romulus-baseline-analysis.md`
 - Reference: DESIGN-path-d-layer-pipeline.md section 5 (D1)
 
 ---
@@ -386,17 +389,20 @@
 
 **Type:** test  
 **Blocks:** D5.1  
-**Blocked by:** D4.5
+**Blocked by:** D4.5  
+**Status:** complete
 
 **Goal:** Verify server GPU duty improvement from C2.
 
 **Acceptance Criteria:**
-- [ ] Server GPU duty cycle improved vs C1 baseline
-- [ ] G non-regression confirmed
-- [ ] Results documented in TRACKING.md
+- [x] Server GPU duty cycle improved vs C1 baseline (Path-B-Plus: tg32=81.7 t/s vs D4.6 baseline 62.0 t/s = +32%)
+- [x] G non-regression confirmed (no regression vs D4.5 baseline)
+- [x] Results documented in TRACKING.md
+- [x] Results documented in D4.6-romulus-rpc-multidevice-test.md
 
-**Implementation Notes:**
-- Metrics: server GPU util, G (t/s), duty cycle
+**Additional finding:** draft-mtp self-speculation with n_max=2 adds +41.5% gen throughput (113.2 t/s) over no-spec, for a combined +82% over the D4.6 baseline.
+
+**Data:** romulus dual-GPU (7900 XTX + 3060 Ti RPC), Qwen3.5-9B-MTP-Q4_K_M.gguf
 
 ---
 
@@ -763,4 +769,217 @@ D1.1 -> D1.2 -> D1.3 -> D1.4 -> D1.5 -> D1.6 -> D1.7 -> D2.1 -> D2.2 -> D2.3
 
 ---
 
-*Work breakdown extended — D2-R3 phases added*
+## Profiler Architecture (D4.7–D4.14)
+
+### Scope Boundary
+
+| Scope | Tickets | Build Now? |
+|-------|---------|------------|
+| Profiler data collection + native binary v1 | D4.7-D4.10 | **Yes** — this sprint |
+| Pareto Optimizer in `llama-server` | D4.11-D4.14 | **No** — plan + ticket only |
+
+Path C introduces `GRAPH_COMPUTE_ALL` with a synchronous response path. These tickets
+build a native C++ profiler (`llama-gpipe-profiler`, like `llama-bench`) that produces
+execution heatmaps. The heatmap feeds a future Pareto optimizer (D4.11-D4.14, stored
+but not built) that lives inside `llama-server`'s governor/dispatcher.
+
+Design decisions captured in `docs/wayfinder/IMPLEMENTATION-PLAN.md` Profiler
+Architecture section: standalone binary, KV cache profiling included, task-aware
+(pp/tg), Python profiler stays alive during transition.
+
+---
+
+### D4.7 — Profiler Research: Binary Design + Heatmap Schema
+
+**Type:** research
+**Blocks:** D4.8
+**Blocked by:** none (parallel to D4.1)
+
+**Goal:** Survey existing infrastructure and design the profiler binary — CLI surface,
+heatmap schema, and KV cache profiling scope.
+
+**Acceptance Criteria:**
+- [ ] `llama-bench` source structure analyzed as pattern template
+- [ ] Client-side trace formats mapped: `sched-trace.jsonl`, `rpc-trace.jsonl`
+- [ ] Existing profiler pipeline mapped: `llama-pipeline-profiler`, `diagnose.json`, gate scripts
+- [ ] Binary CLI designed: `--model`, `--endpoints`, `--tasks pp,tg`, `--output`, `--repeat`, `--warmup`
+- [ ] Heatmap JSON schema drafted: per-layer timing, GPU util, KV cache timing, task stratification
+- [ ] KV cache scope decided: instrument `llama_kv_cache` directly or collect via RPC telemetry
+- [ ] Task-awareness: how to drive pp vs tg workloads through the profiler
+- [ ] Output: `docs/wayfinder/D4.7-profiler-research.md`
+
+---
+
+### D4.8 — Profiler Prototype: Server Collection + Thin Client
+
+**Type:** prototype
+**Blocks:** D4.9
+**Blocked by:** D4.7
+
+**Goal:** Throwaway prototype validating low-overhead server-side telemetry collection
+with KV cache fields, plus a thin C client to validate the end-to-end pipeline.
+
+**Acceptance Criteria:**
+- [ ] Server-side overhead measured: collection + formatting cost vs baseline
+- [ ] `rpc_msg_server_telemetry` wire format prototyped with all 6 fields (including KV)
+- [ ] KV cache read/write timing capture validated on server side
+- [ ] Thin C client connects to RPC endpoints, exercises `GRAPH_COMPUTE_ALL`, parses telemetry, writes raw JSON
+- [ ] End-to-end pipeline validated before full profiler binary build
+- [ ] Key risks identified (or ruled out)
+- [ ] Output: `docs/wayfinder/D4.8-profiler-prototype-findings.md`
+
+**Implementation Notes:**
+- Skill: `/prototype`
+- Throwaway: keep findings, delete code
+
+---
+
+### D4.9 — Profiler ADR: Binary + Heatmap + Transition
+
+**Type:** design
+**Blocks:** D4.10
+**Blocked by:** D4.8
+
+**Goal:** Decide the profiler architecture — standalone binary design, heatmap format,
+telemetry protocol, and Python-to-native transition plan.
+
+**Acceptance Criteria:**
+- [ ] Binary design decided: standalone `llama-gpipe-profiler`, patterned after `llama-bench`
+- [ ] CLI surface decided: `--model`, `--endpoints`, `--tasks`, `--output`, `--repeat`, `--warmup`
+- [ ] CMake target location decided: `tools/llama-gpipe-profiler/`
+- [ ] Telemetry frame format and versioning strategy decided
+- [ ] Opt-in mechanism decided: `GGML_RPC_SERVER_TELEMETRY=0|1`
+- [ ] Heatmap JSON schema finalized with task stratification, KV cache fields
+- [ ] Client ingestion path decided: `server-telemetry.jsonl`
+- [ ] Transition plan: Python profiler stays alive; phased deprecation milestones defined
+- [ ] Future hook: forward-compatible schema for Pareto optimizer (D4.11-D4.14)
+- [ ] Output: `docs/adr/0004b-profiler-architecture.md` or section in `docs/adr/0004-server-side-scheduling.md`
+
+---
+
+### D4.10 — Profiler Implementation v1: Binary + Server Telemetry + Scripts
+
+**Type:** implementation
+**Blocks:** D5.1 (feeds split timing analysis), D4.11 (future Pareto)
+**Blocked by:** D4.4 (prototype), D4.5 (C2 implementation), D4.9 (ADR)
+
+**Goal:** Implement v1 of the profiler — server telemetry paths, native profiler binary,
+existing script adaptation. Keep Python profiler working.
+
+**Acceptance Criteria:**
+- [ ] Server: per-backend timing collected after `ggml_backend_sched_graph_compute()`
+- [ ] Server: KV cache read/write timing collected per slot
+- [ ] Server: `rpc_msg_server_telemetry` with 6 fields, appended to `GRAPH_COMPUTE_ALL` response
+- [ ] Server: gated by `GGML_RPC_SERVER_TELEMETRY` env var
+- [ ] Client: telemetry frame parsed, written to `server-telemetry.jsonl`
+- [ ] Profiler binary: `llama-gpipe-profiler` CMake target in `tools/llama-gpipe-profiler/`
+- [ ] Profiler binary: CLI working (`--model`, `--endpoints`, `--tasks pp,tg`, `--output`, `--repeat`, `--warmup`)
+- [ ] Profiler binary: task orchestration drives real inference through RPC endpoints
+- [ ] Profiler binary: synthesizes task-stratified heatmap JSON
+- [ ] Scripts: `b6-gate-phase0-assembly-bounds.py` consumes server telemetry fields when present
+- [ ] Scripts: `diagnose.json` schema extended with all 6 telemetry fields (optional)
+- [ ] Scripts: existing `llama-pipeline-profiler` continues working; new fields are optional extensions
+- [ ] Files: `ggml/src/ggml-rpc/ggml-rpc.cpp` (server + client), `tools/llama-gpipe-profiler/`, `tools/llama-pipeline-profiler/`
+
+---
+
+### Telemetry Field Specification
+
+| Field | Type | Source | Consumer |
+|-------|------|--------|----------|
+| `device_timings_us[]` | `uint64[]` | Scheduler after `graph_compute` per backend | D5.1 straggler ID, R3 depth tuning, Pareto optimizer |
+| `layer_assignments[]` | `int32[]` | Split output (layer start per device) | D5.1 sub-stage boundary mapping, Pareto placement |
+| `copy_times_us[]` | `uint64[]` | PCIe copy duration per peer pair | D5.1 copy vs compute attribution |
+| `device_meta[]` | `struct {name, vram, backend, pcie}` | Backend init at startup | Trace context, hardware regression, Pareto env analysis |
+| `kv_read_times_us[]` | `uint64[]` | KV cache read per slot | Pareto optimizer: hot KV page placement |
+| `kv_write_times_us[]` | `uint64[]` | KV cache write per slot | Pareto optimizer: KV eviction cost modeling |
+
+---
+
+### Future: Server-Side Pareto Optimizer (D4.11–D4.14)
+
+> **Planned + ticketed, NOT built in current sprint.**
+
+The Pareto optimizer lives inside `llama-server`'s governor/dispatcher. It consumes
+the heatmap JSON from `llama-gpipe-profiler` and applies the 80/20 rule: hot 20% of
+layers placed on fast 20% of GPUs. Cold layers become a "holding tank" in VRAM or
+system RAM. The optimizer runs automatically — the server governor analyzes its
+environment on startup and decides placement without external orchestration.
+
+---
+
+### D4.11 — Pareto Optimizer Research: Governor Integration Points
+
+**Type:** research
+**Blocks:** D4.12
+**Blocked by:** none (future sprint)
+
+**Goal:** Design the Pareto optimizer integration into `llama-server` governor/dispatcher.
+
+**Acceptance Criteria:**
+- [ ] Governor integration points identified (startup, re-config, periodic re-profile)
+- [ ] Placement algorithm designed: hot-layer identification, GPU ranking, assignment
+- [ ] 80/20 rule formalized: what counts as "hot" and "fast"
+- [ ] KV cache interaction model: hot KV pages placement alongside hot layers
+- [ ] Adaptive re-profiling strategy: when to re-measure and re-place
+- [ ] Output: `docs/wayfinder/D4.11-pareto-governor-research.md`
+
+---
+
+### D4.12 — Pareto Optimizer Prototype
+
+**Type:** prototype
+**Blocks:** D4.13
+**Blocked by:** D4.11
+
+**Goal:** Throwaway prototype validating server-side placement decisions from heatmap input.
+
+**Acceptance Criteria:**
+- [ ] Server reads heatmap JSON and computes Pareto placement
+- [ ] 80/20 rule validated on real cluster with real heatmap data
+- [ ] Hot-on-fast placement shows measurable improvement over static assignment
+- [ ] Edge cases handled: single GPU, homogenous GPUs, missing heatmap
+- [ ] Output: `docs/wayfinder/D4.12-pareto-prototype-findings.md`
+
+---
+
+### D4.13 — Pareto Optimizer ADR
+
+**Type:** design
+**Blocks:** D4.14
+**Blocked by:** D4.12
+
+**Goal:** Decide the Pareto optimizer placement model and transition from static config.
+
+**Acceptance Criteria:**
+- [ ] Placement model: hot/cold tier definitions, GPU ranking algorithm
+- [ ] Configuration model: how the optimizer output integrates with existing split configs
+- [ ] Fallback behavior: what happens when heatmap is unavailable or stale
+- [ ] Transition plan: from manual `--rpc-split` to automatic Pareto placement
+- [ ] Output: `docs/adr/0005-pareto-optimizer.md`
+
+---
+
+### D4.14 — Pareto Optimizer Implementation
+
+**Type:** implementation
+**Blocks:** none (terminal ticket)
+**Blocked by:** D4.10 (profiler v1), D4.13 (ADR)
+
+**Goal:** Build the Pareto optimizer into `llama-server` governor/dispatcher.
+
+**Acceptance Criteria:**
+- [ ] Server governor analyzes environment on startup (GPU count, PCIe topology, model arch)
+- [ ] Server consumes heatmap JSON from `llama-gpipe-profiler`
+- [ ] Hot 20% layers identified; fast 20% GPUs ranked
+- [ ] Hot-on-fast placement computed and applied to layer split
+- [ ] Cold layers placed in VRAM holding tank or system RAM
+- [ ] KV cache hot pages placed alongside hot layers for locality
+- [ ] Adaptive re-profiling: periodic or event-driven re-analysis
+- [ ] Fallback to static `--rpc-split` when no heatmap available
+- [ ] G non-regression vs static assignment; measurable improvement on heterogeneous clusters
+- [ ] Files: `tools/server/`, `ggml/src/ggml-rpc/` (governor integration)
+
+---
+
+*Work breakdown extended - D2-R3 phases added*

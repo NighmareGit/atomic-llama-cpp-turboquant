@@ -1,14 +1,14 @@
 # D4 Agent Plan — Path C Stepping Stone
 
 **Phase:** D4 (Path C Stepping Stone)  
-**Goal:** Prove server-side scheduling on triton's co-localized dual-GPU  
+**Goal:** Prove server-side scheduling on romulus dual-GPU (7900 XTX + 3060 Ti)  
 **Agent pattern:** research → design → spec → prototype → implement → test → review (loop up to 3x)
 
 ---
 
 ## Mission Statement
 
-Establish whether server-side scheduling on triton's co-localized GPUs (`:50054` 3090 + `:50055` 3070) is feasible and beneficial, before attempting deeper client-side pipelining (D5). This is a de-risking phase: smaller blast radius, localized to one node.
+Establish whether server-side scheduling on romulus's dual-GPU setup (AMD 7900 XTX client + NVIDIA 3060 Ti RPC server, models at `/mnt/models`) is feasible and beneficial, before attempting deeper client-side pipelining (D5). This is a de-risking phase: smaller blast radius, localized to one machine. Cluster deployment (triton 5-GPU) is deferred to a later session.
 
 ## Pre-conditions
 
@@ -32,9 +32,9 @@ Establish whether server-side scheduling on triton's co-localized GPUs (`:50054`
 ### D4.1 — C1 Baseline (Research)
 
 1. Safety check: `bash scripts/safety-check.sh`
-2. Document current per-device RPC splits on triton
-3. Capture RTT count and server GPU utilization
-4. Write findings to `docs/wayfinder/D4.1-triton-baseline-analysis.md`
+2. Document current per-device RPC splits on romulus (7900 XTX + 3060 Ti)
+3. Capture RTT count and GPU utilization (`rocm-smi` for AMD, `nvidia-smi` for NVIDIA)
+4. Write findings to `docs/wayfinder/D4.1-romulus-baseline-analysis.md`
 5. Commit + push
 
 ### D4.2 — ADR-0004 (Design)
@@ -53,7 +53,7 @@ Establish whether server-side scheduling on triton's co-localized GPUs (`:50054`
 ### D4.4 — Prototype
 
 1. Write throwaway code to test `GRAPH_COMPUTE_ALL` concept
-2. Answer: is server-side scheduling feasible on triton?
+2. Answer: is server-side scheduling feasible on romulus dual-GPU?
 3. Document findings (keep findings, delete code)
 4. Commit + push
 
@@ -67,7 +67,7 @@ Establish whether server-side scheduling on triton's co-localized GPUs (`:50054`
 ### D4.6 — Test
 
 1. Safety check: `bash scripts/safety-check.sh`
-2. Run C2 on triton, compare vs C1 baseline
+2. Run C2 on romulus, compare vs C1 baseline
 3. Verify: server GPU duty improved, G non-regression
 4. Document results in TRACKING.md
 5. Commit + push

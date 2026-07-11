@@ -161,7 +161,7 @@ After D2 testing completes, the following phases extend Mode A into the full GPi
 | Phase | Goal | Agent Plan |
 |-------|------|------------|
 | **D3** Production Hardening | Make Mode A deployable | Tickets D3.1-D3.3 |
-| **D4** Path C Stepping Stone | Server-side sched on triton dual-GPU | `D4-PATH-C-AGENT-PLAN.md` |
+| **D4** Path C Stepping Stone | Server-side sched on romulus dual-GPU (7900 XTX + 3060 Ti) | `D4-PATH-C-AGENT-PLAN.md` |
 | **D5** Deeper Pipelining | n_stages > 2, per-backend sub-stages | `D5-DEEPER-PIPELINE-AGENT-PLAN.md` |
 | **D6** Mode B Microbatch | Multi-seq pipeline sharing | `D6-MODE-B-AGENT-PLAN.md` |
 | **R3** Advanced Optimization | Adaptive depth + deprecation cleanup | `R3-ADVANCED-OPT-AGENT-PLAN.md` |

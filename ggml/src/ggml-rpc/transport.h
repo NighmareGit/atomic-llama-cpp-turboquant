@@ -10,6 +10,7 @@ typedef std::shared_ptr<socket_t> socket_ptr;
 static constexpr size_t MAX_CHUNK_SIZE = 1024ull * 1024ull * 1024ull; // 1 GiB
 static constexpr size_t RPC_CONN_CAPS_SIZE = 24;
 static constexpr uint8_t  RPC_CAP_TRACE_ID     = 1u << 0; // for trace_id in EVENT_RECORD (proto patch 3+)
+static constexpr uint8_t  RPC_CAP_MULTI_DEVICE = 1u << 1; // Path C: server-side multi-GPU scheduling
 
 struct socket_t {
     ~socket_t();
@@ -30,6 +31,8 @@ struct socket_t {
     socket_ptr rsp_channel;
     // Set after HELLO (patch 3+ or RPC_CAP_TRACE_ID): trace_id carried in EVENT_RECORD (20B wire)
     bool server_supports_trace_id = false;
+    // Path C: server supports GRAPH_COMPUTE_ALL (multi-device scheduling)
+    bool server_supports_multi_device = false;
 
     static socket_ptr create_server(const char * host, int port);
     static socket_ptr connect(const char * host, int port);

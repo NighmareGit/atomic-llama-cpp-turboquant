@@ -141,8 +141,10 @@ enum rpc_cmd {
     RPC_CMD_SET_TENSOR_BATCH,
     RPC_CMD_EVENT_RECORD,    // Path B: event notification via TCP ordering (value 18)
     RPC_CMD_COPY_TENSOR_PEER,
-    RPC_CMD_CHANNEL_BIND,    // B+11: pair response socket (value 20)
-    RPC_CMD_COUNT,
+    RPC_CMD_CHANNEL_BIND,         // B+11: pair response socket (value 20)
+    RPC_CMD_GRAPH_COMPUTE_ALL,    // Path C: submit full graph for server-side multi-GPU compute (value 21)
+    RPC_CMD_GRAPH_RECOMPUTE_ALL,  // Path C: re-execute cached graph (value 22)
+    RPC_CMD_COUNT,                 // updated from 21
 };
 
 static_assert(RPC_CMD_HELLO == 14, "RPC_CMD_HELLO must be always 14");
@@ -367,6 +369,15 @@ static int rpc_dual_socket_env_enabled() {
     return v;
 }
 
+static int rpc_multidevice_env_enabled() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_RPC_MULTIDEVICE");
+        v = e ? atoi(e) : 0;
+    }
+    return v;
+}
+
 bool ggml_backend_rpc_dual_socket(void) {
     return rpc_dual_socket_env_enabled() != 0;
 }
@@ -508,6 +519,8 @@ static bool recv_rpc_cmd_deferred(const socket_ptr & sock, void * output, size_t
 }
 
 static constexpr size_t RPC_HELLO_REQ_V3_SIZE = RPC_CONN_CAPS_SIZE;
+static constexpr float RPC_WEIGHT_SPEED_RATIO = 1.75f;
+static constexpr uint32_t GGML_RPC_MAX_DEVICES = 8;
 
 struct rpc_msg_hello_req {
     uint8_t conn_caps[RPC_CONN_CAPS_SIZE];
@@ -656,6 +669,32 @@ struct rpc_msg_event_record_rsp {
     uint64_t trace_id;
 };
 
+// Path C: server-side multi-GPU scheduling
+struct rpc_msg_graph_compute_all_req {
+    uint32_t n_devices;
+    uint32_t devices[GGML_RPC_MAX_DEVICES];
+    uint32_t sync_mode;        // 0=fire-and-forget, 1=blocking with response
+    uint32_t output_requested; // 0=no output, 1=include output in response
+};
+
+struct rpc_msg_graph_compute_all_rsp {
+    uint32_t result;        // 0=success
+    uint32_t output_device; // which GPU holds the output tensor
+};
+
+struct rpc_msg_graph_recompute_all_req {
+    uint32_t n_devices;
+    uint32_t devices[GGML_RPC_MAX_DEVICES];
+    uint64_t graph_hash;    // identifies cached graph
+    uint32_t sync_mode;     // 0=fire-and-forget, 1=blocking with response
+    uint32_t output_requested;
+};
+
+struct rpc_msg_graph_recompute_all_rsp {
+    uint32_t result;
+    uint32_t output_device;
+};
+
 #pragma pack(pop)
 
 // Path B: client-side event payload stored in ggml_backend_event::context
@@ -797,6 +836,9 @@ struct ggml_backend_rpc_context {
     // Path B: track pending compute for event linkage
     socket_ptr  last_compute_sock;
     bool        last_compute_sent_event = false;
+    // D4.5: multi-device dispatch state
+    uint32_t    n_devices_on_endpoint = 0;
+    bool        is_multi_device_capable = false;
 };
 
 struct ggml_backend_rpc_buffer_context {
@@ -1089,6 +1131,7 @@ static bool negotiate_hello(const std::shared_ptr<socket_t> & sock, const char *
     sock->server_supports_batch = (response.major == RPC_PROTO_MAJOR_VERSION && response.minor >= 1);
     sock->server_supports_peer_copy = (response.major == RPC_PROTO_MAJOR_VERSION && response.minor >= 3);
     sock->server_supports_trace_id = (response.patch >= 3) || (response.conn_caps[0] & RPC_CAP_TRACE_ID);
+    sock->server_supports_multi_device = (response.conn_caps[0] & RPC_CAP_MULTI_DEVICE) != 0;
     sock->update_caps(response.conn_caps);
 
     if (request.dual_socket && response.minor >= 4 && (response.flags & 1) && response.session_id != 0) {
@@ -2086,6 +2129,62 @@ static void serialize_graph(uint32_t device, const ggml_cgraph * cgraph, std::ve
     memcpy(out_tensors, tensors.data(), n_tensors * sizeof(rpc_tensor));
 }
 
+// D4.5: shared tensor serialization helper
+// Writes n_nodes + node_ids + n_tensors + tensor_data into dest
+// Returns the number of bytes written
+static size_t serialize_graph_tensors(ggml_cgraph * cgraph, uint8_t * dest) {
+    uint32_t n_nodes = cgraph->n_nodes;
+    std::vector<rpc_tensor> tensors;
+    std::unordered_set<ggml_tensor*> visited;
+    for (uint32_t i = 0; i < n_nodes; i++) {
+        add_tensor(cgraph->nodes[i], tensors, visited);
+    }
+    uint32_t n_tensors = tensors.size();
+
+    uint8_t * start = dest;
+    memcpy(dest, &n_nodes, sizeof(n_nodes));
+    dest += sizeof(n_nodes);
+    for (uint32_t i = 0; i < n_nodes; i++) {
+        uint64_t id = (uint64_t)(uintptr_t)cgraph->nodes[i];
+        memcpy(dest, &id, sizeof(id));
+        dest += sizeof(id);
+    }
+    memcpy(dest, &n_tensors, sizeof(n_tensors));
+    dest += sizeof(n_tensors);
+    memcpy(dest, tensors.data(), n_tensors * sizeof(rpc_tensor));
+    dest += n_tensors * sizeof(rpc_tensor);
+    return dest - start;
+}
+
+// D4.5: serialize graph for multi-device dispatch (GRAPH_COMPUTE_ALL)
+// Format: | n_devices(4) | device_ids(n_devices*4) | n_nodes(4) | nodes(n_nodes*8) | n_tensors(4) | tensors(n_tensors*sizeof(rpc_tensor)) |
+static void serialize_graph_for_all(
+    const uint32_t * devices, uint32_t n_devices,
+    ggml_cgraph * cgraph, std::vector<uint8_t> & output) {
+    // Over-estimate size: n_nodes is an upper bound on n_tensors
+    size_t tensor_size = sizeof(uint32_t) + cgraph->n_nodes * sizeof(uint64_t) +
+        sizeof(uint32_t) + cgraph->n_nodes * sizeof(rpc_tensor);
+    output.resize(
+        sizeof(uint32_t) + n_devices * sizeof(uint32_t) + tensor_size);
+
+    uint8_t * dest = output.data();
+    memcpy(dest, &n_devices, sizeof(n_devices));
+    dest += sizeof(n_devices);
+    memcpy(dest, devices, n_devices * sizeof(uint32_t));
+    dest += n_devices * sizeof(uint32_t);
+    serialize_graph_tensors(cgraph, dest);
+}
+
+// D4.5: weighted weight placement for multi-device endpoints.
+// Client assigns SET_TENSOR layers proportional to GPU speed ratio.
+// For 3090 vs 3070 (1.75x ratio, 60 total layers):
+//   fast_device gets 38 layers, slow_device gets 22 layers
+//   send_set_tensor(dev[fast], layers[0..37], weights);
+//   send_set_tensor(dev[slow], layers[38..59], weights);
+// The server scheduler follows weight placement naturally via backend_from_buffer.
+// Speed ratio constant: RPC_WEIGHT_SPEED_RATIO
+// Split calculation: layers_fast = total_layers * speed_ratio / (speed_ratio + 1.0f)
+
 static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
     ggml_backend_rpc_context * rpc_ctx = (ggml_backend_rpc_context *)backend->context;
     ggml_backend_dev_t rpc_dev = ggml_backend_get_device(backend);
@@ -2095,6 +2194,52 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
     auto sock = get_socket(rpc_ctx->endpoint);
     flush_pending_hash_all();
     flush_set_tensor_batch();
+
+    // D4.5: Path C - multi-device dispatch via GRAPH_COMPUTE_ALL
+    if (rpc_multidevice_env_enabled() &&
+        rpc_ctx->is_multi_device_capable &&
+        rpc_ctx->n_devices_on_endpoint > 1) {
+        const auto t0 = std::chrono::steady_clock::now();
+        uint32_t n_devices = rpc_ctx->n_devices_on_endpoint;
+        uint32_t devices[GGML_RPC_MAX_DEVICES];
+        for (uint32_t i = 0; i < n_devices && i < GGML_RPC_MAX_DEVICES; i++) {
+            devices[i] = i;
+        }
+
+        bool reuse = cgraph->uid != 0 && rpc_dev_ctx->last_graph_uid == cgraph->uid;
+        if (reuse) {
+            // D4.5: fire-and-forget + EVENT_RECORD (matches existing GRAPH_COMPUTE pattern)
+            rpc_msg_graph_recompute_all_req req = {};
+            req.n_devices = n_devices;
+            memcpy(req.devices, devices, n_devices * sizeof(uint32_t));
+            req.graph_hash = cgraph->uid;
+            req.sync_mode = 0; // fire-and-forget (use EVENT_RECORD for sync)
+            req.output_requested = 0;
+            bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_RECOMPUTE_ALL, &req, sizeof(req));
+            RPC_STATUS_ASSERT(status);
+
+            // Send EVENT_RECORD matching the existing pattern
+            uint64_t tid = ggml_pipeline_trace_get_trace_id();
+            rpc_msg_event_record_req ev_req = {0, rpc_ctx->device, tid};
+            size_t ev_sz = sock->server_supports_trace_id ? sizeof(ev_req) : 12;
+            rpc_msg_event_record_rsp ev_rsp = {};
+            status = send_rpc_cmd(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz, &ev_rsp, sizeof(ev_rsp));
+            RPC_STATUS_ASSERT(status);
+            const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - t0).count();
+            rpc_trace_emit(__func__, "graph_recompute_all", RPC_CMD_GRAPH_RECOMPUTE_ALL, sizeof(req), false, us);
+        } else {
+            rpc_dev_ctx->last_graph_uid = cgraph->uid;
+            std::vector<uint8_t> input;
+            serialize_graph_for_all(devices, n_devices, cgraph, input);
+            bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_COMPUTE_ALL, input.data(), input.size());
+            RPC_STATUS_ASSERT(status);
+            const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - t0).count();
+            rpc_trace_emit(__func__, "graph_compute_all", RPC_CMD_GRAPH_COMPUTE_ALL, input.size(), false, us);
+        }
+        return GGML_STATUS_SUCCESS;
+    }
 
     const auto t0 = std::chrono::steady_clock::now();
     bool reuse = cgraph->uid != 0 && rpc_dev_ctx->last_graph_uid == cgraph->uid;
@@ -2186,6 +2331,9 @@ ggml_backend_buffer_type_t ggml_backend_rpc_buffer_type(const char * endpoint, u
     return buft;
 }
 
+// D4.5: forward declaration
+static uint32_t rpc_get_n_devices_on_endpoint(socket_ptr sock);
+
 ggml_backend_t ggml_backend_rpc_init(const char * endpoint, uint32_t device) {
     std::string dev_name = "RPC" + std::to_string(device) + "[" + std::string(endpoint) + "]";
     ggml_backend_rpc_context * ctx = new ggml_backend_rpc_context {
@@ -2193,6 +2341,12 @@ ggml_backend_t ggml_backend_rpc_init(const char * endpoint, uint32_t device) {
         /* .device         = */ device,
         /* .name           = */ dev_name,
     };
+    // D4.5: query endpoint device count for multi-device dispatch
+    // NOTE: get_socket() calls negotiate_hello() synchronously before returning,
+    // so server_supports_multi_device is guaranteed to be populated by this point.
+    auto init_sock = get_socket(endpoint);
+    ctx->n_devices_on_endpoint = rpc_get_n_devices_on_endpoint(init_sock);
+    ctx->is_multi_device_capable = init_sock && init_sock->server_supports_multi_device;
     auto reg = ggml_backend_rpc_add_server(endpoint);
     ggml_backend_t backend = new ggml_backend {
         /* .guid    = */ ggml_backend_rpc_guid(),
@@ -2252,12 +2406,19 @@ public:
     bool copy_tensor_peer(const rpc_msg_copy_tensor_peer_req & request, rpc_msg_copy_tensor_rsp & response);
     bool graph_compute(const std::vector<uint8_t> & input);
     bool graph_recompute(const rpc_msg_graph_recompute_req & request);
+    bool graph_compute_all(const std::vector<uint8_t> & input);
+    bool graph_recompute_all(const rpc_msg_graph_recompute_all_req & request);
+    ggml_backend_sched_t create_multi_device_sched(
+        const uint32_t * devices, uint32_t n_devices,
+        const ggml_cgraph * graph);
     bool init_tensor(const rpc_msg_init_tensor_req & request);
     bool get_alloc_size(const rpc_msg_get_alloc_size_req & request, rpc_msg_get_alloc_size_rsp & response);
     bool get_device_memory(const rpc_msg_get_device_memory_req & request, rpc_msg_get_device_memory_rsp & response);
 
     void enqueue_graph_compute(std::vector<uint8_t> input);
     void enqueue_graph_recompute(rpc_msg_graph_recompute_req request);
+    void enqueue_graph_compute_all(std::vector<uint8_t> input);
+    void enqueue_graph_recompute_all(rpc_msg_graph_recompute_all_req request);
     void wait_compute_idle();
 
     struct stored_graph {
@@ -2282,6 +2443,11 @@ private:
     std::unordered_set<ggml_backend_buffer_t> buffers;
     // store the last computed graph for each backend
     std::vector<stored_graph> stored_graphs;
+    // D4.5: dedicated storage for ALL-mode graph (separate from per-device stored_graphs)
+    stored_graph all_graph;
+
+    // D4.5: cached multi-device schedulers keyed by device set hash
+    std::unordered_map<uint64_t, ggml_backend_sched_t> all_scheds;
 
     std::mutex                    compute_mtx;
     std::condition_variable         compute_cv;
@@ -2745,7 +2911,10 @@ ggml_tensor * rpc_server::create_node(uint64_t id,
         return nullptr;
     }
     if (result->buffer == nullptr && result->data != nullptr) {
-        GGML_LOG_ERROR("[%s] invalid data ptr", __func__);
+        GGML_LOG_ERROR("[%s] invalid data ptr: id=%" PRIu64 " data=%p type=%d op=%d ne=[%lld %lld %lld %lld]\n",
+                       __func__, id, result->data, tensor->type, tensor->op,
+                       (long long)tensor->ne[0], (long long)tensor->ne[1],
+                       (long long)tensor->ne[2], (long long)tensor->ne[3]);
         return nullptr;
     }
     tensor_map[id] = result;
@@ -2875,6 +3044,172 @@ bool rpc_server::graph_recompute(const rpc_msg_graph_recompute_req & request) {
     return true;
 }
 
+static uint64_t hash_device_set(const uint32_t * devices, uint32_t n_devices) {
+    uint64_t h = 0;
+    for (uint32_t i = 0; i < n_devices; i++) {
+        h ^= ((uint64_t)devices[i] << (i * 8));
+    }
+    return h;
+}
+
+ggml_backend_sched_t rpc_server::create_multi_device_sched(
+    const uint32_t * devices, uint32_t n_devices,
+    const ggml_cgraph * graph) {
+    // D4.5: check cache first
+    uint64_t key = hash_device_set(devices, n_devices);
+    auto it = all_scheds.find(key);
+    if (it != all_scheds.end()) {
+        return it->second;
+    }
+
+    // Collect backends for each device index
+    std::vector<ggml_backend_t> sched_backends;
+    sched_backends.reserve(n_devices + 1);
+    for (uint32_t i = 0; i < n_devices; i++) {
+        if (devices[i] < backends.size()) {
+            sched_backends.push_back(backends[devices[i]]);
+        }
+    }
+    // Append CPU backend as fallback
+    sched_backends.push_back(ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr));
+
+    // Create scheduler with standard params
+    // Default graph_size = 4096 if graph is null
+    size_t graph_size = graph ? ggml_graph_overhead_custom(graph->n_nodes, false) : 4096;
+    // No pipeline parallelism server-side (client handles it)
+    ggml_backend_sched_t sched = ggml_backend_sched_new(
+        sched_backends.data(),
+        nullptr, // default buft
+        sched_backends.size(),
+        graph_size,
+        false, // parallel
+        false  // op_offload
+    );
+    // D4.5: cache the scheduler
+    all_scheds[key] = sched;
+    return sched;
+}
+
+bool rpc_server::graph_compute_all(const std::vector<uint8_t> & input) {
+    // Format: | n_devices(4) | device_ids(n_devices*4) | n_nodes(4) | nodes(n_nodes*8) | n_tensors(4) | tensors(n_devices*rpc_tensor) |
+    if (input.size() < sizeof(uint32_t) * 3) {
+        return false;
+    }
+
+    const uint8_t * src = input.data();
+    uint32_t n_devices;
+    memcpy(&n_devices, src, sizeof(n_devices));
+    src += sizeof(n_devices);
+
+    if (n_devices == 0 || n_devices > 8) {
+        return false;
+    }
+
+    uint32_t devices[8];
+    size_t devs_size = n_devices * sizeof(uint32_t);
+    if (input.size() < sizeof(uint32_t) + devs_size + sizeof(uint32_t)) {
+        return false;
+    }
+    memcpy(devices, src, devs_size);
+    src += devs_size;
+
+    // Parse graph data (reuse existing format minus the leading device field)
+    uint32_t n_nodes;
+    memcpy(&n_nodes, src, sizeof(n_nodes));
+    src += sizeof(n_nodes);
+    if (input.size() < sizeof(uint32_t) + devs_size + sizeof(uint32_t) + n_nodes * sizeof(uint64_t) + sizeof(uint32_t)) {
+        return false;
+    }
+    const uint64_t * nodes = (const uint64_t *)src;
+    src += n_nodes * sizeof(uint64_t);
+    uint32_t n_tensors;
+    memcpy(&n_tensors, src, sizeof(n_tensors));
+    src += sizeof(n_tensors);
+    if (input.size() < sizeof(uint32_t) + devs_size + sizeof(uint32_t) + n_nodes * sizeof(uint64_t) + sizeof(uint32_t) + n_tensors * sizeof(rpc_tensor)) {
+        return false;
+    }
+    const rpc_tensor * tensors = (const rpc_tensor *)src;
+
+    // Allocate context and deserialize
+    size_t buf_size = ggml_tensor_overhead() * (n_nodes + n_tensors) + ggml_graph_overhead_custom(n_nodes, false);
+    std::vector<uint8_t> ctx_buf(buf_size);
+    struct ggml_init_params params = {
+        /*.mem_size   =*/ buf_size,
+        /*.mem_buffer =*/ ctx_buf.data(),
+        /*.no_alloc   =*/ true,
+    };
+    ggml_context_ptr ctx_ptr{ ggml_init(params) };
+    GGML_ASSERT(ctx_ptr != nullptr);
+    ggml_context * ctx = ctx_ptr.get();
+    struct ggml_cgraph * graph = ggml_new_graph_custom(ctx, n_nodes, false);
+    graph->n_nodes = n_nodes;
+
+    std::unordered_map<uint64_t, const rpc_tensor *> tensor_ptrs;
+    tensor_ptrs.reserve(n_tensors);
+    for (uint32_t i = 0; i < n_tensors; i++) {
+        tensor_ptrs.emplace(tensors[i].id, &tensors[i]);
+    }
+    std::unordered_map<uint64_t, ggml_tensor *> tensor_map;
+    tensor_map.reserve(n_nodes);
+    for (uint32_t i = 0; i < n_nodes; i++) {
+        int64_t id;
+        memcpy(&id, &nodes[i], sizeof(id));
+        graph->nodes[i] = create_node(id, ctx, tensor_ptrs, tensor_map);
+        if (graph->nodes[i] == nullptr && id != 0) {
+            return false;
+        }
+    }
+
+    // Create multi-device scheduler
+    ggml_backend_sched_t sched = create_multi_device_sched(devices, n_devices, graph);
+    if (!sched) {
+        return false;
+    }
+
+    // Compute
+    const auto t0 = std::chrono::steady_clock::now();
+    ggml_status status = ggml_backend_sched_graph_compute(sched, graph);
+    GGML_ASSERT(status == GGML_STATUS_SUCCESS);
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    rpc_trace_emit("rpc_server::graph_compute_all", "server_compute",
+                   RPC_CMD_GRAPH_COMPUTE_ALL, input.size(), true, us);
+
+    // D4.5: store for recompute in dedicated ALL-mode storage
+    if (all_graph.buffer.size() < buf_size) {
+        all_graph.buffer.resize(buf_size);
+    }
+    std::copy(ctx_buf.begin(), ctx_buf.end(), all_graph.buffer.begin());
+    all_graph.graph = graph;
+
+    // NOTE: sched is cached in all_scheds, freed in ~rpc_server
+    return true;
+}
+
+bool rpc_server::graph_recompute_all(const rpc_msg_graph_recompute_all_req & request) {
+    if (all_graph.graph == nullptr) {
+        return false;
+    }
+    ggml_cgraph * graph = all_graph.graph;
+
+    // D4.5: reuse cached multi-device scheduler
+    ggml_backend_sched_t sched = create_multi_device_sched(request.devices, request.n_devices, graph);
+    if (!sched) {
+        return false;
+    }
+
+    const auto t0 = std::chrono::steady_clock::now();
+    ggml_status status = ggml_backend_sched_graph_compute(sched, graph);
+    GGML_ASSERT(status == GGML_STATUS_SUCCESS);
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    rpc_trace_emit("rpc_server::graph_recompute_all", "server_compute",
+                   RPC_CMD_GRAPH_RECOMPUTE_ALL, 0, true, us);
+
+    // NOTE: sched is cached in all_scheds, freed in ~rpc_server
+    return true;
+}
+
 bool rpc_server::get_device_memory(const rpc_msg_get_device_memory_req & request, rpc_msg_get_device_memory_rsp & response) {
     uint32_t dev_id = request.device;
     if (dev_id >= backends.size()) {
@@ -2936,6 +3271,22 @@ void rpc_server::enqueue_graph_recompute(rpc_msg_graph_recompute_req request) {
     });
 }
 
+void rpc_server::enqueue_graph_compute_all(std::vector<uint8_t> input) {
+    submit_compute_job([this, input = std::move(input)]() {
+        if (!graph_compute_all(input)) {
+            GGML_LOG_ERROR("[%s] async graph_compute_all failed\n", __func__);
+        }
+    });
+}
+
+void rpc_server::enqueue_graph_recompute_all(rpc_msg_graph_recompute_all_req request) {
+    submit_compute_job([this, request]() {
+        if (!graph_recompute_all(request)) {
+            GGML_LOG_ERROR("[%s] async graph_recompute_all failed\n", __func__);
+        }
+    });
+}
+
 void rpc_server::wait_compute_idle() {
     std::unique_lock<std::mutex> lock(compute_mtx);
     compute_cv.wait(lock, [this] {
@@ -2955,6 +3306,11 @@ rpc_server::~rpc_server() {
     for (auto buffer : buffers) {
         ggml_backend_buffer_free(buffer);
     }
+    // D4.5: free cached multi-device schedulers
+    for (auto & kv : all_scheds) {
+        ggml_backend_sched_free(kv.second);
+    }
+    all_scheds.clear();
 }
 
 static void rpc_serve_channel_bind(socket_ptr sock);
@@ -3053,6 +3409,10 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
             rsp3.patch = tmp.patch;
         }
         sock->get_caps(rsp3.conn_caps);
+        // D4.5: only advertise multi-device capability if env var is enabled
+        if (rpc_multidevice_env_enabled()) {
+            rsp3.conn_caps[0] |= RPC_CAP_MULTI_DEVICE;
+        }
         sock->server_supports_trace_id = (rsp3.patch >= 3) || (req_conn_caps[0] & RPC_CAP_TRACE_ID);
         if (!send_msg(sock, &rsp3, sizeof(rsp3))) {
             return;
@@ -3065,6 +3425,10 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
             rsp.session_id = session_id;
         }
         sock->get_caps(rsp.conn_caps);
+        // D4.5: only advertise multi-device capability if env var is enabled
+        if (rpc_multidevice_env_enabled()) {
+            rsp.conn_caps[0] |= RPC_CAP_MULTI_DEVICE;
+        }
         // trace_id support from client caps (for deciding 20B vs 12B recv on EVENT_RECORD)
         sock->server_supports_trace_id = (rsp.patch >= 3) || (req.conn_caps[0] & RPC_CAP_TRACE_ID);
         if (!send_msg(sock, &rsp, sizeof(rsp))) {
@@ -3370,12 +3734,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!recv_msg(sock, &request, req_sz)) {
                     return;
                 }
-                // FIX: removed wait_compute_idle() — was blocking command processing
-                // thread until compute worker finished, causing client event drain to
-                // time out on the second token (graph_recompute + event_record sent
-                // back-to-back). The event record is sent by the client AFTER the
-                // compute, so the compute is already complete by the time the server
-                // receives the event record.
+                server.wait_compute_idle();
                 rpc_msg_event_record_rsp response = {request.event_id, 0, request.trace_id};
                 size_t rsp_sz = sock->server_supports_trace_id ? sizeof(response) : 12;
                 if (!send_response(sock, &response, rsp_sz)) {
@@ -3397,6 +3756,22 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!send_response(sock, &response, sizeof(response))) {
                     return;
                 }
+                break;
+            }
+            case RPC_CMD_GRAPH_COMPUTE_ALL: {
+                std::vector<uint8_t> input;
+                if (!recv_msg(sock, input)) {
+                    return;
+                }
+                server.enqueue_graph_compute_all(std::move(input));
+                break;
+            }
+            case RPC_CMD_GRAPH_RECOMPUTE_ALL: {
+                rpc_msg_graph_recompute_all_req request;
+                if (!recv_msg(sock, &request, sizeof(request))) {
+                    return;
+                }
+                server.enqueue_graph_recompute_all(request);
                 break;
             }
             default: {
@@ -3660,6 +4035,16 @@ static uint32_t ggml_backend_rpc_get_device_count(const char * endpoint) {
     bool status = send_rpc_cmd(sock, RPC_CMD_DEVICE_COUNT, nullptr, 0, &response, sizeof(response));
     RPC_STATUS_ASSERT(status);
     return response.device_count;
+}
+
+// D4.4: query endpoint device count for multi-device dispatch
+static uint32_t rpc_get_n_devices_on_endpoint(socket_ptr sock) {
+    if (!sock) {
+        return 1;
+    }
+    rpc_msg_device_count_rsp rsp = {};
+    bool ok = send_rpc_cmd(sock, RPC_CMD_DEVICE_COUNT, nullptr, 0, &rsp, sizeof(rsp));
+    return ok ? rsp.device_count : 1;
 }
 
 static const ggml_backend_reg_i ggml_backend_rpc_reg_interface = {

@@ -25,7 +25,7 @@ Split Stage 0 (RPC compute) into per-backend sub-stages so faster backends can s
 | `docs/path-d-spec.md` section 10.2 | D5 spec |
 | `docs/adr/0003-adaptive-pipeline-depth.md` | ADR placeholder (to be filled in D5.2) |
 | `docs/wayfinder/D0.5-implementation-seam.md` | Implementation seam (section 7: straggler) |
-| `docs/wayfinder/D4.1-triton-baseline-analysis.md` | D4 baseline findings |
+| `docs/wayfinder/D4.1-romulus-baseline-analysis.md` | D4 baseline findings |
 
 ## Execution Steps
 

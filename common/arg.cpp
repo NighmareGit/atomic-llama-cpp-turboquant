@@ -2262,6 +2262,14 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
                 GGML_UNUSED(params);
             }
         ).set_env("LLAMA_ARG_RPC"));
+        add_opt(common_arg(
+            {"--rpc-multidevice"},
+            "enable RPC server-side multi-device scheduling (GRAPH_COMPUTE_ALL)",
+            [](common_params & params) {
+                setenv("GGML_RPC_MULTIDEVICE", "1", 1);
+                GGML_UNUSED(params);
+            }
+        ).set_env("GGML_RPC_MULTIDEVICE"));
     }
     add_opt(common_arg(
         {"--mlock"},
