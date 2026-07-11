@@ -559,6 +559,20 @@ static __device__ __forceinline__ half2 warp_prefix_inclusive_sum(half2 a) {
 #endif // FP16_AVAILABLE
 }
 
+// IEEE-754 bit-cast helpers for -INFINITY sentinel values.
+// Using direct bit patterns avoids compiler-dependent macro expansion
+// (e.g. MSVC/nvcc expands -INFINITY to -((float)(1e+300)) which is lossy).
+static inline float neg_inf_f32_host() {
+    const uint32_t bits = 0xFF800000U;
+    float result;
+    memcpy(&result, &bits, sizeof(result));
+    return result;
+}
+
+static __device__ __forceinline__ float neg_inf_f32() {
+    return __int_as_float(0xFF800000);
+}
+
 enum class block_reduce_method {
     MAX,
     SUM,
@@ -608,9 +622,9 @@ template <typename T> struct block_reduce_policy<block_reduce_method::MAX, T> {
 
     static __device__ T sentinel() {
         if constexpr (std::is_same_v<T, float>) {
-            return -INFINITY;
+            return neg_inf_f32(); // -INFINITY via IEEE-754 bit-cast, safe on Blackwell + MSVC/nvcc
         } else if constexpr (std::is_same_v<T, half2>) {
-            return make_half2(-INFINITY, -INFINITY);
+            return make_half2(neg_inf_f32(), neg_inf_f32()); // same bit-cast approach for both halves
         } else {
             static_assert(ggml_cuda_dependent_false_v<T>, "Unsupported type for block reduce max");
         }

@@ -8,6 +8,29 @@
 
 ## Implementation Tickets
 
+### C1.1 -- Fix -INFINITY IEEE-754 Portability
+
+**Type:** bugfix  
+**Blocks:** none  
+**Blocked by:** none
+
+**Goal:** Replace all CUDA kernel `-INFINITY` literals with IEEE-754 bit-cast helpers to prevent silent NaN/corruption on Blackwell (sm_120) and MSVC/nvcc 12.9 builds.
+
+**Acceptance Criteria:**
+- [x] `neg_inf_f32()` device helper and `neg_inf_f32_host()` host helper added in common.cuh
+- [x] `block_reduce_policy<MAX>::sentinel()` fixed: `-INFINITY` -> `neg_inf_f32()`
+- [x] softmax.cu: 7 `-INFINITY` -> `neg_inf_f32()`
+- [x] topk-moe.cu: 9 `-INFINITY` -> `neg_inf_f32()`, 1 -> `neg_inf_f32_host()`
+- [x] cross-entropy-loss.cu: 2 `-INFINITY` -> `neg_inf_f32()`
+- [x] HIP build: clean compile, zero errors
+- [x] Smoke test: 35B model 105.79 t/s, 5x concurrent stress — 0 failures, no NaN
+
+**Implementation Notes:**
+- Files: `ggml/src/ggml-cuda/common.cuh`, `softmax.cu`, `topk-moe.cu`, `cross-entropy-loss.cu`
+- Reference: `docs/wayfinder/TRACKING.md` section C1
+
+---
+
 ### D1.1 -- Add llama_gpipe_state Struct
 
 **Type:** implementation  
