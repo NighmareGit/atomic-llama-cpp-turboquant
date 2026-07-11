@@ -179,8 +179,8 @@ rpc-patch/patch/bench-results/72b-matrix/debug/
 /ggml-backend.cpp
 /ggml-rpc.cpp
 *.gguf
-# Docker build artifacts
-[0-9a-f]*
+# Docker build artifacts (hex-named files in root only — 6+ hex chars to avoid matching "docs")
+/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*
 server-telemetry.jsonl
 build-rocm-docker/
 build-hip/

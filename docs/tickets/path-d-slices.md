@@ -228,7 +228,9 @@ Slice 1 (RPC event fix unlocks all performance testing).
 | Qwen3.5-9B-MTP-Q4_K_M | 5.5 GB | 2,517 | 128.7 | 50,50 |
 | Qwen3.6-35B-A3B-APEX-MTP-I-Q6_K | 21.9 GB | 4,027 | 146.6 | 30,70 |
 
-All traces (sched, rpc, pipeline) recorded with content. Server telemetry `kv_source: "server"` confirmed. Key finding: the 35B MoE activates only 8/256 experts per token, so its PP throughput (4,027 t/s) matches the 4B dense model despite being 10x larger.**
+All traces (sched, rpc, pipeline) recorded with content. Server telemetry `kv_source: "server"` confirmed. Key finding: the 35B MoE activates only 8/256 experts per token, so its PP throughput (4,027 t/s) matches the 4B dense model despite being 10x larger.
+
+**Hot paths analysis:** `docs/hot-paths-analysis.md` — per-layer tensor deployment map for all 3 models across the 2 GPUs, with compute cost breakdown, GPU utilization, and bottleneck characterization. Reveals that MoE expert weights account for ~77% of per-token compute but only 3.1% of experts activate, and that 75% of TG wall time is cross-GPU synchronization waste.
 
 ---
 

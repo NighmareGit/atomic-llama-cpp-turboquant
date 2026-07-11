@@ -161,7 +161,7 @@ Full analysis: `docs/wayfinder/D4.1-romulus-baseline-analysis.md`
 | D4.7 | ✅ complete | Profiler research: heatmap schema, binary design, KV cache scope decision documented |
 | D4.8 | ✅ complete | RPC telemetry prototype: 6-field `rpc_msg_server_telemetry` struct, `collect_telemetry()` called from both `graph_compute()` (single-device) and `graph_compute_all()` (multi-device), `server-telemetry.jsonl` writer, HELLO capability negotiation (`RPC_CAP_SERVER_TELEMETRY`). Telemetry works on **both** paths: single-device (`rpc-server -d CUDA0`) via `GRAPH_COMPUTE` response, and multi-device (`rpc-server -d CUDA0,CUDA1`) via `GRAPH_COMPUTE_ALL` response. Romulus setup (1 local + 1 RPC GPU) is fully profiled. |
 | D4.9 | ✅ complete | ADR-0004b finalized: binary arch (`llama-bench` pattern), CLI surface, heatmap JSON schema (schema v1), telemetry ingestion contract, script adaptation plan. |
-| D4.10 | ✅ complete | `llama-gpipe-profiler` binary built (17928 bytes) with task-stratified profiling, heatmap synthesis, server telemetry ingestion. CMake target in `tools/`. Graceful degradation when telemetry unavailable. |
+| D4.10 | ✅ complete | `llama-gpipe-profiler` binary built (17928 bytes) with task-stratified profiling, heatmap synthesis, server telemetry ingestion. CMake target in `tools/`. Graceful degradation when telemetry unavailable. Hot paths analysis at `docs/hot-paths-analysis.md` — per-layer tensor/GPU deployment map for all 3 models. |
 | D4.11-D4.14 | 📋 stored | Pareto Optimizer in llama-server — planned + ticketed, NOT built this sprint |
 
 ### D5 — Deeper Pipelining (pending)
