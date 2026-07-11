@@ -47,6 +47,14 @@ struct llama_gpipe_state {
     int  microbatch_size;
     bool enabled;
 
+    // Adaptive depth
+    bool adaptive_enabled;
+    int  adaptive_warmup_count;
+    static constexpr int ADAPTIVE_WARMUP = 5;
+    int64_t stage_timing_sum_us[LLAMA_GPIPE_MAX_STAGES];
+    int     stage_timing_count[LLAMA_GPIPE_MAX_STAGES];
+    bool    adaptive_finalized;  // true after first adaptation decision
+
     std::vector<llama_seq_id> stage_tokens;
 
     int64_t stage_start_us[LLAMA_GPIPE_MAX_STAGES];

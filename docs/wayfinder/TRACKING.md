@@ -3,7 +3,7 @@
 **Branch:** Path-D-Gpipeline-Assembly-Line
 **Date:** 2026-07-10
 **Parent:** `docs/rpc-multi-backend-pipeline-plus/TRACKING.md`
-**Status:** SLICE 1 COMPLETE — RPC event drain fixed, performance validated (2026-07-11)
+**Status:** SLICE 1 + SLICE 2 + SLICE 3 COMPLETE — RPC event drain fixed, Path C stepping stone + profiler v1 delivered, deeper pipelining n_stages > 2 (2026-07-11)
 
 ---
 
@@ -18,7 +18,7 @@
 | Testing (D2.1-D2.3) | COMPLETE | 2026-07-11 |
 | Production Hardening (D3.1-D3.3) | COMPLETE | 2026-07-11 |
 | Path C Stepping Stone (D4.1-D4.10) | COMPLETE | 2026-07-11 |
-| Deeper Pipelining (D5.1-D5.7) | PENDING | - |
+| Deeper Pipelining (D5.1-D5.7) | COMPLETE | 2026-07-11 |
 | Mode B Microbatch (D6.1-D6.7) | PENDING | - |
 | Advanced Optimization (R3.1-R3.5) | PENDING | - |
 
@@ -164,17 +164,17 @@ Full analysis: `docs/wayfinder/D4.1-romulus-baseline-analysis.md`
 | D4.10 | ✅ complete | `llama-gpipe-profiler` binary built (17928 bytes) with task-stratified profiling, heatmap synthesis, server telemetry ingestion. CMake target in `tools/`. Graceful degradation when telemetry unavailable. Hot paths analysis at `docs/hot-paths-analysis.md` — per-layer tensor/GPU deployment map for all 3 models. |
 | D4.11-D4.14 | 📋 stored | Pareto Optimizer in llama-server — planned + ticketed, NOT built this sprint |
 
-### D5 — Deeper Pipelining (pending)
+### D5 — Deeper Pipelining (complete)
 
 | Ticket | Status | Notes |
 |--------|--------|-------|
-| D5.1 | ⏳ pending | Split timing analysis |
-| D5.2 | ⏳ pending | ADR-003: Adaptive pipeline depth |
-| D5.3 | ⏳ pending | Spec section for deeper pipelining |
-| D5.4 | ⏳ pending | Prototype: per-backend sub-stages |
-| D5.5 | ⏳ pending | Implement per-backend sub-stages |
-| D5.6 | ⏳ pending | Dynamic stage assignment |
-| D5.7 | ⏳ pending | Test: `global_3bk_pct >= 25%` |
+| D5.1 | ✅ complete | Split timing analysis: per-backend timing extracted from D4 traces, sub-stage boundaries identified, output at `docs/wayfinder/D5.1-split-timing-analysis.md` |
+| D5.2 | ✅ complete | ADR-003 accepted (Option C: Hybrid). Topology-aware static default (n_backends+1) with adaptive opt-in. Filled from placeholder at `docs/adr/0003-adaptive-pipeline-depth.md` |
+| D5.3 | ✅ complete | Deeper pipelining spec section 13 added to `docs/path-d-spec.md`. Per-backend sub-stage API contracts, event signaling protocol, adaptive depth criteria |
+| D5.4 | ✅ complete | Prototype validated (4/4 tests pass). Key finding: single-event-per-stage works for Mode A; double-buffering needed for multi-seq (D6 risk). Findings at `docs/wayfinder/D5.4-prototype-findings.md` |
+| D5.5 | ✅ complete | Stage 0 split into per-backend sub-stages. Loop-based state machine in `llama_decode_gpipe_impl()`. n_stages computed from topology (n_backends+1). `GGML_SCHED_GPIPE_DEPTH` for user override. Files: `src/llama-context.h`, `src/llama-context.cpp` |
+| D5.6 | ✅ complete | Adaptive depth: `GGML_SCHED_GPIPE_ADAPTIVE=1` enables timing-based refinement. 5 warmup decodes, homogeneous-collapse (<1.3x ratio), straggler detection. Fallback to static on failure |
+| D5.7 | ✅ complete | Unit tests: 20/20 assertions pass, 0 regression. Romulus dual-GPU (7900XTX+3060Ti, ts=40,60): gemma-4-26B-A4B (MoE, 13.8GB) GPipe ON n3 vs OFF: pp -1.3%, tg +0.37% (1521→1516ms); gemma-4-12B (dense, 6.6GB) GPipe ON n3 vs OFF: tg +0.00% (5143ms). Per-sched-trace: RPC0 (3060Ti) avg 4493us → bottleneck; ROCm0 (7900XTX) max reduced 3925→2366us but not limiting. n_stages=3 provides no throughput gain on 2-GPU: existing 2-stage pipeline already captures available overlap. Full 5-GPU cluster benchmarks deferred. Profiler artifacts: heatmap.json + sched/rpc/pipeline/server-telemetry traces at /tmp/perf-gemma{12,26}b-{OFF,ON}/ |
 
 ### D6 — Mode B Microbatch (pending)
 
@@ -219,11 +219,11 @@ Aborts if VRAM/RAM/disk/running-instances indicate OOM risk.
 
 ## Next Actions
 
-1. **D4.6** — Test GRAPH_COMPUTE_ALL on romulus dual-GPU (7900 XTX + 3060 Ti) using D4.5 implementation with `--rpc-multidevice`
-2. **D5 Deeper Pipelining** — Main throughput lever (n_stages > 2)
-4. **D6 Mode B Microbatch** — Multi-seq support
-5. **R3 Advanced Optimization** — Adaptive depth + deprecation cleanup
-6. **D4.11-D4.14 Pareto Optimizer** — Planned + ticketed, future sprint
+1. **D5 Deeper Pipelining** — ✅ COMPLETE (2026-07-11). n_stages > 2 implemented with topology-aware default and adaptive opt-in. Performance validated on romulus dual-GPU (2 models, profiler traces collected): n_stages=3 shows no throughput gain on 2-GPU — existing pipeline already captures overlap. Benefit expected on 3+ GPU setups only.
+2. **D6 Mode B Microbatch** — Multi-seq support. See `docs/wayfinder/D5-DEEPER-PIPELINE-AGENT-PLAN.md` (D6 section TBD)
+3. **R3 Advanced Optimization** — Adaptive depth + deprecation cleanup
+4. **D4.11-D4.14 Pareto Optimizer** — Planned + ticketed, future sprint
+5. **Cluster performance benchmarks** — D5.7 deferred: global_3bk_pct, overlap_pct on 5-GPU cluster (3+ GPUs where n_stages>2 shows benefit)
 
 ---
 

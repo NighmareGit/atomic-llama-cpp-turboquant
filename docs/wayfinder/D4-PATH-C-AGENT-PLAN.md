@@ -104,3 +104,23 @@ git push origin Path-D-Gpipeline-Assembly-Line
 ---
 
 *Agent plan for D4 — 2026-07-10*
+
+---
+
+## Completion (2026-07-11)
+
+All D4.1-D4.10 tickets complete. Key outcomes:
+
+- **D4.1**: Romulus dual-GPU baseline — 3 models (9B MTP, Llama 8B, 35B APEX), trace capture, 7 findings documented
+- **D4.2**: ADR-0004 — Option B+ (GRAPH_COMPUTE_ALL + weighted weight placement)
+- **D4.3**: Path C spec section 12 integrated into `docs/path-d-spec.md`
+- **D4.4**: GRAPH_COMPUTE_ALL prototype — 7 findings documented for D4.5
+- **D4.5**: Production implementation — serialization consolidation, scheduler cache, EVENT_RECORD, `--rpc-multidevice` CLI arg
+- **D4.6**: Romulus dual-GPU validation — pp32=991 t/s (+21%), tg32=81.7 t/s (+32%), draft-mtp n_max=2: 113.2 t/s gen (+82%)
+- **D4.7**: Profiler research — heatmap schema, binary design, KV cache scope decision
+- **D4.8**: RPC telemetry — 6-field struct, `collect_telemetry()` on both GRAPH_COMPUTE and GRAPH_COMPUTE_ALL paths, HELLO cap negotiation
+- **D4.9**: ADR-0004b — binary arch (`llama-bench` pattern), CLI surface, heatmap JSON schema v1
+- **D4.10**: `llama-gpipe-profiler` binary (17,928 bytes), task-stratified profiling, 3-model benchmark suite, hot paths analysis at `docs/hot-paths-analysis.md`
+- **D4.11-D4.14**: Pareto Optimizer — planned + ticketed, NOT built
+
+**Commit range:** `eb1e5a261` .. `eb1e5a261` (pure docs + testing milestone; D4.1-D4.10 work committed incrementally throughout Slice 2)

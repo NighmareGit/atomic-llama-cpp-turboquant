@@ -2,7 +2,7 @@
 
 **Branch:** Path-D-Gpipeline-Assembly-Line  
 **Date:** 2026-07-10  
-**Status:** Investigation + Specification + Work Breakdown complete. Ready for Implementation.
+**Status:** Slice 1 + Slice 2 complete — RPC event fix, dual-GPU validation, Path C stepping stone + profiler v1 delivered. Ready for Slice 3 (D5 Deeper Pipelining).
 
 ---
 
@@ -42,7 +42,7 @@ Documentation Phase (/wayfinder or manual)
 | Implementation (D1) | ✅ complete | D1.1-D1.7 tickets |
 | Testing (D2) | ✅ complete | D2.1-D2.3 — RPC event bug fixed, dual-GPU validated |
 | Production Hardening (D3) | ✅ complete | D3.1-D3.3 — TRACKING.md updated |
-| Path C Stepping Stone (D4) | 🔄 in-progress | D4.1-D4.6 core + D4.7-D4.10 profiler v1 (romulus local) |
+| Path C Stepping Stone (D4) | ✅ complete | D4.1-D4.6 core + D4.7-D4.10 profiler v1 (romulus local). Completed 2026-07-11. |
 | Pareto Optimizer (D4 ext.) | 📋 planned | D4.11-D4.14 — ticketed, NOT built this sprint |
 | Deeper Pipelining (D5) | ⏳ pending | D5.1-D5.7 tickets |
 | Mode B Microbatch (D6) | ⏳ pending | D6.1-D6.7 tickets |
@@ -63,7 +63,7 @@ Documentation Phase (/wayfinder or manual)
 | 3 | D0.4 | `/prototype` | none | none |
 | 4 | D0.5 | `/implement` or `/grill-with-docs` | Specification | D0.2, D0.3 |
 
-### Implementation Phase (ready)
+### Implementation Phase (complete)
 
 | Order | Ticket | Skill | Test File |
 |-------|--------|-------|-----------|
@@ -77,7 +77,7 @@ Documentation Phase (/wayfinder or manual)
 
 **Parallel execution possible:** D1.1-D1.7 are sequential due to blocking edges.
 
-### Testing Phase (next)
+### Testing Phase (complete)
 
 | Order | Ticket | Skill |
 |--------|--------|-------|
@@ -94,6 +94,8 @@ Documentation Phase (/wayfinder or manual)
 | 13 | D3.3 | `/wayfinder` |
 
 ### Beyond Phases (D4-R3)
+
+D1-D3 and D4 (core + profiler v1) are complete. Next: D5.
 
 Each beyond-phase follows the workflow loop: research → design → spec → prototype → implement → test → review (max 3 loops).
 
@@ -208,17 +210,27 @@ Each cycle produces:
 
 ---
 
+## Slice 2 Completion (2026-07-11)
+
+Path C core (D4.1-D4.6) + Profiler v1 (D4.7-D4.10) delivered on romulus dual-GPU:
+- **D4.1-D4.6**: GRAPH_COMPUTE_ALL scheduler, server-side telemetry on both single and multi-device paths, draft-mtp n_max=2 yielding 113.2 t/s gen (+82% vs baseline)
+- **D4.7-D4.10**: `llama-gpipe-profiler` native C++ binary (17,928 bytes), 6-field telemetry incl. KV cache timing, heatmap synthesis, 3-model benchmark suite validated
+- **Hot paths analysis**: `docs/hot-paths-analysis.md` — per-layer tensor/GPU deployment map with bottleneck characterization
+- **Pareto Optimizer (D4.11-D4.14)**: Planned + ticketed, NOT built
+
+---
+
 ## Next Action
 
-**Ready for Implementation Phase.**
+**Ready for Slice 3 — D5 Deeper Pipelining.**
 
-Invoke `/implement` on ticket D1.1 to begin:
+Grab Slice 3 from `docs/tickets/path-d-slices.md` and execute via `D5-DEEPER-PIPELINE-AGENT-PLAN.md`:
 
 ```
-/handoff "Implement D1.1: Add llama_gpipe_state struct"
-→ Read docs/tickets/path-d-tickets.md
-→ Read docs/path-d-spec.md section 3.1
-→ Implement
+/handoff "Slice 3: Deeper Pipelining — n_stages > 2"
+-> Read docs/tickets/path-d-slices.md Slice 3
+-> Read docs/wayfinder/D5-DEEPER-PIPELINE-AGENT-PLAN.md
+-> Execute D5.1-D5.7 tickets
 ```
 
 ---

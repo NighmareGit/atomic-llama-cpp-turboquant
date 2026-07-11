@@ -567,4 +567,248 @@ For 3090+3070 with 1.75x speed ratio (full analysis at `docs/wayfinder/D4-perfor
 
 ---
 
-*Section 12 added 2026-07-11 — Path C Server-Side Scheduling. ADR-0004 Option B+ accepted.'
+*Section 12 added 2026-07-11 — Path C Server-Side Scheduling. ADR-0004 Option B+ accepted.*
+
+---
+
+## 13. Deeper Pipelining — n_stages > 2 with Per-Backend Sub-Stages
+
+This section defines the extension of GPipe Mode A from 2 stages to `n_stages > 2`.
+The design splits the Stage 0 "compute" phase into per-backend sub-stages, enabling
+straggler isolation and concurrent cross-token compute across heterogeneous backends.
+
+ADR-0003: **Accepted (Option C: Hybrid)** — Topology-aware static default with adaptive
+opt-in. Full decision at `docs/adr/0003-adaptive-pipeline-depth.md`.
+
+D5.1 split timing analysis at `docs/wayfinder/D5.1-split-timing-analysis.md`.
+
+---
+
+### 13.1 Problem Statement
+
+The 2-stage GPipe pipeline cannot overlap within-token RPC compute across backends.
+As documented in D5.1:
+
+- Split 1 (RPC0 3060 Ti) takes 10.0 ms (63.8% of Stage 0)
+- Split 2 (ROCm0 7900 XTX) takes 5.7 ms (36.2% of Stage 0)
+- Because they are serial, cycle time = 10.0 + 5.7 = 15.7 ms
+- With per-backend sub-stages, cycle time = max(10.0, 5.7) = 10.0 ms (+57%)
+
+The same pattern applies to the production 5-GPU cluster, where RPC1 (3060) at
+4.0 ms dominates the pipeline and blocks faster backends (2.1-3.5 ms).
+
+---
+
+### 13.2 Architecture: Per-Backend Sub-Stages
+
+#### Pipeline Structure
+
+```
+Current (2-stage):
+  Stage 0: embed + Split 0 (CPU) + Split 1 (RPC) + Split 2 (ROCm) + Split 3..N
+  Stage 1: gather + KV write + sample
+
+Deeper (n_stages > 2):
+  Stage 0: embed (CPU)
+  Stage 1: backend[0] compute (first RPC or local backend)
+  Stage 2: backend[1] compute (second backend)
+  ...
+  Stage N-1: backend[N-1] compute + gather + KV write + sample (last backend)
+```
+
+Each backend computes its assigned layer range independently. Faster backends
+can begin processing token T+1 while slower backends finish token T.
+
+#### Overlap Diagram (dual-GPU, n_stages=3)
+
+```
+Token T:   [emb(T)] [RPC0(T).............] [ROCm+gather(T)............]
+Token T+1:         [emb(T+1)][RPC0(T+1).............][ROCm+gather(T+1)............]
+```
+
+With per-backend isolation, RPC0(T+1) runs concurrently with ROCm+gather(T),
+reducing effective cycle time from 15.7 ms to 10.0 ms.
+
+---
+
+### 13.3 Stage Assignment Model
+
+#### Static (topology-aware default)
+
+```
+n_stages = min(n_backends + 1, GGML_SCHED_GPIPE_DEPTH, LLAMA_GPIPE_MAX_STAGES)
+```
+
+| n_backends | n_stages | Sub-stages |
+|:----------:|:--------:|-----------|
+| 1 (local only) | 2 | embed+compute, gather (current behavior) |
+| 2 (dual-GPU RPC) | 3 | embed, RPC0, ROCm+gather |
+| 3 | 4 | embed, RPC0, RPC1, ROCm+gather |
+| 4+ (5-GPU prod) | 5+ | embed + per-backend ... + last+gather |
+
+#### Adaptive (opt-in via `GGML_SCHED_GPIPE_ADAPTIVE=1`)
+
+After 5 warm-up decodes, measure per-backend timing from telemetry.
+If `max_backend_time / min_backend_time < 1.3x`: collapse to 2-stage (homogeneous).
+If ratio >= 1.3x: assign each backend its own stage.
+Straggler (3x+ mean): reduce its layer share.
+
+#### Fallback
+
+If `n_stages < 2` or `n_stages > LLAMA_GPIPE_MAX_STAGES`, fall back to
+`n_stages = n_backends + 1` with a log warning.
+
+---
+
+### 13.4 API Contracts
+
+#### Event Signaling (per sub-stage)
+
+```cpp
+// Event protocol for n-stage pipeline:
+//
+// Sub-stage 0 (embed):
+//   compute_embed() -> ggml_sched_gpipe_record(sched, 0)
+//
+// Sub-stage i (backend i-1 compute, for i in 1..n_stages-2):
+//   ggml_sched_gpipe_wait(sched, i-1)  // wait for previous stage
+//   -> compute_backend_layers(backend[i-1])
+//   -> ggml_sched_gpipe_record(sched, i)
+//
+// Sub-stage n_stages-1 (last backend + gather + KV write):
+//   ggml_sched_gpipe_wait(sched, n_stages-2)
+//   -> compute_backend_layers(backend[n_stages-2])
+//   -> gather + KV write
+//   -> ggml_sched_gpipe_record(sched, n_stages-1)  // kv_ready for T+1
+```
+
+#### New Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `GGML_SCHED_GPIPE_DEPTH` | 0 (auto) | Override n_stages; 0 = topology-aware default (n_backends+1) |
+| `GGML_SCHED_GPIPE_ADAPTIVE` | 0 | Enable timing-based adaptive depth refinement |
+
+#### Modified State Machine
+
+```cpp
+// llama_decode_gpipe_impl() extended for n_stages > 2:
+switch (ctx->gpipe.cur_stage) {
+    case 0:
+        // embed
+        compute_embed();
+        ggml_sched_gpipe_record(sched, 0);
+        ctx->gpipe.cur_stage = 1;
+        break;
+    case 1 ... LLAMA_GPIPE_MAX_STAGES-2:
+        // per-backend compute (backends 0..n_backends-2)
+        ggml_sched_gpipe_wait(sched, ctx->gpipe.cur_stage - 1);
+        compute_backend(ctx->gpipe.cur_stage - 1);
+        ggml_sched_gpipe_record(sched, ctx->gpipe.cur_stage);
+        ctx->gpipe.cur_stage++;
+        break;
+    case N-1:
+        // last backend + gather + KV write
+        ggml_sched_gpipe_wait(sched, ctx->gpipe.cur_stage - 1);
+        compute_backend_last();
+        gather_outputs();
+        kv_write();
+        ggml_sched_gpipe_record(sched, ctx->gpipe.cur_stage);
+        ctx->gpipe.cur_stage = 0;  // wrap around
+        break;
+}
+```
+
+#### Backend-to-Stage Mapping
+
+```cpp
+// In ggml_backend_sched, the GPipe stage assignment is:
+//
+// For each split_id in the scheduler's split list:
+//   - Split with backend_id == 0 and phase "embed": maps to GPipe stage 0
+//   - Split with backend_id == i (i > 0): maps to GPipe stage i+1
+//   - Split with backend_id == n_backends-1: maps to GPipe stage n_backends
+//     (last stage includes gather + KV write)
+//
+// The mapping is determined at sched_reserve() time and stored in:
+//   int split_to_gpipe_stage[GGML_SCHED_MAX_SPLITS];
+```
+
+#### Cross-Token Event Protocol
+
+```
+Token T sub-stage k records gpipe_event[k]
+Token T+1 sub-stage 0 records gpipe_event[0]
+Token T+1 sub-stage k waits on gpipe_event[k-1] (previous sub-stage of T+1)
+Token T+1 sub-stage k also waits on gpipe_event[k+1] (next sub-stage of T, if k+1 exists)
+```
+
+This ensures each sub-stage only starts when (a) the previous sub-stage of the
+same token is done, AND (b) the next sub-stage of the previous token is done
+(so the previous token has vacated the pipeline slot).
+
+---
+
+### 13.5 Integration with Existing GPipe Infrastructure
+
+| Component | Change |
+|-----------|--------|
+| `llama_gpipe_state` | `n_stages` now configured; `cur_stage` ranges `0..n_stages-1` |
+| `llama_decode_gpipe_impl()` | `switch` extended from 2 cases to N cases |
+| `ggml_sched_gpipe_init()` | Called with `n_stages` from topology-aware default |
+| `ggml_sched_gpipe_record/wait()` | No change — already supports arbitrary stage IDs up to `GGML_SCHED_MAX_STAGES=8` |
+| `ggml_backend_sched` | No struct changes needed; `gpipe_events[8]` already allocated |
+| `llama_context` | No new members; `gpipe.n_stages` used for stage count |
+| RPC protocol | No changes; per-split `GRAPH_COMPUTE` continues to work |
+
+---
+
+### 13.6 Performance Targets
+
+| Metric | 2-stage (current) | 3-stage (target) | 5-stage (stretch, cluster) |
+|--------|:----------------:|:----------------:|:--------------------------:|
+| Cycle time (romulus dual-GPU) | 15.7 ms | 10.0 ms (-36%) | N/A |
+| Per-token latency (romulus) | 15.7 ms | 10.0 ms | N/A |
+| Cycle time (production 5-GPU) | ~12.8 ms est. | ~8.8 ms (-31%) | ~4.0 ms (-69%) |
+| global_3bk_pct | <1% | TBD | >=25% (target) |
+| overlap_pct | 0.1-0.2% | TBD | >=5% (target) |
+
+---
+
+### 13.7 Acceptance Criteria
+
+#### From D5.5 (Implementation)
+
+- [ ] Stage 0 split into embed + per-backend sub-stages
+- [ ] Event signaling correct: each sub-stage records/waits on correct event
+- [ ] Straggler isolation: fast backends not blocked by straggler
+- [ ] Dual-GPU (romulus): 3 sub-stages active (embed + RPC0 + ROCm+gather)
+- [ ] Single-GPU: falls back to 2-stage (current behavior)
+- [ ] `GGML_SCHED_GPIPE=1` enables n_stages > 2 automatically
+
+#### From D5.6 (Adaptive Depth)
+
+- [ ] `GGML_SCHED_GPIPE_DEPTH` overrides n_stages
+- [ ] `GGML_SCHED_GPIPE_ADAPTIVE` enables timing-based adaptation
+- [ ] Fallback to static if adaptive fails
+- [ ] `GGML_SCHED_GPIPE=0` disables all GPipe (no change)
+
+#### From D5.7 (Test)
+
+- [ ] Romulus dual-GPU: per-token latency improves vs 2-stage
+- [ ] Correctness: logits match 2-stage GPipe ON output
+- [ ] No regression when GPipe OFF
+
+---
+
+### 13.8 References
+
+- `docs/wayfinder/D5.1-split-timing-analysis.md` — per-backend timing data
+- `docs/adr/0003-adaptive-pipeline-depth.md` — depth decision (Option C)
+- `docs/wayfinder/D0.5-implementation-seam.md` — implementation seam (section 7)
+- `docs/hot-paths-analysis.md` — tensor deployment map
+- `docs/wayfinder/D4.1-romulus-baseline-analysis.md` — D4 baseline
+
+---
+
+*Section 13 added 2026-07-11 — Deeper Pipelining n_stages > 2. ADR-0003 Option C accepted.*

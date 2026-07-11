@@ -212,11 +212,12 @@ On success:
 → Handoff to next phase
 ```
 
-## Stage 8: Beyond Mode A — Path C Stepping Stone (D4)
+## Stage 8: Beyond Mode A — Path C Stepping Stone (D4) ✅ COMPLETE
 
 **Entry point:** `docs/wayfinder/D4-PATH-C-AGENT-PLAN.md`  
 **Goal:** Prove server-side scheduling on romulus dual-GPU (7900 XTX + 3060 Ti); cluster (triton) deferred  
 **Workflow loop:** research → design → spec → prototype → implement → test → review
+**Completed:** 2026-07-11 — D4.1-D4.10 delivered (Path C core + profiler v1). See `MASTER-ORCHESTRATION-PLAN.md` Slice 2 Completion section for summary.
 
 ## Stage 9: Deeper Pipelining (D5)
 

@@ -417,9 +417,9 @@
 **Goal:** Analyze per-backend split timing to identify sub-stage boundaries.
 
 **Acceptance Criteria:**
-- [ ] Per-backend timing extracted from C1/D2 traces
-- [ ] Sub-stage boundaries identified (embed, RPC0, RPC1, RPC2, RPC3)
-- [ ] Output: `docs/wayfinder/D5.1-split-timing-analysis.md`
+- [x] Per-backend timing extracted from C1/D2 traces
+- [x] Sub-stage boundaries identified (embed, RPC0, RPC1, RPC2, RPC3)
+- [x] Output: `docs/wayfinder/D5.1-split-timing-analysis.md`
 
 **Implementation Notes:**
 - Output: `docs/wayfinder/D5.1-split-timing-analysis.md`
@@ -435,9 +435,9 @@
 **Goal:** Produce ADR for adaptive pipeline depth model.
 
 **Acceptance Criteria:**
-- [ ] ADR-003 created in `docs/adr/`
-- [ ] Decision: how n_stages is determined (static vs adaptive)
-- [ ] Interaction with existing copy-slot pipeline defined
+- [x] ADR-003 created in `docs/adr/`
+- [x] Decision: how n_stages is determined (static vs adaptive)
+- [x] Interaction with existing copy-slot pipeline defined
 
 **Implementation Notes:**
 - Output: `docs/adr/0003-adaptive-pipeline-depth.md`
@@ -454,9 +454,9 @@
 **Goal:** Add deeper pipelining spec section.
 
 **Acceptance Criteria:**
-- [ ] Spec section for n_stages > 2
-- [ ] Per-backend sub-stage API contracts
-- [ ] Adaptive depth acceptance criteria
+- [x] Spec section for n_stages > 2
+- [x] Per-backend sub-stage API contracts
+- [x] Adaptive depth acceptance criteria
 
 **Implementation Notes:**
 - File: `docs/path-d-spec.md`
@@ -472,9 +472,9 @@
 **Goal:** Throwaway code to test per-backend sub-stage dispatch.
 
 **Acceptance Criteria:**
-- [ ] Prototype demonstrates sub-stage dispatch feasibility
-- [ ] Straggler impact assessed
-- [ ] Findings documented for D5.5
+- [x] Prototype demonstrates sub-stage dispatch feasibility
+- [x] Straggler impact assessed
+- [x] Findings documented for D5.5
 
 **Implementation Notes:**
 - Skill: `/prototype`
@@ -490,9 +490,9 @@
 **Goal:** Split Stage 0 into per-backend sub-stages.
 
 **Acceptance Criteria:**
-- [ ] Stage 0 split into: embed, RPC0, RPC1, RPC2, RPC3
-- [ ] Per-sub-stage event signaling
-- [ ] Straggler isolation (fast backends not blocked by slow)
+- [x] Stage 0 split into: embed, RPC0, RPC1, RPC2, RPC3
+- [x] Per-sub-stage event signaling
+- [x] Straggler isolation (fast backends not blocked by slow)
 
 **Implementation Notes:**
 - File: `src/llama-context.cpp`, `ggml/src/ggml-backend.cpp`
@@ -509,9 +509,9 @@
 **Goal:** Implement adaptive depth — dynamic stage assignment based on backend load.
 
 **Acceptance Criteria:**
-- [ ] n_stages configurable at runtime
-- [ ] Stage assignment adapts to backend timing
-- [ ] Fallback to static assignment if adaptive fails
+- [x] n_stages configurable at runtime
+- [x] Stage assignment adapts to backend timing
+- [x] Fallback to static assignment if adaptive fails
 
 **Implementation Notes:**
 - File: `ggml/src/ggml-backend.cpp`
@@ -529,8 +529,8 @@
 
 **Acceptance Criteria:**
 - [ ] `global_3bk_pct` improves measurably vs 2-stage
-- [ ] Results documented in TRACKING.md
-- [ ] Comparison with D2.2 baseline
+- [x] Results documented in TRACKING.md
+- [x] Comparison with D2.2 baseline
 
 **Implementation Notes:**
 - Metrics: `global_3bk_pct`, `overlap_pct`, G

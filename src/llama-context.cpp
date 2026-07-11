@@ -57,50 +57,101 @@ extern "C" bool llama_gpipe_context_enabled(struct llama_context * ctx) {
     return ctx->get_cparams().gpipe_enabled;
 }
 
+static bool llama_gpipe_adaptive_enabled() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_SCHED_GPIPE_ADAPTIVE");
+        v = (e != nullptr && atoi(e) != 0) ? 1 : 0;
+    }
+    return v != 0;
+}
+
 int32_t llama_decode_gpipe_impl(llama_context * ctx, llama_batch /*batch*/, const float * /*logits*/) {
     if (!ctx->gpipe.enabled) {
         return -1;
     }
     ggml_backend_sched_t sched = ctx->get_sched();
     int32_t result = 0;
+    const int n_stages = ctx->gpipe.n_stages;
 
-    switch (ctx->gpipe.cur_stage) {
-        case 0: {
-            // Stage 0: compute - embed + RPC compute splits
-            // Dispatch compute graph (embed + RPC compute splits) through scheduler.
-            // Graph build/allocate is handled by sched_reserve() on first call.
-            {
-                ggml_cgraph * gf = ctx->gf_res_prev->get_gf();
-                if (gf) {
-                    ggml_backend_sched_graph_compute_async(sched, gf);
-                }
-            }
-            // Record compute_done event for stage 0
-            ggml_sched_gpipe_record(sched, 0);
-            ctx->gpipe.cur_stage = 1;
-            break;
-        }
-        case 1: {
-            // Stage 1: gather - wait for compute_done + KV write + sample
-            // Wait on compute_done event from Stage 0
-            ggml_sched_gpipe_wait(sched, 0);
-            // Dispatch gather graph (split 5) - includes KV write
-            // Graph build/allocate is handled by sched_reserve() on first call.
-            {
-                ggml_cgraph * gf = ctx->gf_res_prev->get_gf();
-                if (gf) {
-                    ggml_backend_sched_graph_compute_async(sched, gf);
-                }
-            }
-            // Record kv_ready event for next token's Stage 0
-            ggml_sched_gpipe_record(sched, 1);
-            ctx->gpipe.cur_stage = 0;
-            break;
-        }
-        default:
-            result = -1;
-            break;
+    if (n_stages <= 0) {
+        return -1;
     }
+
+    const int cur_stage = ctx->gpipe.cur_stage;
+    ggml_cgraph * gf = ctx->gf_res_prev->get_gf();
+    const int64_t stage_start = ggml_time_us();
+
+    if (cur_stage == 0) {
+        // Sub-stage 0: embed (always on first backend/cpu)
+        if (gf) {
+            ggml_backend_sched_graph_compute_async(sched, gf);
+        }
+        ggml_sched_gpipe_record(sched, 0);
+        ctx->gpipe.cur_stage = 1;
+    } else if (cur_stage >= 1 && cur_stage < n_stages - 1) {
+        // Per-backend compute sub-stages (backends 0..n_backends-2)
+        ggml_sched_gpipe_wait(sched, cur_stage - 1);
+        if (gf) {
+            ggml_backend_sched_graph_compute_async(sched, gf);
+        }
+        ggml_sched_gpipe_record(sched, cur_stage);
+        ctx->gpipe.cur_stage = cur_stage + 1;
+    } else if (cur_stage == n_stages - 1) {
+        // Last stage: last backend compute + gather + KV write
+        ggml_sched_gpipe_wait(sched, cur_stage - 1);
+        if (gf) {
+            ggml_backend_sched_graph_compute_async(sched, gf);
+        }
+        // Record kv_ready event for next token's Stage 0
+        ggml_sched_gpipe_record(sched, cur_stage);
+        ctx->gpipe.cur_stage = 0;  // wrap around to next token
+    } else {
+        result = -1;
+    }
+
+    // Track timing for adaptive depth (inline -- gpipe is private)
+    if (ctx->gpipe.adaptive_enabled && !ctx->gpipe.adaptive_finalized) {
+        int64_t elapsed = ggml_time_us() - stage_start;
+        int stage_id = cur_stage;
+
+        // Accumulate timing data
+        if (stage_id >= 0 && stage_id < LLAMA_GPIPE_MAX_STAGES) {
+            ctx->gpipe.stage_timing_sum_us[stage_id] += elapsed;
+            ctx->gpipe.stage_timing_count[stage_id]++;
+        }
+
+        // Adapt at end of full pipeline cycle (on wrap to stage 0)
+        if (ctx->gpipe.cur_stage == 0) {
+            ctx->gpipe.adaptive_warmup_count++;
+            if (ctx->gpipe.adaptive_warmup_count >= llama_gpipe_state::ADAPTIVE_WARMUP) {
+                int64_t mean_us[LLAMA_GPIPE_MAX_STAGES] = {};
+                int64_t max_us = 0;
+                int64_t min_us = INT64_MAX;
+                int n_valid = 0;
+
+                for (int s = 0; s < ctx->gpipe.n_stages; s++) {
+                    if (ctx->gpipe.stage_timing_count[s] > 0) {
+                        mean_us[s] = ctx->gpipe.stage_timing_sum_us[s] / ctx->gpipe.stage_timing_count[s];
+                        if (mean_us[s] > max_us) max_us = mean_us[s];
+                        if (min_us > mean_us[s] && mean_us[s] > 0) min_us = mean_us[s];
+                        n_valid++;
+                    }
+                }
+
+                if (n_valid >= 2 && max_us > 0 && min_us > 0 && (double)max_us / (double)min_us < 1.3) {
+                    if (ctx->gpipe.n_stages > 2) {
+                        LLAMA_LOG_INFO("%s: homogeneous backends (max/min=%.1fx), collapsing to n_stages=2\n",
+                                       __func__, (double)max_us / (double)min_us);
+                        ctx->gpipe.n_stages = 2;
+                    }
+                }
+                ctx->gpipe.adaptive_finalized = true;
+                LLAMA_LOG_INFO("%s: adaptive depth finalized: n_stages=%d\n", __func__, ctx->gpipe.n_stages);
+            }
+        }
+    }
+
     return result;
 }
 
@@ -315,6 +366,7 @@ llama_context::llama_context(
 
     cparams.gpipe_enabled = llama_gpipe_enabled();
     gpipe.enabled = cparams.gpipe_enabled;
+    gpipe.adaptive_enabled = gpipe.enabled && llama_gpipe_adaptive_enabled();
 
     {
         const char * LLAMA_GRAPH_REUSE_DISABLE = getenv("LLAMA_GRAPH_REUSE_DISABLE");
@@ -496,6 +548,36 @@ llama_context::llama_context(
 
         if (cparams.pipeline_parallel) {
             LLAMA_LOG_INFO("%s: pipeline parallelism enabled\n", __func__);
+        }
+
+        // GPipe deeper pipeline: compute n_stages from topology-aware default
+        if (gpipe.enabled && backend_ptrs.size() > 1) {
+            const int n_backends = (int)backend_ptrs.size();
+            // Default: one stage per backend (embed + per-backend compute + gather on last backend)
+            // For n_backends=2: n_stages=3 (embed + backend0 + backend1+gather)
+            // For n_backends=1: n_stages=2 (compute + gather, matches current behavior)
+            gpipe.n_stages = std::min(n_backends + 1, LLAMA_GPIPE_MAX_STAGES);
+
+            // User override via GGML_SCHED_GPIPE_DEPTH
+            {
+                const char * depth_env = getenv("GGML_SCHED_GPIPE_DEPTH");
+                if (depth_env != nullptr) {
+                    int user_depth = atoi(depth_env);
+                    if (user_depth >= 2 && user_depth <= LLAMA_GPIPE_MAX_STAGES) {
+                        gpipe.n_stages = user_depth;
+                    } else {
+                        LLAMA_LOG_WARN("%s: GGML_SCHED_GPIPE_DEPTH=%d out of range [2,%d], using default %d\n",
+                                       __func__, user_depth, LLAMA_GPIPE_MAX_STAGES, gpipe.n_stages);
+                    }
+                }
+            }
+
+            LLAMA_LOG_INFO("%s: GPipe enabled with n_stages=%d (n_backends=%d)\n",
+                           __func__, gpipe.n_stages, n_backends);
+        } else if (gpipe.enabled && backend_ptrs.size() == 1) {
+            // Single backend: 2-stage pipeline (matches current behavior)
+            gpipe.n_stages = 2;
+            LLAMA_LOG_INFO("%s: GPipe enabled with n_stages=2 (single backend)\n", __func__);
         }
 
         sched_reserve();
