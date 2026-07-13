@@ -124,12 +124,12 @@ int32_t llama_decode_gpipe_multi_impl(llama_context * ctx, llama_batch /*batch*/
                 if (pos == stage && !used_this_cycle[seq_id]) {
                     // Dispatch this sequence at this stage
                     if (stage > 0) {
-                        ggml_sched_gpipe_wait(sched, stage - 1);
+                        ggml_sched_gpipe_wait_seq(sched, stage - 1, (int)seq_id);
                     }
                     if (gf) {
                         ggml_backend_sched_graph_compute_async(sched, gf);
                     }
-                    ggml_sched_gpipe_record(sched, stage);
+                    ggml_sched_gpipe_record_seq(sched, stage, (int)seq_id);
 
                     st[stage] = seq_id;
                     used_this_cycle[seq_id] = true;
@@ -172,8 +172,8 @@ extern "C" void llama_gpipe_multi_seq_setup(struct llama_context * ctx, int n_se
     for (int i = 0; i < n_seqs; i++) {
         ctx->gpipe.seq_stage[i] = 0;
     }
-    // Upgrade to multi-bank events
-    ggml_sched_gpipe_init_multi(ctx->get_sched(), ctx->gpipe.n_stages, std::min(n_seqs, 2));
+    // Initialize per-sequence event arrays
+    ggml_sched_gpipe_init_multi(ctx->get_sched(), ctx->gpipe.n_stages, n_seqs);
 }
 
 extern "C" int llama_gpipe_multi_seq_n_stages(struct llama_context * ctx) {

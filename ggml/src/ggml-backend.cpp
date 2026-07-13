@@ -1110,9 +1110,8 @@ struct ggml_backend_sched {
     int next_copy;
     ggml_backend_event_t events[GGML_SCHED_MAX_BACKENDS][GGML_SCHED_MAX_COPIES];
     int n_gpipe_stages;
-    int n_gpipe_banks;                          // Mode B: number of event banks (1 for single-seq, 2 for multi-seq)
-    int gpipe_event_bank;                       // current active bank index, toggled per dispatch cycle
-    ggml_backend_event_t gpipe_events[2][GGML_SCHED_MAX_STAGES]; // bank × stage event array
+    int n_gpipe_seqs;                            // Mode B: number of concurrent sequences (1 for single-seq)
+    ggml_backend_event_t * gpipe_events;         // [n_gpipe_seqs * GGML_SCHED_MAX_STAGES] row-major, per-sequence event arrays
     struct ggml_tensor * graph_inputs[GGML_SCHED_MAX_SPLIT_INPUTS];
     int n_graph_inputs;
 
@@ -2848,15 +2847,16 @@ ggml_backend_sched_t ggml_backend_sched_new(
 
 // D6.5: initialize double-buffered GPipe events for multi-seq (Mode B).
 // n_banks=1 gives single-seq backward compat (one event per stage).
-// n_banks=2 allocates two alternating event sets so concurrent sequences
-// do not overwrite each other's event timestamps.
-void ggml_sched_gpipe_init_multi(ggml_backend_sched_t sched, int n_stages, int n_banks) {
+// D6.8: per-sequence event arrays. Each concurrent sequence owns an independent
+// event array so events never alias across sequences regardless of concurrency.
+// n_seqs controls how many event arrays to allocate (1 = single-seq, N = N concurrent seqs).
+void ggml_sched_gpipe_init_multi(ggml_backend_sched_t sched, int n_stages, int n_seqs) {
     GGML_ASSERT(sched);
-    GGML_ASSERT(n_banks <= 2);
+    GGML_ASSERT(n_seqs <= GGML_SCHED_MAX_BACKENDS);
 
-    if (n_stages <= 0 || n_banks <= 0) {
+    if (n_stages <= 0 || n_seqs <= 0) {
         sched->n_gpipe_stages = 0;
-        sched->n_gpipe_banks = 0;
+        sched->n_gpipe_seqs = 0;
         return;
     }
     GGML_ASSERT(n_stages <= GGML_SCHED_MAX_STAGES);
@@ -2864,86 +2864,88 @@ void ggml_sched_gpipe_init_multi(ggml_backend_sched_t sched, int n_stages, int n
     const int gather_bid = sched->n_backends - 1;
     ggml_backend_t gather_backend = sched->backends[gather_bid];
 
-    for (int b = 0; b < n_banks; b++) {
+    // Allocate flat row-major array: [n_seqs * GGML_SCHED_MAX_STAGES]
+    const int total = n_seqs * GGML_SCHED_MAX_STAGES;
+    sched->gpipe_events = (ggml_backend_event_t *)calloc(total, sizeof(ggml_backend_event_t));
+
+    for (int seq = 0; seq < n_seqs; seq++) {
         for (int s = 0; s < n_stages; s++) {
-            sched->gpipe_events[b][s] = ggml_backend_event_new(gather_backend->device);
+            sched->gpipe_events[seq * GGML_SCHED_MAX_STAGES + s] =
+                ggml_backend_event_new(gather_backend->device);
         }
     }
     sched->n_gpipe_stages = n_stages;
-    sched->n_gpipe_banks = n_banks;
-    sched->gpipe_event_bank = 0;
+    sched->n_gpipe_seqs = n_seqs;
 }
 
 void ggml_sched_gpipe_init(ggml_backend_sched_t sched, int n_stages) {
     GGML_ASSERT(sched);
     if (n_stages <= 0) {
         sched->n_gpipe_stages = 0;
-        sched->n_gpipe_banks = 0;
+        sched->n_gpipe_seqs = 0;
         return;
     }
     GGML_ASSERT(n_stages <= GGML_SCHED_MAX_STAGES);
     ggml_sched_gpipe_init_multi(sched, n_stages, 1);
 }
 
-// D6.5: wait on a GPipe stage event for a specific bank.
-// split_id < 0 drains all stages for the given bank (pipeline flush).
-void ggml_sched_gpipe_wait_bank(ggml_backend_sched_t sched, int split_id, int bank) {
+// D6.8: wait on a GPipe stage event for a specific sequence.
+// split_id < 0 drains all stages for the given sequence (pipeline flush).
+void ggml_sched_gpipe_wait_seq(ggml_backend_sched_t sched, int split_id, int seq_id) {
     GGML_ASSERT(sched);
-    if (sched->n_gpipe_stages == 0 || bank < 0 || bank >= sched->n_gpipe_banks) {
+    if (sched->n_gpipe_stages == 0 || seq_id < 0 || seq_id >= sched->n_gpipe_seqs) {
         return;
     }
 
     const int gather_bid = sched->n_backends - 1;
     ggml_backend_t gather_backend = sched->backends[gather_bid];
+    const int row_off = seq_id * GGML_SCHED_MAX_STAGES;
 
     if (split_id < 0) {
         for (int s = 0; s < sched->n_gpipe_stages; s++) {
-            if (sched->gpipe_events[bank][s] != NULL) {
+            ggml_backend_event_t ev = sched->gpipe_events[row_off + s];
+            if (ev != NULL) {
                 if (gather_backend->iface.event_wait != NULL) {
-                    ggml_backend_event_wait(gather_backend, sched->gpipe_events[bank][s]);
+                    ggml_backend_event_wait(gather_backend, ev);
                 } else {
-                    ggml_backend_event_synchronize(sched->gpipe_events[bank][s]);
+                    ggml_backend_event_synchronize(ev);
                 }
             }
         }
     } else {
-        if (split_id < sched->n_gpipe_stages && sched->gpipe_events[bank][split_id] != NULL) {
-            if (gather_backend->iface.event_wait != NULL) {
-                ggml_backend_event_wait(gather_backend, sched->gpipe_events[bank][split_id]);
-            } else {
-                ggml_backend_event_synchronize(sched->gpipe_events[bank][split_id]);
+        if (split_id < sched->n_gpipe_stages) {
+            ggml_backend_event_t ev = sched->gpipe_events[row_off + split_id];
+            if (ev != NULL) {
+                if (gather_backend->iface.event_wait != NULL) {
+                    ggml_backend_event_wait(gather_backend, ev);
+                } else {
+                    ggml_backend_event_synchronize(ev);
+                }
             }
         }
     }
 }
 
 void ggml_sched_gpipe_wait(ggml_backend_sched_t sched, int split_id) {
-    ggml_sched_gpipe_wait_bank(sched, split_id, 0);
+    ggml_sched_gpipe_wait_seq(sched, split_id, 0);
 }
 
-// D6.5: record a stage-complete event on the gather backend for the given bank.
-void ggml_sched_gpipe_record_bank(ggml_backend_sched_t sched, int stage_id, int bank) {
+// D6.8: record a stage-complete event on the gather backend for the given sequence.
+void ggml_sched_gpipe_record_seq(ggml_backend_sched_t sched, int stage_id, int seq_id) {
     GGML_ASSERT(sched);
-    if (stage_id < 0 || stage_id >= sched->n_gpipe_stages || bank < 0 || bank >= sched->n_gpipe_banks) {
+    if (stage_id < 0 || stage_id >= sched->n_gpipe_stages || seq_id < 0 || seq_id >= sched->n_gpipe_seqs) {
         return;
     }
-    if (sched->gpipe_events[bank][stage_id] == NULL) {
+    ggml_backend_event_t ev = sched->gpipe_events[seq_id * GGML_SCHED_MAX_STAGES + stage_id];
+    if (ev == NULL) {
         return;
     }
     const int gather_bid = sched->n_backends - 1;
-    ggml_backend_event_record(sched->gpipe_events[bank][stage_id], sched->backends[gather_bid]);
+    ggml_backend_event_record(ev, sched->backends[gather_bid]);
 }
 
 void ggml_sched_gpipe_record(ggml_backend_sched_t sched, int stage_id) {
-    ggml_sched_gpipe_record_bank(sched, stage_id, 0);
-}
-
-// D6.5: switch the active event bank (called once per multi-seq dispatch cycle).
-// Each sequence alternates banks so concurrent sequences never share event slots.
-void ggml_sched_gpipe_toggle_bank(ggml_backend_sched_t sched, int new_bank) {
-    GGML_ASSERT(sched);
-    GGML_ASSERT(new_bank >= 0 && new_bank < sched->n_gpipe_banks);
-    sched->gpipe_event_bank = new_bank;
+    ggml_sched_gpipe_record_seq(sched, stage_id, 0);
 }
 
 void ggml_backend_sched_free(ggml_backend_sched_t sched) {
@@ -2955,11 +2957,12 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
             ggml_backend_event_free(sched->events[b][c]);
         }
     }
-    for (int b = 0; b < sched->n_gpipe_banks; b++) {
+    for (int seq = 0; seq < sched->n_gpipe_seqs; seq++) {
         for (int s = 0; s < sched->n_gpipe_stages; s++) {
-            ggml_backend_event_free(sched->gpipe_events[b][s]);
+            ggml_backend_event_free(sched->gpipe_events[seq * GGML_SCHED_MAX_STAGES + s]);
         }
     }
+    free(sched->gpipe_events);
     ggml_gallocr_free(sched->galloc);
     ggml_free(sched->ctx);
     ggml_hash_set_free(&sched->hash_set);
