@@ -80,6 +80,7 @@ struct profiler_config {
     bool warmup       = true;
     bool enable_trace = false;
     bool server_telemetry = false;
+    int  gpipe_stages = 0;        // D6.9: 0=disabled, 2+=enable GPipe with N stages
 
     llama_split_mode split_mode = LLAMA_SPLIT_MODE_LAYER;
     ggml_type type_k = GGML_TYPE_Q4_0;
@@ -265,6 +266,13 @@ static task_result run_session(
 
     if (!cfg.rpc_endpoints.empty()) {
         register_rpc_servers(cfg.rpc_endpoints);
+    }
+
+    // D6.9: enable GPipe with configurable stage count for per-stage profiling
+    if (cfg.gpipe_stages >= 2) {
+        setenv("GGML_SCHED_GPIPE", "1", 1);
+        setenv("GGML_SCHED_GPIPE_DEPTH", std::to_string(cfg.gpipe_stages).c_str(), 1);
+        fprintf(stderr, ">>> GPipe enabled: n_stages=%d\n", cfg.gpipe_stages);
     }
 
     llama_model_params mparams = llama_model_default_params();
@@ -874,6 +882,7 @@ static void usage(const char * argv0) {
         "  -t, --threads N            Thread count (default: auto)\n"
         "  --ctx-size N               Context size (default: 4096)\n"
         "  --overlap-target N         B+6 gate threshold percent (default: 5)\n"
+        "  --gpipe-stages N           Enable GPipe with N stages for per-stage profiling\n"
         "  -h, --help                 Usage\n",
         argv0);
 }
@@ -959,6 +968,9 @@ int llama_gpipe_profiler(int argc, char ** argv) {
             cfg.ctx_size = std::stoi(need(arg.c_str()));
         } else if (arg == "--overlap-target") {
             cfg.overlap_target = std::stoi(need(arg.c_str()));
+        } else if (arg == "--gpipe-stages") {
+            // D6.9: enable GPipe with N stages for stage-granularity profiling
+            cfg.gpipe_stages = std::stoi(need(arg.c_str()));
         } else {
             fprintf(stderr, "error: unknown arg %s\n", arg.c_str());
             usage(argv[0]);

@@ -362,6 +362,13 @@ extern "C" {
     GGML_API void ggml_sched_gpipe_record_seq(ggml_backend_sched_t sched, int stage_id, int seq_id);
     GGML_API void ggml_sched_gpipe_wait_seq(ggml_backend_sched_t sched, int stage_id, int seq_id);
 
+    // D6.9: per-stage split filtering for server-side GRAPH_COMPUTE_STAGE.
+    // When gpipe_active_stage >= 0, compute_splits only processes splits whose
+    // backend_id matches the active stage. Default -1 = no filter (all stages).
+    GGML_API void ggml_backend_sched_set_gpipe_stage(ggml_backend_sched_t sched, int stage_id);
+    GGML_API int  ggml_backend_sched_get_gpipe_stage(ggml_backend_sched_t sched);
+    GGML_API int  ggml_backend_sched_get_tls_gpipe_stage(void);  // D6.9: thread-local accessor for RPC backend
+
     // Plus=1 TSC repair spike: sequential handoff for multi-backend pipeline (R1+R2 bundle).
     // When enabled, graph reuse uses full sched sync and Plus async defer is off (see BUGFIX-plus1-tsc-REPAIR-PATH.md).
     GGML_API bool                 ggml_pipeline_multi_backend_seq_enabled(void);

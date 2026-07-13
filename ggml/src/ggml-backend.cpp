@@ -1112,6 +1112,7 @@ struct ggml_backend_sched {
     int n_gpipe_stages;
     int n_gpipe_seqs;                            // Mode B: number of concurrent sequences (1 for single-seq)
     ggml_backend_event_t * gpipe_events;         // [n_gpipe_seqs * GGML_SCHED_MAX_STAGES] row-major, per-sequence event arrays
+    int gpipe_active_stage;                      // D6.9: filter splits to this backend_id, -1 = all stages
     struct ggml_tensor * graph_inputs[GGML_SCHED_MAX_SPLIT_INPUTS];
     int n_graph_inputs;
 
@@ -2314,9 +2315,15 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
     std::vector<ggml_bitset_t> used_ids;
 
     for (int split_id = 0; split_id < sched->n_splits; split_id++) {
-        const auto split_t0 = std::chrono::steady_clock::now();
         struct ggml_backend_sched_split * split = &splits[split_id];
         int split_backend_id = split->backend_id;
+
+        // D6.9: skip splits not belonging to the active pipeline stage
+        if (sched->gpipe_active_stage >= 0 && split_backend_id != sched->gpipe_active_stage) {
+            continue;
+        }
+
+        const auto split_t0 = std::chrono::steady_clock::now();
         ggml_backend_t split_backend = sched->backends[split_backend_id];
         ggml_hotpath_trace_set_sched_ctx(split_id, split_backend_id);
 
@@ -2839,6 +2846,7 @@ ggml_backend_sched_t ggml_backend_sched_new(
 
     sched->galloc = ggml_gallocr_new_n(sched->bufts, n_backends);
     sched->op_offload = op_offload;
+    sched->gpipe_active_stage = -1;  // D6.9: no filter by default
 
     ggml_backend_sched_reset(sched);
 
@@ -2946,6 +2954,25 @@ void ggml_sched_gpipe_record_seq(ggml_backend_sched_t sched, int stage_id, int s
 
 void ggml_sched_gpipe_record(ggml_backend_sched_t sched, int stage_id) {
     ggml_sched_gpipe_record_seq(sched, stage_id, 0);
+}
+
+// D6.9: thread-local active stage so RPC backend can detect stage-filtered dispatch.
+// Set by ggml_backend_sched_set_gpipe_stage, checked by ggml_backend_rpc_graph_compute.
+static thread_local int tls_gpipe_active_stage = -1;
+
+void ggml_backend_sched_set_gpipe_stage(ggml_backend_sched_t sched, int stage_id) {
+    GGML_ASSERT(sched);
+    sched->gpipe_active_stage = stage_id;
+    tls_gpipe_active_stage = stage_id;
+}
+
+int ggml_backend_sched_get_gpipe_stage(ggml_backend_sched_t sched) {
+    GGML_ASSERT(sched);
+    return sched->gpipe_active_stage;
+}
+
+int ggml_backend_sched_get_tls_gpipe_stage(void) {
+    return tls_gpipe_active_stage;
 }
 
 void ggml_backend_sched_free(ggml_backend_sched_t sched) {

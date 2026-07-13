@@ -146,7 +146,8 @@ enum rpc_cmd {
     RPC_CMD_CHANNEL_BIND,         // B+11: pair response socket (value 20)
     RPC_CMD_GRAPH_COMPUTE_ALL,    // Path C: submit full graph for server-side multi-GPU compute (value 21)
     RPC_CMD_GRAPH_RECOMPUTE_ALL,  // Path C: re-execute cached graph (value 22)
-    RPC_CMD_COUNT,                 // updated from 21
+    RPC_CMD_GRAPH_COMPUTE_STAGE,  // D6.9: per-stage split filtering for GPipe + profiler (value 23)
+    RPC_CMD_COUNT,                 // updated from 22
 };
 
 static_assert(RPC_CMD_HELLO == 14, "RPC_CMD_HELLO must be always 14");
@@ -692,6 +693,15 @@ struct rpc_msg_graph_compute_all_req {
 struct rpc_msg_graph_compute_all_rsp {
     uint32_t result;        // 0=success
     uint32_t output_device; // which GPU holds the output tensor
+};
+
+// D6.9: per-stage dispatch request (reuses ALL graph serialization, adds stage_id)
+struct rpc_msg_graph_compute_stage_req {
+    uint32_t n_devices;
+    uint32_t devices[GGML_RPC_MAX_DEVICES];
+    uint32_t stage_id;          // pipeline stage to filter for (maps to backend_id)
+    uint32_t sync_mode;         // 0=fire-and-forget, 1=blocking with response
+    uint32_t output_requested;  // 0=no output, 1=include output in response
 };
 
 // D4.10: response struct for single-device GRAPH_COMPUTE (telemetry carrier)
@@ -2323,6 +2333,52 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
     flush_pending_hash_all();
     flush_set_tensor_batch();
 
+    // D6.9: per-stage dispatch via GRAPH_COMPUTE_STAGE
+    // When the GPipe dispatch sets gpipe_active_stage, we send a stage-filtered
+    // graph to the server so only this stage's backend computes its splits.
+    int gpipe_stage = ggml_backend_sched_get_tls_gpipe_stage();
+    if (gpipe_stage >= 0 && sock->server_supports_telemetry) {
+        const auto t0 = std::chrono::steady_clock::now();
+        std::vector<uint8_t> input;
+        // Use same serialization as GRAPH_COMPUTE_ALL (full graph)
+        uint32_t n_devices = rpc_ctx->n_devices_on_endpoint > 0 ?
+            rpc_ctx->n_devices_on_endpoint : 1;
+        if (n_devices > GGML_RPC_MAX_DEVICES) {
+            n_devices = GGML_RPC_MAX_DEVICES;
+        }
+        uint32_t devices[GGML_RPC_MAX_DEVICES];
+        for (uint32_t i = 0; i < n_devices; i++) {
+            devices[i] = i;
+        }
+        serialize_graph_for_all(devices, n_devices, cgraph, input);
+
+        // Prefix stage_id before graph data (server extracts first 4 bytes)
+        uint32_t stage_id = (uint32_t)gpipe_stage;
+        std::vector<uint8_t> stage_input(sizeof(stage_id) + input.size());
+        memcpy(stage_input.data(), &stage_id, sizeof(stage_id));
+        memcpy(stage_input.data() + sizeof(stage_id), input.data(), input.size());
+
+        rpc_msg_graph_compute_all_rsp rsp;
+        size_t resp_size = sizeof(rsp) + sizeof(rpc_msg_server_telemetry);
+        std::vector<uint8_t> resp_buf(resp_size);
+        bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_COMPUTE_STAGE,
+                                   stage_input.data(), stage_input.size(),
+                                   resp_buf.data(), resp_size);
+        RPC_STATUS_ASSERT(status);
+        memcpy(&rsp, resp_buf.data(), sizeof(rsp));
+        if (rsp.result == 0) {
+            rpc_msg_server_telemetry telem;
+            memcpy(&telem, resp_buf.data() + sizeof(rsp), sizeof(telem));
+            rpc_write_server_telemetry_jsonl(telem);
+        }
+        rpc_ctx->last_compute_sock = nullptr;
+        const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - t0).count();
+        rpc_trace_emit(__func__, "graph_compute_stage",
+                       RPC_CMD_GRAPH_COMPUTE_STAGE, input.size(), false, us);
+        return GGML_STATUS_SUCCESS;
+    }
+
     // D4.5: Path C - multi-device dispatch via GRAPH_COMPUTE_ALL
     // Fires when n_devices_on_endpoint > 1, i.e. a single RPC backend
     // has 2+ GPUs (e.g. rpc-server -d CUDA0,CUDA1). Telemetry collection
@@ -2592,6 +2648,7 @@ public:
     bool graph_recompute(const rpc_msg_graph_recompute_req & request);
     bool graph_compute_all(const std::vector<uint8_t> & input);
     bool graph_recompute_all(const rpc_msg_graph_recompute_all_req & request);
+    bool graph_compute_stage(const std::vector<uint8_t> & input, uint32_t stage_id);  // D6.9
     ggml_backend_sched_t create_multi_device_sched(
         const uint32_t * devices, uint32_t n_devices,
         const ggml_cgraph * graph);
@@ -2603,6 +2660,7 @@ public:
     void enqueue_graph_recompute(rpc_msg_graph_recompute_req request);
     void enqueue_graph_compute_all(std::vector<uint8_t> input);
     void enqueue_graph_recompute_all(rpc_msg_graph_recompute_all_req request);
+    void enqueue_graph_compute_stage(std::vector<uint8_t> input, uint32_t stage_id);  // D6.9
     void wait_compute_idle();
     void collect_telemetry(const uint32_t * devices, uint32_t n_devices,
                            const int64_t * per_device_us);
@@ -3419,6 +3477,105 @@ bool rpc_server::graph_recompute_all(const rpc_msg_graph_recompute_all_req & req
     return true;
 }
 
+// D6.9: per-stage graph compute with split filtering.
+// Identical to graph_compute_all but sets gpipe_active_stage on the scheduler
+// so only splits matching the given stage's backend_id are computed.
+bool rpc_server::graph_compute_stage(const std::vector<uint8_t> & input, uint32_t stage_id) {
+    // Reuse graph_compute_all's deserialization (same binary format)
+    if (input.size() < sizeof(uint32_t) * 3) {
+        return false;
+    }
+
+    const uint8_t * src = input.data();
+    uint32_t n_devices;
+    memcpy(&n_devices, src, sizeof(n_devices));
+    src += sizeof(n_devices);
+
+    if (n_devices == 0 || n_devices > 8) {
+        return false;
+    }
+
+    uint32_t devices[8];
+    size_t devs_size = n_devices * sizeof(uint32_t);
+    if (input.size() < sizeof(uint32_t) + devs_size + sizeof(uint32_t)) {
+        return false;
+    }
+    memcpy(devices, src, devs_size);
+    src += devs_size;
+
+    uint32_t n_nodes;
+    memcpy(&n_nodes, src, sizeof(n_nodes));
+    src += sizeof(n_nodes);
+    if (input.size() < sizeof(uint32_t) + devs_size + sizeof(uint32_t) + n_nodes * sizeof(uint64_t) + sizeof(uint32_t)) {
+        return false;
+    }
+    const uint64_t * nodes = (const uint64_t *)src;
+    src += n_nodes * sizeof(uint64_t);
+    uint32_t n_tensors;
+    memcpy(&n_tensors, src, sizeof(n_tensors));
+    src += sizeof(n_tensors);
+    if (input.size() < sizeof(uint32_t) + devs_size + sizeof(uint32_t) + n_nodes * sizeof(uint64_t) + sizeof(uint32_t) + n_tensors * sizeof(rpc_tensor)) {
+        return false;
+    }
+    const rpc_tensor * tensors = (const rpc_tensor *)src;
+
+    size_t buf_size = ggml_tensor_overhead() * (n_nodes + n_tensors) + ggml_graph_overhead_custom(n_nodes, false);
+    std::vector<uint8_t> ctx_buf(buf_size);
+    struct ggml_init_params params = {
+        /*.mem_size   =*/ buf_size,
+        /*.mem_buffer =*/ ctx_buf.data(),
+        /*.no_alloc   =*/ true,
+    };
+    ggml_context_ptr ctx_ptr{ ggml_init(params) };
+    GGML_ASSERT(ctx_ptr != nullptr);
+    ggml_context * ctx = ctx_ptr.get();
+    struct ggml_cgraph * graph = ggml_new_graph_custom(ctx, n_nodes, false);
+    graph->n_nodes = n_nodes;
+
+    std::unordered_map<uint64_t, const rpc_tensor *> tensor_ptrs;
+    tensor_ptrs.reserve(n_tensors);
+    for (uint32_t i = 0; i < n_tensors; i++) {
+        tensor_ptrs.emplace(tensors[i].id, &tensors[i]);
+    }
+    std::unordered_map<uint64_t, ggml_tensor *> tensor_map;
+    tensor_map.reserve(n_nodes);
+    for (uint32_t i = 0; i < n_nodes; i++) {
+        int64_t id;
+        memcpy(&id, &nodes[i], sizeof(id));
+        graph->nodes[i] = create_node(id, ctx, tensor_ptrs, tensor_map);
+        if (graph->nodes[i] == nullptr && id != 0) {
+            return false;
+        }
+    }
+
+    ggml_backend_sched_t sched = create_multi_device_sched(devices, n_devices, graph);
+    if (!sched) {
+        return false;
+    }
+
+    // D6.9: filter splits to only this pipeline stage's backend
+    ggml_backend_sched_set_gpipe_stage(sched, (int)stage_id);
+
+    const auto t0 = std::chrono::steady_clock::now();
+    ggml_status status = ggml_backend_sched_graph_compute(sched, graph);
+    GGML_ASSERT(status == GGML_STATUS_SUCCESS);
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    rpc_trace_emit("rpc_server::graph_compute_stage", "server_compute_stage",
+                   RPC_CMD_GRAPH_COMPUTE_STAGE, input.size(), true, us);
+
+    // Collect telemetry for this stage
+    if (telemetry_enabled) {
+        int64_t per_device_us[RPC_TELEMETRY_MAX_DEVICES];
+        for (uint32_t i = 0; i < n_devices && i < RPC_TELEMETRY_MAX_DEVICES; i++) {
+            per_device_us[i] = ggml_backend_sched_get_backend_timing_us(sched, (int)i);
+        }
+        collect_telemetry(devices, n_devices, per_device_us);
+    }
+
+    return true;
+}
+
 bool rpc_server::get_device_memory(const rpc_msg_get_device_memory_req & request, rpc_msg_get_device_memory_rsp & response) {
     uint32_t dev_id = request.device;
     if (dev_id >= backends.size()) {
@@ -3492,6 +3649,15 @@ void rpc_server::enqueue_graph_recompute_all(rpc_msg_graph_recompute_all_req req
     submit_compute_job([this, request]() {
         if (!graph_recompute_all(request)) {
             GGML_LOG_ERROR("[%s] async graph_recompute_all failed\n", __func__);
+        }
+    });
+}
+
+// D6.9: enqueue per-stage compute with split filtering
+void rpc_server::enqueue_graph_compute_stage(std::vector<uint8_t> input, uint32_t stage_id) {
+    submit_compute_job([this, input = std::move(input), stage_id]() {
+        if (!graph_compute_stage(input, stage_id)) {
+            GGML_LOG_ERROR("[%s] async graph_compute_stage(%u) failed\n", __func__, stage_id);
         }
     });
 }
@@ -4067,6 +4233,36 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                     return;
                 }
                 server.enqueue_graph_recompute_all(request);
+                break;
+            }
+            case RPC_CMD_GRAPH_COMPUTE_STAGE: {
+                // D6.9: per-stage dispatch with split filtering
+                // Format: | stage_id(4) | n_devices(4) | device_ids(...) | graph data |
+                std::vector<uint8_t> input;
+                if (!recv_msg(sock, input)) {
+                    return;
+                }
+                if (input.size() < sizeof(uint32_t) * 2) {
+                    return;
+                }
+                uint32_t stage_id;
+                memcpy(&stage_id, input.data(), sizeof(stage_id));
+                // Shift input to strip the stage_id prefix for graph_compute_stage
+                std::vector<uint8_t> graph_input(input.begin() + sizeof(uint32_t), input.end());
+                server.enqueue_graph_compute_stage(std::move(graph_input), stage_id);
+                server.wait_compute_idle();
+                rpc_msg_graph_compute_all_rsp rsp = {};
+                rsp.result = 0;
+                rpc_msg_server_telemetry telem = {};
+                if (server.get_last_telemetry(telem)) {
+                    size_t resp_size = sizeof(rsp) + sizeof(telem);
+                    std::vector<uint8_t> resp_buf(resp_size);
+                    memcpy(resp_buf.data(), &rsp, sizeof(rsp));
+                    memcpy(resp_buf.data() + sizeof(rsp), &telem, sizeof(telem));
+                    send_response(sock, resp_buf.data(), resp_buf.size());
+                } else {
+                    send_response(sock, &rsp, sizeof(rsp));
+                }
                 break;
             }
             default: {
