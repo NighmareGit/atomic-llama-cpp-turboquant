@@ -368,6 +368,7 @@ extern "C" {
     GGML_API void ggml_backend_sched_set_gpipe_stage(ggml_backend_sched_t sched, int stage_id);
     GGML_API int  ggml_backend_sched_get_gpipe_stage(ggml_backend_sched_t sched);
     GGML_API int  ggml_backend_sched_get_tls_gpipe_stage(void);  // D6.9: thread-local accessor for RPC backend
+    GGML_API void ggml_backend_sched_signal_gpipe_stage(int stage_id);  // D6.9: signal stage to RPC backend only (no client-side filter)
 
     // Plus=1 TSC repair spike: sequential handoff for multi-backend pipeline (R1+R2 bundle).
     // When enabled, graph reuse uses full sched sync and Plus async defer is off (see BUGFIX-plus1-tsc-REPAIR-PATH.md).

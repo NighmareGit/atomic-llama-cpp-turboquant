@@ -2975,6 +2975,13 @@ int ggml_backend_sched_get_tls_gpipe_stage(void) {
     return tls_gpipe_active_stage;
 }
 
+// D6.9: signal the current pipeline stage to the RPC backend only (thread-local).
+// Does NOT set the scheduler field -- client-side compute_splits still processes
+// all splits for correctness. The server uses set_gpipe_stage for filtering.
+void ggml_backend_sched_signal_gpipe_stage(int stage_id) {
+    tls_gpipe_active_stage = stage_id;
+}
+
 void ggml_backend_sched_free(ggml_backend_sched_t sched) {
     if (sched == NULL) {
         return;

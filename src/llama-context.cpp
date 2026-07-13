@@ -127,10 +127,11 @@ int32_t llama_decode_gpipe_multi_impl(llama_context * ctx, llama_batch /*batch*/
                         ggml_sched_gpipe_wait_seq(sched, stage - 1, (int)seq_id);
                     }
                     if (gf) {
-                        // D6.9: enable per-stage split filtering for RPC GRAPH_COMPUTE_STAGE
-                        ggml_backend_sched_set_gpipe_stage(sched, stage);
+                        // D6.9: signal stage to RPC backend for GRAPH_COMPUTE_STAGE telemetry.
+                        // Only sets thread-local (RPC backend check), not scheduler filter.
+                        ggml_backend_sched_signal_gpipe_stage(stage);
                         ggml_backend_sched_graph_compute_async(sched, gf);
-                        ggml_backend_sched_set_gpipe_stage(sched, -1);
+                        ggml_backend_sched_signal_gpipe_stage(-1);
                     }
                     ggml_sched_gpipe_record_seq(sched, stage, (int)seq_id);
 
