@@ -1,8 +1,8 @@
 # Path D Specification — GPipe Client Scheduler
 
 **Branch:** Path-D-Gpipeline-Assembly-Line  
-**Date:** 2026-07-11  
-**Status:** Specification Phase — Mode A complete, Path C (section 12) added  
+**Date:** 2026-07-13  
+**Status:** Specification Phase — Mode A complete, Mode B multi-seq complete (section 10.3), Path C (section 12) defined  
 **Inputs:** D0.2, D0.3 (ADR-0002), D0.4, D0.5
 
 ---
@@ -195,9 +195,11 @@ The current Mode A (2-stage GPipe: compute + gather) is the foundation. This sec
 | Implement | Dynamic stage assignment (adaptive depth) | Code in `ggml-backend.cpp` |
 | Test | Verify `global_3bk_pct >= 25%` | Metrics in TRACKING.md |
 
-### 10.3 Phase D6 — Mode B Microbatch / Multi-Seq
+### 10.3 Phase D6 -- Mode B Microbatch / Multi-Seq
 
 **Goal:** Support multiple sequences at different pipeline positions (server multi-slot).
+
+**Phases:**
 
 | Step | What | Output |
 |------|------|--------|
@@ -208,6 +210,126 @@ The current Mode A (2-stage GPipe: compute + gather) is the foundation. This sec
 | Implement | Extend state machine for multi-seq | Code in `llama-context.cpp` |
 | Implement | Server multi-slot dispatch | Code in `ggml-rpc.cpp` |
 | Test | Verify concurrent multi-seq decode | Metrics in TRACKING.md |
+
+#### 10.3.1 Multi-Seq Pipeline Model
+
+Mode B extends the Mode A single-sequence pipeline to support multiple concurrent sequences occupying different stages:
+
+```
+Sequence A: Stage 0 (embed)     -> Stage 1 (RPC0)         -> Stage 2 (ROCm0+gather+KV)
+Sequence B:          Stage 0 (embed)     -> Stage 1 (RPC0)         -> Stage 2 (ROCm0+gather+KV)
+```
+
+Each sequence advances through stages independently. The dispatch loop fills available stages from any active sequence whose next position matches the stage.
+
+**Scheduling model (ADR-005):** Stage-available. Any sequence can claim a free stage. No fixed ordering between sequences.
+
+**Event signaling model (ADR-005):** Double-buffered. Two alternating event banks prevent timestamp overwrite when sequences share event slots.
+
+#### 10.3.2 API Contracts
+
+**Extended `llama_gpipe_state` (in `src/llama-context.h`):**
+
+```cpp
+struct llama_gpipe_state {
+    // Existing fields (Mode A)
+    int  n_stages;
+    int  microbatch_size;     // Target concurrent sequences (2 default)
+    bool enabled;
+
+    // Mode B: per-sequence stage tracking
+    std::vector<llama_seq_id> stage_tokens;  // stage[s] -> owning seq_id (-1 = free)
+    std::map<llama_seq_id, int> seq_stage;  // seq_id -> current stage position
+    int active_sequences;                    // Count of sequences in pipeline
+
+    // Adaptive depth (unchanged from D5)
+    bool adaptive_enabled;
+    int  adaptive_warmup_count;
+    static constexpr int ADAPTIVE_WARMUP = 5;
+    int64_t stage_timing_sum_us[LLAMA_GPIPE_MAX_STAGES];
+    int     stage_timing_count[LLAMA_GPIPE_MAX_STAGES];
+    bool    adaptive_finalized;
+
+    int64_t stage_start_us[LLAMA_GPIPE_MAX_STAGES];
+};
+```
+
+**Double-buffered events (in `ggml/src/ggml-backend.cpp`):**
+
+```cpp
+// Scheduler struct extension:
+ggml_backend_event_t gpipe_events[2][GGML_SCHED_MAX_STAGES];  // bank 0/1
+int gpipe_event_bank;  // current bank index, toggled per dispatch call
+```
+
+**New functions:**
+
+```cpp
+// Reserve a sequence slot in the pipeline. Returns sequence ID, or -1 if full.
+int32_t llama_gpipe_seq_reserve(llama_context * ctx);
+
+// Release a sequence from the pipeline (e.g., on generation complete).
+void llama_gpipe_seq_release(llama_context * ctx, llama_seq_id seq_id);
+
+// Multi-seq dispatch: iterate stages, fill from available sequences.
+// Returns number of stages dispatched this call, or -1 on error.
+int32_t llama_decode_gpipe_multi_impl(llama_context * ctx, llama_batch batch);
+```
+
+**Event API extensions:**
+
+```cpp
+// Initialize double-buffered GPipe events (n_banks × n_stages events).
+void ggml_sched_gpipe_init_multi(ggml_backend_sched_t sched, int n_stages, int n_banks);
+
+// Record stage event for the current bank.
+void ggml_sched_gpipe_record_bank(ggml_backend_sched_t sched, int stage_id, int bank);
+
+// Wait on stage event for the given bank.
+void ggml_sched_gpipe_wait_bank(ggml_backend_sched_t sched, int stage_id, int bank);
+
+// Toggle event bank (call once per multi-seq dispatch cycle).
+void ggml_sched_gpipe_toggle_bank(ggml_backend_sched_t sched);
+```
+
+#### 10.3.3 Stage-Ownership Protocol
+
+```
+On dispatch:
+  for each stage s in [0, n_stages):
+    if stage_tokens[s] == -1 (free):
+      find seq where seq_stage[seq] == s
+      if found:
+        dispatch seq at stage s
+        stage_tokens[s] = seq
+        if s == n_stages - 1 (KV write complete):
+          stage_tokens[s] = -1        // release stage
+          seq_stage[seq] = 0          // wrap to next token
+        else:
+          seq_stage[seq] = s + 1      // advance
+```
+
+Per-sequence KV-ready release follows ADR-0002: a sequence's next token cannot start Stage 0 until its previous token completes Stage n-1 (gather+KV write). Different sequences have independent release chains.
+
+#### 10.3.4 Implementation Sequence
+
+| Ticket | What changes | Where |
+|--------|-------------|-------|
+| D6.4 | Throwaway prototype: test multi-seq token tracking | `tests/test-gpipe-multi-seq-prototype.cpp` (deleted after) |
+| D6.5 | Double-buffered events + per-sequence stage tracking | `ggml/src/ggml-backend.cpp`, `src/llama-context.h`, `src/llama-context.cpp` |
+| D6.6 | Server multi-slot dispatch: accept per-sequence graphs | `ggml/src/ggml-rpc/ggml-rpc.cpp` |
+| D6.7 | Integration test: concurrent multi-seq decode | `tests/test-gpipe-multi-seq.cpp` |
+
+#### 10.3.5 Acceptance Criteria
+
+| ID | Criterion | Verification |
+|----|-----------|-------------|
+| AC-D6.1 | Two sequences decode concurrently at different pipeline stages | Test: multi-seq test with 2 sequences, verify stages occupied simultaneously |
+| AC-D6.2 | No KV cache corruption across sequences | Test: logits match single-seq baseline for each sequence |
+| AC-D6.3 | `global_3bk_pct` improves vs single-seq baseline | Metric: pipeline fill > 50% (2 of 3 stages occupied) |
+| AC-D6.4 | Event signaling correct: no deadlocks or missed signals | Test: stress test with 1000+ tokens across 2 sequences |
+| AC-D6.5 | No regression: single-seq Mode A still works | Test: existing GPipe tests pass (16 assertions as of D5.7) |
+| AC-D6.6 | Server handles per-sequence dispatch | Test: server accepts graphs from different sequences concurrently |
 
 ### 10.4 Phase R3 — Advanced Optimization
 

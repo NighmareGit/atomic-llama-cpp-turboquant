@@ -355,6 +355,12 @@ extern "C" {
     GGML_API void ggml_sched_gpipe_wait(ggml_backend_sched_t sched, int split_id);
     GGML_API void ggml_sched_gpipe_record(ggml_backend_sched_t sched, int stage_id);
 
+    // D6: Multi-seq (Mode B) double-buffered event API
+    GGML_API void ggml_sched_gpipe_init_multi(ggml_backend_sched_t sched, int n_stages, int n_banks);
+    GGML_API void ggml_sched_gpipe_record_bank(ggml_backend_sched_t sched, int stage_id, int bank);
+    GGML_API void ggml_sched_gpipe_wait_bank(ggml_backend_sched_t sched, int stage_id, int bank);
+    GGML_API void ggml_sched_gpipe_toggle_bank(ggml_backend_sched_t sched, int new_bank);
+
     // Plus=1 TSC repair spike: sequential handoff for multi-backend pipeline (R1+R2 bundle).
     // When enabled, graph reuse uses full sched sync and Plus async defer is off (see BUGFIX-plus1-tsc-REPAIR-PATH.md).
     GGML_API bool                 ggml_pipeline_multi_backend_seq_enabled(void);

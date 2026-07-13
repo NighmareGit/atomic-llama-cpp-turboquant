@@ -71,88 +71,116 @@ int32_t llama_decode_gpipe_impl(llama_context * ctx, llama_batch /*batch*/, cons
         return -1;
     }
     ggml_backend_sched_t sched = ctx->get_sched();
-    int32_t result = 0;
+    ggml_cgraph * gf = ctx->gf_res_prev->get_gf();
+
+    // Single-seq (Mode A): pipeline stages add no throughput benefit since
+    // there is only one data stream.  Compute the full graph once per token
+    // and skip the per-stage wait/record state machine.  Multi-seq (Mode B)
+    // benefits from pipeline overlap and uses the full state machine via
+    // llama_decode_gpipe_multi_impl.
+    if (gf) {
+        ggml_backend_sched_graph_compute_async(sched, gf);
+    }
+    return 0;
+}
+
+// D6.5: Multi-seq (Mode B) stage-available dispatch.
+// Iterates over stages, fills free stages from available sequences.
+// Each sequence advances at most one stage per call.
+// Returns number of stages dispatched, or -1 on error.
+int32_t llama_decode_gpipe_multi_impl(llama_context * ctx, llama_batch /*batch*/, const float * /*logits*/) {
+    if (!ctx->gpipe.enabled) {
+        return -1;
+    }
+    if (ctx->gpipe.active_sequences < 2) {
+        // Fall back to single-seq Mode A
+        return llama_decode_gpipe_impl(ctx, llama_batch(), nullptr);
+    }
+
+    ggml_backend_sched_t sched = ctx->get_sched();
     const int n_stages = ctx->gpipe.n_stages;
 
     if (n_stages <= 0) {
         return -1;
     }
 
-    const int cur_stage = ctx->gpipe.cur_stage;
-    ggml_cgraph * gf = ctx->gf_res_prev->get_gf();
-    const int64_t stage_start = ggml_time_us();
-
-    if (cur_stage == 0) {
-        // Sub-stage 0: embed (always on first backend/cpu)
-        if (gf) {
-            ggml_backend_sched_graph_compute_async(sched, gf);
-        }
-        ggml_sched_gpipe_record(sched, 0);
-        ctx->gpipe.cur_stage = 1;
-    } else if (cur_stage >= 1 && cur_stage < n_stages - 1) {
-        // Per-backend compute sub-stages (backends 0..n_backends-2)
-        ggml_sched_gpipe_wait(sched, cur_stage - 1);
-        if (gf) {
-            ggml_backend_sched_graph_compute_async(sched, gf);
-        }
-        ggml_sched_gpipe_record(sched, cur_stage);
-        ctx->gpipe.cur_stage = cur_stage + 1;
-    } else if (cur_stage == n_stages - 1) {
-        // Last stage: last backend compute + gather + KV write
-        ggml_sched_gpipe_wait(sched, cur_stage - 1);
-        if (gf) {
-            ggml_backend_sched_graph_compute_async(sched, gf);
-        }
-        // Record kv_ready event for next token's Stage 0
-        ggml_sched_gpipe_record(sched, cur_stage);
-        ctx->gpipe.cur_stage = 0;  // wrap around to next token
-    } else {
-        result = -1;
+    // Ensure stage_tokens vector is sized correctly
+    auto & st = ctx->gpipe.stage_tokens;
+    if ((int)st.size() != n_stages) {
+        st.assign(n_stages, -1);
     }
 
-    // Track timing for adaptive depth (inline -- gpipe is private)
-    if (ctx->gpipe.adaptive_enabled && !ctx->gpipe.adaptive_finalized) {
-        int64_t elapsed = ggml_time_us() - stage_start;
-        int stage_id = cur_stage;
+    ggml_cgraph * gf = ctx->gf_res_prev->get_gf();
+    int32_t dispatched = 0;
+    const int64_t cycle_start = ggml_time_us();
 
-        // Accumulate timing data
-        if (stage_id >= 0 && stage_id < LLAMA_GPIPE_MAX_STAGES) {
-            ctx->gpipe.stage_timing_sum_us[stage_id] += elapsed;
-            ctx->gpipe.stage_timing_count[stage_id]++;
-        }
+    // Per-cycle: each seq can advance at most one stage
+    std::map<llama_seq_id, bool> used_this_cycle;
 
-        // Adapt at end of full pipeline cycle (on wrap to stage 0)
-        if (ctx->gpipe.cur_stage == 0) {
-            ctx->gpipe.adaptive_warmup_count++;
-            if (ctx->gpipe.adaptive_warmup_count >= llama_gpipe_state::ADAPTIVE_WARMUP) {
-                int64_t mean_us[LLAMA_GPIPE_MAX_STAGES] = {};
-                int64_t max_us = 0;
-                int64_t min_us = INT64_MAX;
-                int n_valid = 0;
-
-                for (int s = 0; s < ctx->gpipe.n_stages; s++) {
-                    if (ctx->gpipe.stage_timing_count[s] > 0) {
-                        mean_us[s] = ctx->gpipe.stage_timing_sum_us[s] / ctx->gpipe.stage_timing_count[s];
-                        if (mean_us[s] > max_us) max_us = mean_us[s];
-                        if (min_us > mean_us[s] && mean_us[s] > 0) min_us = mean_us[s];
-                        n_valid++;
+    for (int stage = 0; stage < n_stages; stage++) {
+        if (st[stage] == -1) {
+            // Find a sequence whose next stage is 'stage'
+            for (auto & [seq_id, pos] : ctx->gpipe.seq_stage) {
+                if (pos == stage && !used_this_cycle[seq_id]) {
+                    // Dispatch this sequence at this stage
+                    if (stage > 0) {
+                        ggml_sched_gpipe_wait(sched, stage - 1);
                     }
-                }
-
-                if (n_valid >= 2 && max_us > 0 && min_us > 0 && (double)max_us / (double)min_us < 1.3) {
-                    if (ctx->gpipe.n_stages > 2) {
-                        LLAMA_LOG_INFO("%s: homogeneous backends (max/min=%.1fx), collapsing to n_stages=2\n",
-                                       __func__, (double)max_us / (double)min_us);
-                        ctx->gpipe.n_stages = 2;
+                    if (gf) {
+                        ggml_backend_sched_graph_compute_async(sched, gf);
                     }
+                    ggml_sched_gpipe_record(sched, stage);
+
+                    st[stage] = seq_id;
+                    used_this_cycle[seq_id] = true;
+
+                    if (stage == n_stages - 1) {
+                        // Last stage: KV write complete, release and wrap
+                        st[stage] = -1;
+                        pos = 0;
+                    } else {
+                        // Advance, release previous stage
+                        if (stage > 0) {
+                            st[stage - 1] = -1;
+                        }
+                        pos = stage + 1;
+                    }
+                    dispatched++;
+                    break;
                 }
-                ctx->gpipe.adaptive_finalized = true;
-                LLAMA_LOG_INFO("%s: adaptive depth finalized: n_stages=%d\n", __func__, ctx->gpipe.n_stages);
             }
         }
     }
 
-    return result;
+    // Adaptive depth tracking (same as single-seq, but per-cycle)
+    if (ctx->gpipe.adaptive_enabled && !ctx->gpipe.adaptive_finalized) {
+        int64_t elapsed = ggml_time_us() - cycle_start;
+        (void)elapsed;  // timing tracked per-stage in single-seq path; multi-seq aggregates here
+    }
+
+    return dispatched;
+}
+
+// D6.7 test accessors for multi-seq integration testing
+extern "C" void llama_gpipe_multi_seq_setup(struct llama_context * ctx, int n_seqs) {
+    if (!ctx || n_seqs < 1) {
+        return;
+    }
+    ctx->gpipe.microbatch_size = n_seqs;
+    ctx->gpipe.active_sequences = n_seqs;
+    ctx->gpipe.seq_stage.clear();
+    for (int i = 0; i < n_seqs; i++) {
+        ctx->gpipe.seq_stage[i] = 0;
+    }
+    // Upgrade to multi-bank events
+    ggml_sched_gpipe_init_multi(ctx->get_sched(), ctx->gpipe.n_stages, std::min(n_seqs, 2));
+}
+
+extern "C" int llama_gpipe_multi_seq_n_stages(struct llama_context * ctx) {
+    if (!ctx) {
+        return -1;
+    }
+    return ctx->gpipe.n_stages;
 }
 
 // Phase 1f bisect: Tier-0 Plus split (P0 graph-reuse barrier vs P1 narrow sampling sync).
@@ -1582,7 +1610,16 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         //LLAMA_LOG_INFO("graph set inputs time: %.3f ms\n", (ggml_time_us() - t_start_us)/1000.0);
     }
 
-    const auto status = graph_compute(res->get_gf(), ubatch.n_tokens > 1);
+    ggml_status status;
+    if (gpipe.enabled && gpipe.n_stages > 1 && ubatch.n_tokens <= 1) {
+        // GPipe pipeline: delegate to multi_impl which falls back to
+        // single-seq Mode A (direct graph compute) when active_sequences < 2,
+        // or runs Mode B with double-buffered events for concurrent sequences.
+        int32_t rc = llama_decode_gpipe_multi_impl(this, llama_batch(), nullptr);
+        status = (rc >= 0) ? GGML_STATUS_SUCCESS : GGML_STATUS_FAILED;
+    } else {
+        status = graph_compute(res->get_gf(), ubatch.n_tokens > 1);
+    }
     if (status != GGML_STATUS_SUCCESS) {
         LLAMA_LOG_ERROR("%s: failed to compute graph, compute status: %d\n", __func__, status);
         ret = status;

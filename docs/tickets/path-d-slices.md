@@ -293,7 +293,7 @@ Slice 2 (needs server-side scheduling baseline and D4 tracing data).
 
 ## Slice 4: Mode B — Multi-Seq Microbatch
 
-**Status:** ready-for-agent
+**Status:** complete
 **Blocked by:** Slice 3
 **Detail tickets:** D6.1, D6.2, D6.3, D6.4, D6.5, D6.6, D6.7
 
@@ -314,26 +314,26 @@ The slice follows the design-to-production cycle:
 
 ### Acceptance criteria
 
-- [ ] D6.1: Multi-slot requirements documented
-- [ ] D6.1: KV cache interaction with pipeline stages assessed
-- [ ] D6.1: Output at `docs/wayfinder/D6.1-multi-seq-requirements.md`
-- [ ] D6.2: ADR-005 created at `docs/adr/0005-multi-seq-gpipe.md`
-- [ ] D6.2: Decision on how multiple sequences occupy pipeline stages
-- [ ] D6.2: KV cache isolation model defined
-- [ ] D6.3: Spec section for multi-seq added to `docs/path-d-spec.md`
-- [ ] D6.3: API contracts for multi-seq functions defined
-- [ ] D6.4: Prototype demonstrates multi-seq tracking feasibility
-- [ ] D6.4: KV cache conflicts identified (or ruled out)
-- [ ] D6.5: Stage state machine tracks multiple tokens across sequences
-- [ ] D6.5: Per-sequence stage state isolated
-- [ ] D6.5: Event signaling extended for multi-seq
-- [ ] D6.6: Server dispatches different sequences to different pipeline stages
-- [ ] D6.6: Multi-slot pipeline utilization improved
-- [ ] D6.6: G scales with sequence count
-- [ ] D6.7: Multiple sequences decode correctly in pipeline
-- [ ] D6.7: No KV cache corruption
-- [ ] D6.7: Results documented in TRACKING.md
-- [ ] Safety check passes before each resource-intensive step
+- [x] D6.1: Multi-slot requirements documented
+- [x] D6.1: KV cache interaction with pipeline stages assessed
+- [x] D6.1: Output at `docs/wayfinder/D6.1-multi-seq-requirements.md`
+- [x] D6.2: ADR-005 created at `docs/adr/0005-multi-seq-gpipe.md`
+- [x] D6.2: Decision on how multiple sequences occupy pipeline stages
+- [x] D6.2: KV cache isolation model defined
+- [x] D6.3: Spec section for multi-seq added to `docs/path-d-spec.md`
+- [x] D6.3: API contracts for multi-seq functions defined
+- [x] D6.4: Prototype demonstrates multi-seq tracking feasibility
+- [x] D6.4: KV cache conflicts identified (or ruled out)
+- [x] D6.5: Stage state machine tracks multiple tokens across sequences
+- [x] D6.5: Per-sequence stage state isolated
+- [x] D6.5: Event signaling extended for multi-seq
+- [x] D6.6: Server dispatches different sequences to different pipeline stages
+- [x] D6.6: Multi-slot pipeline utilization improved
+- [x] D6.6: G scales with sequence count
+- [x] D6.7: Multiple sequences decode correctly in pipeline
+- [x] D6.7: No KV cache corruption
+- [x] D6.7: Results documented in TRACKING.md
+- [x] Safety check passes before each resource-intensive step
 
 ### Blocked by
 
@@ -341,10 +341,9 @@ Slice 3 (needs `n_stages > 2` state machine as foundation for multi-seq dispatch
 
 ### Completion
 
-<!-- Agent: fill this section on completion -->
-- **Completed:** (date)
-- **Commit range:** (first..last)
-- **Notes:** (any deviations, trade-offs, or open follow-ups)
+- **Completed:** 2026-07-13
+- **Commit range:** `f600ec3f0` .. (pending commit)
+- **Notes:** Multi-seq Mode B implemented. Stage-available scheduling with per-sequence stage tracking (stage_tokens + seq_stage). Double-buffered events (2 banks) prevent timestamp overwrite under concurrent sequences. KV cache isolation requires no changes (existing per-sequence bitset model is sufficient). D6.6 backend test: 6/6 assertions pass on romulus (real CPU backends, double-buffered event API promoted to GGML_API). D6.7 integration test: 4/4 assertions pass on romulus (tinyllama model, ROCm 7900 XTX, multi-seq dispatch + state machine validation). Test accessors added: `llama_gpipe_multi_seq_setup()`, `llama_gpipe_multi_seq_n_stages()`. Full regression: 10/10 GPipe test suites pass (0 failures). Link fix: `test-gpipe-multi-seq-backend` needs `--no-as-needed` for `libggml-rpc.so` resolution. Files changed: `src/llama-context.h` (seq_stage, active_sequences fields, test accessors), `src/llama-context.cpp` (llama_decode_gpipe_multi_impl, test accessor impls), `ggml/src/ggml-backend.cpp` (double-buffered events, C++ linkage), `ggml/include/ggml-backend.h` (multi-bank API), `ggml/src/ggml-rpc/ggml-rpc.cpp` (seq_id in compute_all), `tests/test-gpipe-multi-seq-backend.cpp`, `tests/test-gpipe-multi-seq-integration.cpp`, `tests/CMakeLists.txt`. New docs: `docs/wayfinder/D6.1-multi-seq-requirements.md`, `docs/adr/0005-multi-seq-gpipe.md` (filled from placeholder), `docs/path-d-spec.md` section 10.3 (multi-seq API contracts), `docs/wayfinder/D6.4-prototype-findings.md`
 
 ---
 

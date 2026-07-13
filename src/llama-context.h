@@ -47,6 +47,10 @@ struct llama_gpipe_state {
     int  microbatch_size;
     bool enabled;
 
+    // Multi-seq (Mode B): per-sequence stage tracking
+    std::map<llama_seq_id, int> seq_stage;    // seq_id -> current stage position
+    int  active_sequences;                     // count of sequences in pipeline
+
     // Adaptive depth
     bool adaptive_enabled;
     int  adaptive_warmup_count;
@@ -63,7 +67,12 @@ struct llama_gpipe_state {
 extern "C" bool llama_gpipe_enabled_accessor();
 extern "C" bool llama_gpipe_context_enabled(struct llama_context * ctx);
 
+// D6.7 test accessors: set up multi-seq state for integration testing
+extern "C" void llama_gpipe_multi_seq_setup(struct llama_context * ctx, int n_seqs);
+extern "C" int  llama_gpipe_multi_seq_n_stages(struct llama_context * ctx);
+
 int32_t llama_decode_gpipe_impl(llama_context * ctx, llama_batch batch, const float * logits);
+int32_t llama_decode_gpipe_multi_impl(llama_context * ctx, llama_batch batch, const float * logits);
 
 struct llama_context {
     // init scheduler and compute buffers, reserve worst-case graphs
@@ -418,6 +427,9 @@ private:
     uint64_t trace_id = 0; // server-lifetime monotonic trace_id (per llama_decode); never reset on perf_reset
 
     friend int32_t llama_decode_gpipe_impl(llama_context * ctx, llama_batch batch, const float * logits);
+    friend int32_t llama_decode_gpipe_multi_impl(llama_context * ctx, llama_batch batch, const float * logits);
+    friend void llama_gpipe_multi_seq_setup(struct llama_context * ctx, int n_seqs);
+    friend int  llama_gpipe_multi_seq_n_stages(struct llama_context * ctx);
 
     llama_gpipe_state gpipe = {};
 };

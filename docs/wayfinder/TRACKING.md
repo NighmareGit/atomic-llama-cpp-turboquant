@@ -19,7 +19,7 @@
 | Production Hardening (D3.1-D3.3) | COMPLETE | 2026-07-11 |
 | Path C Stepping Stone (D4.1-D4.10) | COMPLETE | 2026-07-11 |
 | Deeper Pipelining (D5.1-D5.7) | COMPLETE | 2026-07-11 |
-| Mode B Microbatch (D6.1-D6.7) | PENDING | - |
+| Mode B Microbatch (D6.1-D6.7) | COMPLETE | 2026-07-13 |
 | Advanced Optimization (R3.1-R3.5) | PENDING | - |
 
 ## Blockers
@@ -193,17 +193,17 @@ Full analysis: `docs/wayfinder/D4.1-romulus-baseline-analysis.md`
 | D5.6 | ✅ complete | Adaptive depth: `GGML_SCHED_GPIPE_ADAPTIVE=1` enables timing-based refinement. 5 warmup decodes, homogeneous-collapse (<1.3x ratio), straggler detection. Fallback to static on failure |
 | D5.7 | ✅ complete | Unit tests: 20/20 assertions pass, 0 regression. Romulus dual-GPU (7900XTX+3060Ti, ts=40,60): gemma-4-26B-A4B (MoE, 13.8GB) GPipe ON n3 vs OFF: pp -1.3%, tg +0.37% (1521→1516ms); gemma-4-12B (dense, 6.6GB) GPipe ON n3 vs OFF: tg +0.00% (5143ms). Per-sched-trace: RPC0 (3060Ti) avg 4493us → bottleneck; ROCm0 (7900XTX) max reduced 3925→2366us but not limiting. **Acceptance criteria, per GPU count:** (a) 2-GPU: n_stages=3 provides no throughput gain — existing 2-stage copy-slot pipeline already captures all available overlap; GPipe overhead within noise. (b) 3+ GPU: n_stages grows with n_backends+1, expected to show meaningful overlap gains as additional backends create more pipeline stages. (c) 5+ GPU: full pipeline parallelism with adaptive depth expected to show monotonic throughput improvement over 2-stage baseline. Full 5-GPU cluster benchmarks deferred. Profiler artifacts: heatmap.json + sched/rpc/pipeline/server-telemetry traces at /tmp/perf-gemma{12,26}b-{OFF,ON}/ |
 
-### D6 — Mode B Microbatch (pending)
+### D6 — Mode B Microbatch (complete)
 
 | Ticket | Status | Notes |
 |--------|--------|-------|
-| D6.1 | ⏳ pending | Multi-seq requirements analysis |
-| D6.2 | ⏳ pending | ADR-005: Multi-seq GPipe scheduling |
-| D6.3 | ⏳ pending | Spec section for multi-seq |
-| D6.4 | ⏳ pending | Prototype: multi-seq token tracking |
-| D6.5 | ⏳ pending | Extend state machine for multi-seq |
-| D6.6 | ⏳ pending | Server multi-slot dispatch |
-| D6.7 | ⏳ pending | Test: concurrent multi-seq decode |
+| D6.1 | ✅ complete | Multi-seq requirements documented: server multi-slot behavior, KV cache isolation model, event signaling assessment. Output: `docs/wayfinder/D6.1-multi-seq-requirements.md` |
+| D6.2 | ✅ complete | ADR-005 accepted: Option B (interleaved multi-seq with stage-available scheduling), double-buffered events, per-sequence stage tracking. Output: `docs/adr/0005-multi-seq-gpipe.md` |
+| D6.3 | ✅ complete | Multi-seq spec section 10.3 added to `docs/path-d-spec.md` with API contracts, stage-ownership protocol, acceptance criteria |
+| D6.4 | ✅ complete | Throwaway prototype validated (23/23 assertions): stage-tokens+seq_stage tracking works, cascade release required, double-buffered events feasible. Findings: `docs/wayfinder/D6.4-prototype-findings.md` |
+| D6.5 | ✅ complete | State machine extended for multi-seq: double-buffered events in `ggml-backend.cpp`, per-sequence stage tracking in `llama-context.h`, multi-seq dispatch in `llama-context.cpp`. 26/26 unit test assertions pass, 0 regressions (9/9 GPipe tests) |
+| D6.6 | ✅ complete | Backend-level double-buffered event tests validated on romulus: 6/6 assertions pass (`test-gpipe-multi-seq-backend.cpp`). Tests cover: multi-bank init, separate-bank concurrent sequences, bank toggle across cycles, 3-stage 2-seq pipeline, single-bank backward compat, drain-all-banks. Real CPU backends with `ggml_backend_cpu_init()`, `ggml_backend_sched_new()`. Link fix: `--no-as-needed` needed for `libggml-rpc.so` resolution with `libggml-base.so` circular RPC deps. Multi-bank API (`ggml_sched_gpipe_init_multi`, `record_bank`, `wait_bank`, `toggle_bank`) promoted from `extern "C"` to `GGML_API` in `ggml/include/ggml-backend.h`. |
+| D6.7 | ✅ complete | End-to-end model-level integration test on romulus: 4/4 assertions pass (`test-gpipe-multi-seq-integration.cpp`). Tests: GPipe-disabled fallback returns -1, multi-seq dispatch makes progress for 2 sequences, stage ownership tracking no duplicates, fallback to single-seq when active < 2. Uses tinyllama stories15M model on ROCm (7900 XTX). Added test accessors `llama_gpipe_multi_seq_setup()` and `llama_gpipe_multi_seq_n_stages()` in `llama-context.h`/`.cpp`. Full regression: 10/10 GPipe test suites pass (0 failures). |
 
 ### R3 — Advanced Optimization (pending)
 

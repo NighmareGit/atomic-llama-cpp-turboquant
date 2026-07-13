@@ -686,6 +686,7 @@ struct rpc_msg_graph_compute_all_req {
     uint32_t devices[GGML_RPC_MAX_DEVICES];
     uint32_t sync_mode;        // 0=fire-and-forget, 1=blocking with response
     uint32_t output_requested; // 0=no output, 1=include output in response
+    uint32_t seq_id;           // D6.6: sequence ID for multi-seq pipeline dispatch
 };
 
 struct rpc_msg_graph_compute_all_rsp {
