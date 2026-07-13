@@ -3837,11 +3837,10 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
         if (rpc_multidevice_env_enabled()) {
             rsp3.conn_caps[0] |= RPC_CAP_MULTI_DEVICE;
         }
-        // D4.10: advertise telemetry capability
-        fprintf(stderr, "DEBUG: telemetry_env=%d (GGML_RPC_SERVER_TELEMETRY=%s)\n",
-                rpc_server_telemetry_env_enabled(),
-                getenv("GGML_RPC_SERVER_TELEMETRY") ? getenv("GGML_RPC_SERVER_TELEMETRY") : "(null)");
-        rsp3.conn_caps[0] |= RPC_CAP_SERVER_TELEMETRY;  // FIXME: debug - unconditional
+        // D4.10: advertise telemetry capability when enabled (--telemetry flag / env var)
+        if (rpc_server_telemetry_env_enabled()) {
+            rsp3.conn_caps[0] |= RPC_CAP_SERVER_TELEMETRY;
+        }
         sock->server_supports_trace_id = (rsp3.patch >= 3) || (req_conn_caps[0] & RPC_CAP_TRACE_ID);
         if (!send_msg(sock, &rsp3, sizeof(rsp3))) {
             return;

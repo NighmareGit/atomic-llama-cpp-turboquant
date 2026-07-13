@@ -173,6 +173,7 @@ struct rpc_server_params {
     std::string              host        = "127.0.0.1";
     int                      port        = 50052;
     bool                     use_cache   = false;
+    bool                     telemetry   = false;
     int                      n_threads   = std::max(1U, std::thread::hardware_concurrency()/2);
     std::vector<std::string> devices;
 };
@@ -186,6 +187,7 @@ static void print_usage(int /*argc*/, char ** argv, rpc_server_params params) {
     fprintf(stderr, "  -H, --host HOST                  host to bind to (default: %s)\n", params.host.c_str());
     fprintf(stderr, "  -p, --port PORT                  port to bind to (default: %d)\n", params.port);
     fprintf(stderr, "  -c, --cache                      enable local file cache\n");
+    fprintf(stderr, "  -T, --telemetry                  enable server-side telemetry collection\n");
     fprintf(stderr, "\n");
 }
 
@@ -233,6 +235,8 @@ static bool rpc_server_params_parse(int argc, char ** argv, rpc_server_params & 
             }
         } else if (arg == "-c" || arg == "--cache") {
             params.use_cache = true;
+        } else if (arg == "-T" || arg == "--telemetry") {
+            params.telemetry = true;
         } else if (arg == "-h" || arg == "--help") {
             print_usage(argc, argv, params);
             exit(0);
@@ -323,6 +327,10 @@ int main(int argc, char * argv[]) {
             return 1;
         }
         cache_dir = cache_dir_str.c_str();
+    }
+
+    if (params.telemetry) {
+        setenv("GGML_RPC_SERVER_TELEMETRY", "1", 1);
     }
 
     ggml_backend_reg_t reg = ggml_backend_reg_by_name("RPC");
