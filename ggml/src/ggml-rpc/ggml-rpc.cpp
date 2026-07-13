@@ -284,6 +284,7 @@ static void flush_pending_relays_for_dst(const ggml_tensor * const * dst, size_t
 static void flush_set_tensor_batch();
 static void rpc_register_socket(const socket_ptr & sock);
 static void rpc_drain_all_endpoints_pending();
+void ggml_backend_rpc_flush_pending_downloads(void);
 
 int ggml_backend_rpc_server_count(void);
 bool ggml_backend_rpc_event_defer_barrier(void);
@@ -454,6 +455,13 @@ static void rpc_drain_all_endpoints_pending() {
     flush_pending_hash_all();
     flush_set_tensor_batch();
     flush_pending_relays();
+
+    // B+16: flush pending downloads (staging -> tensor H2D copy) so that
+    // deferred get_tensor data reaches destination tensors. Without this,
+    // ggml_backend_synchronize on RPC backends drains get_tensor responses
+    // but leaves staging data stranded, causing graph compute to read stale
+    // tensor buffers and corrupt KV-cache attention outputs.
+    ggml_backend_rpc_flush_pending_downloads();
 
     if (!rpc_multi_socket_flush()) {
         return;

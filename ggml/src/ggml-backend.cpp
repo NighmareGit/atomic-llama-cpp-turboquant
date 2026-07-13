@@ -1107,6 +1107,7 @@ struct ggml_backend_sched {
     // pipeline parallelism support
     int n_copies;
     int cur_copy;
+    int prev_copy; // copy slot active in the previous graph execution
     int next_copy;
     ggml_backend_event_t events[GGML_SCHED_MAX_BACKENDS][GGML_SCHED_MAX_COPIES];
     int n_gpipe_stages;
@@ -2378,8 +2379,10 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
         }
 
         // B+15: drain prefetched RPC GETs at gather-split entry (GETs should have overlapped RPC compute).
-        // B+12: skip early recv when defer is on; flush once before graph_compute instead.
-        if (!ggml_backend_is_rpc(split_backend) && !ggml_sched_rpc_get_tensor_defer()) {
+        // B+16: always flush current-split downloads regardless of GET_TENSOR_DEFER —
+        // the defer mechanism batches future prefetch downloads; current-split inputs
+        // must be available before graph_compute reads them.
+        if (!ggml_backend_is_rpc(split_backend)) {
             const ggml_tensor * gather_flush_dsts[GGML_SCHED_MAX_SPLIT_INPUTS + 1];
             int n_gather_flush = 0;
             for (int i = 0; i < split->n_inputs; i++) {
@@ -2433,7 +2436,16 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
             } else {
                 ggml_backend_synchronize(split_backend);
             }
-            ggml_backend_tensor_copy(input, input_cpy);
+            // B+16: when copy slot has rotated, propagate stateful tensor data
+            // from the previous active slot (which holds the latest KV-cache
+            // state) instead of the original tensor (which is frozen at the
+            // first copy slot's allocation time).
+            if (sched->n_copies > 1 && sched->prev_copy != sched->cur_copy) {
+                struct ggml_tensor * input_src = tensor_copy(input, split_backend_id, sched->prev_copy);
+                ggml_backend_tensor_copy(input_src, input_cpy);
+            } else {
+                ggml_backend_tensor_copy(input, input_cpy);
+            }
             {
                 const auto input_us = std::chrono::duration_cast<std::chrono::microseconds>(
                     std::chrono::steady_clock::now() - input_t0).count();
@@ -2808,6 +2820,7 @@ ggml_backend_sched_t ggml_backend_sched_new(
 
     sched->n_backends = n_backends;
     sched->n_copies = parallel ? GGML_SCHED_MAX_COPIES : 1;
+    sched->prev_copy = 0;
 
     // initialize hash table
     // FIXME: needs to be size*2 to account for leafs (do it in graph_split instead)
@@ -3023,6 +3036,8 @@ void ggml_backend_sched_reset(ggml_backend_sched_t sched) {
         sched->is_reset = true;
     }
     sched->is_alloc = false;
+    sched->prev_copy = sched->cur_copy;
+    sched->next_copy = sched->cur_copy;
     memset(sched->barrier_slot_pending, 0, sizeof(sched->barrier_slot_pending));
     sched->wavefront_inflight = 0;
     sched->wavefront_oldest_copy = 0;
@@ -3064,6 +3079,7 @@ bool ggml_backend_sched_alloc_graph(ggml_backend_sched_t sched, struct ggml_cgra
     GGML_ASSERT((int)sched->hash_set.size >= graph->n_nodes + graph->n_leafs);
     GGML_ASSERT(!sched->is_alloc);
 
+    sched->prev_copy = sched->cur_copy;
     sched->cur_copy = sched->next_copy;
     sched->next_copy = (sched->next_copy + 1) % sched->n_copies;
 
@@ -3212,6 +3228,7 @@ void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
         fflush(out);
     }
 
+    sched->prev_copy = sched->cur_copy;
     sched->cur_copy  = new_copy;
     sched->next_copy = (new_copy + 1) % sched->n_copies;
 }

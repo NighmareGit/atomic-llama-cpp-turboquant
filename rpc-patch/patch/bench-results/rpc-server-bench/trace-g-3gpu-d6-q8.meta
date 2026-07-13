@@ -1,0 +1,89 @@
+=== trace-g-3gpu-d6-q8 ===
+variant=pathb proto=Path B (v4.2.2 workspace) rpc_mode=multi endpoint=192.168.8.22:50051,127.0.0.1:50051 trace=1
+telemetry=/home/hunter/projects/path-d-gpipeline-assembly-line/rpc-patch/patch/bench-results/rpc-server-bench/trace-g-3gpu-d6-q8/telemetry
+model=/mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf ctx=4096 ctk=q8_0 ctv=q8_0 ngl=99 ts=38,32,30 ncmoe=none np=1 no_warmup=1 load_timeout=600s
+server_extra=--no-warmup -np 1 --fit off --verbose -lv 4 --reasoning off
+prompts_file=default-fox verbose_lv=default extract_vram=0
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  415G  279G  60% /
+2026-07-13T02:51:21Z
+using remote/multi RPC at 192.168.8.22:50051,127.0.0.1:50051 (no local bench-rpc)
+Connection to 192.168.8.22 50051 port [tcp/*] succeeded!
+RPC reachable: 192.168.8.22:50051
+Connection to 127.0.0.1 50051 port [tcp/*] succeeded!
+RPC reachable: 127.0.0.1:50051
+starting llama-server (native ROCm HIP device 0)...
+native llama-server pid=601564 log=/home/hunter/projects/path-d-gpipeline-assembly-line/rpc-patch/patch/bench-results/rpc-server-bench/trace-g-3gpu-d6-q8-server.log
+polling server health (max 600s)...
+server ready at 25s (model loaded)
+benchmark 3 runs...
+run=1 prompt=fox P=21.6 G=52.0 preview=' following\n\n\n\n\n is the the isThe</think>'
+run=2 prompt=fox P=27.0 G=63.1 preview=' éner\n\n\n\n\ngiegiegie g -\n \n\n\n g n g g g  a  n n n    n n  nn n n n n n nn n nnnnn n nn n n n n n n nn nn nn n n nn   n n n n  n n n nn n n nn n n n n n nnnnnnnn n n n nnnnnnnnnnn nn n nnn nnnnnnnnn n n'
+run=3 prompt=fox P=28.4 G=62.8 preview='**\n\n\n\n\n\n"True"Correct!```  ! answer: Answer1答案 答案 : Answer Answer\n'
+--- artifact capture (pass_final) @ 2026-07-13T02:51:56Z ---
+=== 2026-07-13T02:51:56Z reason=pass_final ===
+[docker ps -a]
+pathb-rpc-romulus   Up 2 minutes   nvidia/cuda:12.8.0-devel-ubuntu22.04
+=== 2026-07-13T02:51:56Z reason=pass_final ===
+[romulus-rocm]
+
+
+============================ ROCm System Management Interface ============================
+================================== Memory Usage (Bytes) ==================================
+GPU[0]		: VRAM Total Memory (B): 25753026560
+GPU[0]		: VRAM Total Used Memory (B): 8849043456
+==========================================================================================
+================================== End of ROCm SMI Log ===================================
+[romulus-nvidia]
+Mon Jul 13 04:51:56 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.71.05              Driver Version: 595.71.05      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3060 Ti     Off |   00000000:0A:00.0 Off |                  N/A |
+|  0%   52C    P2             52W /  220W |    6623MiB /   8192MiB |     18%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            6618      G   /usr/lib/xorg/Xorg                        4MiB |
+|    0   N/A  N/A            6930    C+G   ...c/gnome-remote-desktop-daemon        134MiB |
+|    0   N/A  N/A          596593      C   /app/rpc-server                        6452MiB |
++-----------------------------------------------------------------------------------------+
+[remus-nvidia]
+remus nvidia-smi failed
+--- rpc-local (tail) ---
+no local rpc container (pathb-rpc or bench-rpc)
+--- rpc-remus (tail) ---
+endpoint=192.168.8.22:50051,127.0.0.1:50051 mode=multi
+--- logs-since ---
+--- server log tail (infer) ---
+	dry_multiplier = 0.000, dry_base = 1.750, dry_allowed_length = 2, dry_penalty_last_n = 4096
+	top_k = 20, top_p = 0.950, min_p = 0.050, xtc_probability = 0.000, xtc_threshold = 0.100, typical_p = 1.000, top_n_sigma = -1.000, temp = 1.000
+	mirostat = 0, mirostat_lr = 0.100, mirostat_ent = 5.000, adaptive_target = -1.000, adaptive_decay = 0.900
+0.28.845.194 I slot launch_slot_: id  0 | task 143 | processing task, is_child = 0
+0.28.845.200 I slot update_slots: id  0 | task 143 | new prompt, n_ctx_slot = 4096, n_keep = 0, task.n_tokens = 22
+0.28.845.203 I slot update_slots: id  0 | task 143 | Checking checkpoint with [17, 17] against 21...
+0.28.933.027 W slot update_slots: id  0 | task 143 | restored context checkpoint (pos_min = 17, pos_max = 17, n_tokens = 18, n_past = 18, size = 62.813 MiB)
+0.28.933.030 I slot update_slots: id  0 | task 143 | cached n_tokens = 18, memory_seq_rm [18, end)
+0.28.933.071 I slot init_sampler: id  0 | task 143 | init sampler, took 0.00 ms, tokens: text = 22, total = 22
+0.29.416.200 I slot print_timing: id  0 | task 143 | prompt eval time =     140.74 ms /     4 tokens (   35.18 ms per token,    28.42 tokens per second)
+0.29.416.211 I slot print_timing: id  0 | task 143 |        eval time =     430.24 ms /    27 tokens (   15.93 ms per token,    62.76 tokens per second)
+0.29.416.213 I slot print_timing: id  0 | task 143 |       total time =     570.98 ms /    31 tokens
+0.29.416.214 I slot print_timing: id  0 | task 143 |    graphs reused =        161
+0.29.416.250 I slot      release: id  0 | task 143 | stop processing: n_tokens = 48, truncated = 0
+0.29.416.270 I srv  update_slots: all slots are idle
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  415G  279G  60% /
+parsing trace telemetry...
+rpc-patch/scripts/rpc-server-bench.sh: line 562: /home/hunter/projects/path-d-gpipeline-assembly-line/rpc-patch/scripts/pathb-rpc-trace-parse.sh: Permission denied
+rpc-patch/scripts/rpc-server-bench.sh: line 563: /home/hunter/projects/path-d-gpipeline-assembly-line/rpc-patch/scripts/pathb-hotpath-summary.sh: Permission denied
+RESULT=PASS
+results in /home/hunter/projects/path-d-gpipeline-assembly-line/rpc-patch/patch/bench-results/rpc-server-bench/trace-g-3gpu-d6-q8.result

@@ -1,0 +1,65 @@
+=== trace summary ===
+dir=/home/hunter/projects/path-d-gpipeline-assembly-line/rpc-patch/patch/bench-results/rpc-server-bench/trace-g-3gpu-d6-q8/telemetry
+
+[rpc] events=4040
+  ALLOC_BUFFER count=16 total_ms=8.43 avg_us=527.0
+  GET_ALIGNMENT count=4 total_ms=0.39 avg_us=98.0
+  GRAPH_COMPUTE count=48 total_ms=1477.87 avg_us=30789.0
+  GET_DEVICE_MEMORY count=20 total_ms=20.22 avg_us=1011.0
+  GET_ALLOC_SIZE count=104 total_ms=13.91 avg_us=134.0
+  HELLO count=12 total_ms=0.0 avg_us=0.0
+  DEVICE_COUNT count=8 total_ms=14.94 avg_us=1867.0
+  GRAPH_RECOMPUTE count=644 total_ms=1467.51 avg_us=2279.0
+  EVENT_RECORD count=982 total_ms=1492.21 avg_us=1520.0
+  GET_MAX_SIZE count=4 total_ms=0.75 avg_us=187.0
+  BUFFER_GET_BASE count=16 total_ms=1.72 avg_us=107.0
+  FREE_BUFFER count=16 total_ms=25.56 avg_us=1598.0
+  BUFFER_CLEAR count=24 total_ms=3.34 avg_us=139.0
+  SET_TENSOR count=1014 total_ms=3.86 avg_us=4.0
+  SET_TENSOR_HASH count=240 total_ms=6679.79 avg_us=27832.0
+  GET_TENSOR count=888 total_ms=330.14 avg_us=372.0
+  blocking_events=1346 blocking_ms=9317.35
+  rpc_rtt_count=839 rpc_rtt_ms=9268.19
+  rpc_rtt_hist=0ms:320 1ms:25 2ms:9 3ms:22 4ms:322 5ms:3 6ms:3 7ms:16 8ms:12 9ms:1 10ms:1 12ms:3
+  rpc_rtt_p50_ms=4.13 rpc_rtt_p95_ms=70.0 rpc_rtt_p99_ms=93.28
+  EVENT_RECORD count=982 total_ms=1492.21
+  drain_flush_ms=49.16
+  hello endpoint=192.168.8.22:50051 minor=4 peer_copy=True
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=True
+  hello endpoint=192.168.8.22:50051 minor=4 peer_copy=True
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=True
+  hello endpoint=192.168.8.22:50051 minor=4 peer_copy=True
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=True
+  hello endpoint=192.168.8.22:50051 minor=4 peer_copy=True
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=True
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=True
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=True
+  hello endpoint=192.168.8.22:50051 minor=4 peer_copy=True
+  hello endpoint=192.168.8.22:50051 minor=4 peer_copy=True
+  copy_issue_count=676 defer_count=676 peer_copy_count=0
+
+[sched] events=6370
+  split_total_count=676
+  split_total_ms_sum=2880.54 avg_us=4261.0
+    backend3 splits=169 ms=7.0
+    backend0 splits=169 ms=1222.43
+    backend1 splits=169 ms=1233.92
+    backend2 splits=169 ms=417.19
+  input_wait_copy_ms=312.96
+  graph_compute_async_ms=2517.48
+  event_record_ms=12.53
+  sync_copy_fallback_ms=147.19
+    sync_copy_fallback backend1 count=169 ms=147.19
+  copy_async_ok_count=1352
+    copy_async_ok backend0 count=507
+    copy_async_ok backend1 count=338
+    copy_async_ok backend2 count=507
+  assembly_overlap_count=253 pairs=171366 overlap_pct=0.1
+    copy0 splits=172
+    copy1 splits=168
+    copy2 splits=168
+    copy3 splits=168
+  per_split_rpc_rtt:
+    split=1 backend=0 rpc_rtt_count=184 rpc_rtt_ms=189.46
+    split=2 backend=1 rpc_rtt_count=23 rpc_rtt_ms=10.63
+    split=3 backend=2 rpc_rtt_count=62 rpc_rtt_ms=205.85
