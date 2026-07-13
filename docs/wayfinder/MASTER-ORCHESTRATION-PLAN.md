@@ -211,6 +211,21 @@ Each cycle produces:
 
 ---
 
+## Slice 4 Completion (2026-07-13)
+
+Multi-seq Mode B (D6.1-D6.9) delivered on romulus dual-GPU. Scope expanded beyond original D6.1-D6.7:
+- **D6.1-D6.7**: Multi-seq requirements, ADR-005 (Option B: interleaved multi-seq with stage-available scheduling), spec, prototype, state machine extension, backend tests (6/6), integration tests (4/4), 10/10 GPipe suites pass.
+- **D6.8**: Per-sequence GPipe events — migrated from double-buffered to per-seq event arrays.
+- **D6.9**: GRAPH_COMPUTE_STAGE RPC command — server-side per-stage split filtering with telemetry.
+- **D6.10**: GPU event pipelining fix — known limitation, ticketed for future.
+
+## Slice 3 Completion (2026-07-11)
+
+Deeper pipelining (D5.1-D5.7) delivered on romulus dual-GPU:
+- **n_stages > 2**: Stage 0 split into per-backend sub-stages. Topology-aware default: n_stages = n_backends + 1.
+- **Adaptive depth**: `GGML_SCHED_GPIPE_ADAPTIVE=1` with straggler detection. 20/20 assertions pass, 0 regressions.
+- **D5.7**: On 2-GPU, n_stages=3 shows no throughput gain — existing copy-slot pipeline captures all overlap. Benefit expected on 3+ GPU.
+
 ## Slice 2 Completion (2026-07-11)
 
 Path C core (D4.1-D4.6) + Profiler v1 (D4.7-D4.10) delivered on romulus dual-GPU:
@@ -223,15 +238,12 @@ Path C core (D4.1-D4.6) + Profiler v1 (D4.7-D4.10) delivered on romulus dual-GPU
 
 ## Next Action
 
-**Ready for Slice 3 — D5 Deeper Pipelining.**
+**Ready for Slice 5 — R3 Advanced Optimization + Deprecation Cleanup.**
 
-Grab Slice 3 from `docs/tickets/path-d-slices.md` and execute via `D5-DEEPER-PIPELINE-AGENT-PLAN.md`:
+Grab Slice 5 from `docs/tickets/path-d-slices.md`:
 
 ```
-/handoff "Slice 3: Deeper Pipelining — n_stages > 2"
--> Read docs/tickets/path-d-slices.md Slice 3
--> Read docs/wayfinder/D5-DEEPER-PIPELINE-AGENT-PLAN.md
--> Execute D5.1-D5.7 tickets
+/handoff "Slice 5: Advanced Optimization — adaptive depth refinement + deprecation cleanup" → Read docs/tickets/path-d-slices.md Slice 5 section, docs/tickets/path-d-tickets.md R3.1-R3.5, docs/wayfinder/TRACKING.md, docs/wayfinder/D5.1-split-timing-analysis.md, docs/adr/0003-adaptive-pipeline-depth.md → Execute R3.1-R3.5 (analyze adaptive depth → ADR-006 → deprecation warnings for B+11/B+14/B+7f → refine adaptive depth → full regression test) → On completion update path-d-slices.md completion footer and TRACKING.md R3 status
 ```
 
 ---

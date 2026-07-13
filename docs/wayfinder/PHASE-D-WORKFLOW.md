@@ -225,11 +225,12 @@ On success:
 **Goal:** n_stages > 2, per-backend sub-stages, adaptive depth  
 **Workflow loop:** research → design → spec → prototype → implement → test → review
 
-## Stage 10: Mode B Microbatch (D6)
+## Stage 10: Mode B Microbatch (D6) ✅ COMPLETE
 
 **Entry point:** `docs/wayfinder/D6-MODE-B-AGENT-PLAN.md`  
 **Goal:** Multi-seq pipeline sharing  
 **Workflow loop:** research → design → spec → prototype → implement → test → review
+**Completed:** 2026-07-13 — Multi-seq dispatch, per-sequence events, GRAPH_COMPUTE_STAGE, 10/10 GPipe test suites pass. Known limitation D6.10 (GPU event pipelining) ticketed. Scoped expanded D6.8-D6.10 beyond original D6.1-D6.7.
 
 ## Stage 11: Advanced Optimization (R3)
 

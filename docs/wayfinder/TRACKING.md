@@ -3,7 +3,7 @@
 **Branch:** Path-D-Gpipeline-Assembly-Line
 **Date:** 2026-07-10
 **Parent:** `docs/rpc-multi-backend-pipeline-plus/TRACKING.md`
-**Status:** SLICE 1 + SLICE 2 + SLICE 3 COMPLETE — RPC event drain fixed, Path C stepping stone + profiler v1 delivered, deeper pipelining n_stages > 2 (2026-07-11)
+**Status:** SLICE 1 + SLICE 2 + SLICE 3 + SLICE 4 COMPLETE — RPC event fix, Path C stepping stone + profiler v1, deeper pipelining n_stages > 2, multi-seq Mode B (2026-07-13)
 
 ---
 
