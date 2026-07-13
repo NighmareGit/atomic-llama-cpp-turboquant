@@ -659,6 +659,67 @@
 
 ---
 
+### D6.10 -- Fix GPipe Multi-Seq Inter-Stage Event Synchronization
+
+**Type:** bugfix
+**Blocks:** D6.7 (re-verify)
+**Blocked by:** none
+
+**Goal:** Replace the current `ggml_backend_sched_synchronize()` fallback with proper per-backend event-based gating for multi-seq stage dispatch. Currently all GPU backends are fully drained between stages, which serializes work that could otherwise overlap.
+
+**Background:**
+The multi-seq dispatch (`llama_decode_gpipe_multi_impl`) calls `ggml_backend_sched_graph_compute_async` multiple times within a single token decode, once per pipeline stage. Between stages, it must ensure stage N is fully complete before stage N+1 overwrites shared tensor buffers. The original design used `ggml_sched_gpipe_wait_seq()` for this, but it is a silent no-op because:
+- The gather backend is always CPU (asserted in `ggml_backend_sched_new`)
+- The CPU device interface has `event_new`/`event_record`/`event_wait`/`event_synchronize` all NULL
+- `ggml_backend_event_new(cpu_device)` returns NULL
+- All gpipe_events are NULL, so `ggml_sched_gpipe_wait_seq` returns immediately without any synchronization
+
+The temporary fix (2026-07-13) calls `ggml_backend_sched_synchronize(sched)` between stages, which drains all backends unconditionally. This is correct but degrades GPU backends (ROCm/CUDA/Vulkan/RPC) from async event-wait to full device sync.
+
+**Proposed Fix:**
+Record gpipe events on a GPU backend (not CPU gather) so the events are valid. Use the last non-CPU backend as the event host. If no GPU backends exist, fall back to full sync. This restores event-based pipelining for GPU configurations.
+
+**Implementation sketch (`ggml/src/ggml-backend.cpp`):**
+```cpp
+void ggml_sched_gpipe_init_multi(ggml_backend_sched_t sched, int n_stages, int n_seqs) {
+    // Find a GPU backend to host events; fall back to CPU if none
+    int event_host_bid = -1;
+    for (int b = sched->n_backends - 1; b >= 0; b--) {
+        if (sched->backends[b]->device->iface.event_new != NULL) {
+            event_host_bid = b;
+            break;
+        }
+    }
+    sched->gpipe_event_host_bid = event_host_bid;  // new field
+    ggml_backend_dev_t event_dev = event_host_bid >= 0
+        ? sched->backends[event_host_bid]->device
+        : sched->backends[sched->n_backends - 1]->device;
+    // ... create events on event_dev instead of gather_backend->device
+}
+```
+
+Then `ggml_sched_gpipe_wait_seq` and `ggml_sched_gpipe_record_seq` use `sched->backends[event_host_bid]` instead of `sched->backends[gather_bid]`. When `event_host_bid < 0` (no GPU backends), fall back to `ggml_backend_sched_synchronize`.
+
+**Affected files:**
+- `ggml/src/ggml-backend.cpp`: `ggml_sched_gpipe_init_multi`, `ggml_sched_gpipe_wait_seq`, `ggml_sched_gpipe_record_seq`
+- `src/llama-context.cpp`: revert `ggml_backend_sched_synchronize` back to `ggml_sched_gpipe_wait_seq`
+
+**Acceptance Criteria:**
+- [ ] gpipe_events created on GPU backend (not CPU) when GPU backends are present
+- [ ] `ggml_sched_gpipe_wait_seq` properly gates stages with GPU events
+- [ ] CPU-only configs fall back to full sync (no regression)
+- [ ] Multi-seq dispatch no longer drains all backends between stages
+- [ ] `ggml_sched_gpipe_record_seq` no longer a no-op on GPU configs
+- [ ] Romulus dual-GPU (RPC + ROCm + CPU): no crash, no full-device-sync between stages
+- [ ] Backend event tests still pass (tests use CPU backends, fallback path)
+
+**Implementation Notes:**
+- Reference: `docs/path-d-spec.md` section 10.3 (multi-seq event protocol)
+- The `ggml_backend_sched` struct needs a new `int gpipe_event_host_bid` field
+- D6.8 (per-sequence events) and D6.9 (GRAPH_COMPUTE_STAGE) were implemented without tickets
+
+---
+
 ## Advanced Optimization Tickets
 
 ### R3.1 -- Adaptive Depth Analysis

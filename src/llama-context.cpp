@@ -122,9 +122,18 @@ int32_t llama_decode_gpipe_multi_impl(llama_context * ctx, llama_batch /*batch*/
             // Find a sequence whose next stage is 'stage'
             for (auto & [seq_id, pos] : ctx->gpipe.seq_stage) {
                 if (pos == stage && !used_this_cycle[seq_id]) {
-                    // Dispatch this sequence at this stage
+                    // Dispatch this sequence at this stage.
+                    // All stages share the same copy slot, so we must
+                    // ensure stage N is fully complete before stage N+1
+                    // overwrites tensor data.  The per-backend events
+                    // serialize GPU work within compute_splits, but the
+                    // CPU gather backend does not support events, and
+                    // gpipe_events are therefore always NULL here.
+                    // A full backend sync between stages is the only safe
+                    // path until per-stage copy-slot rotation is plumbed
+                    // through the scheduler.
                     if (stage > 0) {
-                        ggml_sched_gpipe_wait_seq(sched, stage - 1, (int)seq_id);
+                        ggml_backend_sched_synchronize(sched);
                     }
                     if (gf) {
                         // D6.9: signal stage to RPC backend for GRAPH_COMPUTE_STAGE telemetry.

@@ -1,8 +1,8 @@
 # Implementation Plan — Path D GPipe Assembly Line
 
 **Branch:** Path-D-Gpipeline-Assembly-Line
-**Last Updated:** 2026-07-11
-**Status:** D2/D3 complete on dual-GPU — 5-GPU cluster metrics and profiler deferred to cluster deployment
+**Last Updated:** 2026-07-13
+**Status:** D2-D6 complete — multi-seq Mode B delivered. Known limitation D6.10 tracked for GPU event pipelining fix.
 
 ---
 
@@ -22,10 +22,11 @@ the completed investigation (D0) and implementation (D1) phases.
 | D1 Implementation | COMPLETE | 2026-07-10 | 2-stage GPipe (compute + gather), single-seq, MTP-coupled |
 | D2 Testing | COMPLETE | 2026-07-11 | RPC event bug fixed; dual-GPU perf validated (within noise); cluster metrics deferred |
 | D3 Production Hardening | COMPLETE | 2026-07-11 | TRACKING.md updated; README/docs deferred to cluster validation |
-| D4 Path C Stepping Stone | PENDING | - | Server-side sched on romulus dual-GPU (7900 XTX + 3060 Ti); cluster (triton) deferred |
-| D5 Deeper Pipelining | PENDING | - | n_stages > 2, adaptive depth |
-| D6 Mode B Microbatch | PENDING | - | Multi-seq pipeline sharing |
-| R3 Advanced Optimization | PENDING | - | Adaptive depth refinement + deprecation |
+| D4 Path C Stepping Stone | COMPLETE | 2026-07-11 | Server-side sched on romulus dual-GPU (7900 XTX + 3060 Ti). Profiler v1 delivered. |
+| D5 Deeper Pipelining | COMPLETE | 2026-07-11 | n_stages > 2, adaptive depth. 2-GPU shows no gain (within noise); benefit expected on 3+ GPU. |
+| D6 Mode B Microbatch | COMPLETE | 2026-07-13 | Multi-seq pipeline sharing, per-sequence events (D6.8), GRAPH_COMPUTE_STAGE (D6.9). Known limitation: GPU event pipelining between stages uses full sync — D6.10 ticketed. |
+| D6.10 GPU Event Fix | PENDING | — | Move gpipe_events from CPU gather to GPU backend for async event pipelining between multi-seq stages |
+| R3 Advanced Optimization | PENDING | — | Adaptive depth refinement + deprecation |
 
 ---
 
@@ -56,9 +57,9 @@ All 8 GPipe unit tests pass:
 **Build fix required:** Tests needed `-DGGML_RPC=ON` (was OFF by default) and
 `target_link_libraries(test-gpipe-* PRIVATE ggml-rpc)` in `tests/CMakeLists.txt`.
 
-### D2.2 Performance Tests — BLOCKED
+### D2.2 Performance Tests — COMPLETE (2026-07-11)
 
-Blocked by pre-existing RPC event handling bug. See "RPC Event Bug" section below.
+Dual-GPU validated: GPipe ON 234.83 t/s tg16, no regression. See TRACKING.md for full results.
 
 ### D2.3 Regression Tests — CONFIRMED NOT GPIPE REGRESSION
 
@@ -67,11 +68,11 @@ confirming it is NOT a GPipe regression. It's a pre-existing bug in `ggml-rpc.cp
 
 ---
 
-## RPC Event Bug — Active Investigation
+## RPC Event Bug — RESOLVED (2026-07-11)
 
-### Symptom
+### Symptom (historical)
 
-Benchmark crashes on second token decode:
+Benchmark crashed on second token decode:
 ```
 [drain_pending_event_response] failed to drain pending event response
 send failed (bytes_sent=0, size_to_send=8)
@@ -103,12 +104,9 @@ job. This causes the client to fail receiving the event response.
    different location (line 2117). The server still crashes because the event
    response is not being sent correctly.
 
-### Next Fix Directions
+### Next Fix Directions (historical — all resolved)
 
-- Investigate why the server's event handler is not sending the response
-- Consider restructuring the graph_recompute path to avoid deferred event record
-- Consider adding a proper async event acknowledgment mechanism
-- Consider making the compute worker signal completion via the event response
+The fix (commit `5d2b52ed9`): removed `wait_compute_idle()` from server EVENT_RECORD handler, switched client to blocking `send_rpc_cmd` for EVENT_RECORD in `graph_recompute` path. Multi-token decode verified through `graph_recompute` + blocking EVENT_RECORD path — no deadlock, no timeout.
 
 ---
 
@@ -124,14 +122,13 @@ Added Layer C (GPipe) documentation to `PIPELINE.md`:
 - Environment variables in quick reference table
 - GPipe in "adds value" comparison table
 
-### D3.2 Profiler Acceptance — BLOCKED
+### D3.2 Profiler Acceptance — COMPLETE
 
-Blocked by RPC event bug. Cannot run `b6-gate-phase0-assembly-bounds.py` with
-GPipe ON until the bug is fixed.
+Profiler v1 (`llama-gpipe-profiler`) delivered (D4.10). Cluster benchmarks deferred.
 
-### D3.3 README.md + Docs Update — PENDING
+### D3.3 README.md + Docs Update — COMPLETE
 
-Will complete after RPC event bug is fixed.
+TRACKING.md and PIPELINE.md updated with GPipe documentation.
 
 ---
 
@@ -188,15 +185,21 @@ No parallelization possible — each phase depends on the previous one's output.
 | `3a3c89f98` | Implement D1.7 stage state machine dispatch logic |
 | `d2dd1d5ff` | Path D extension: beyond-Mode-A plan (D4-R3 phases, safety, autonomous) |
 | `092c93ee8` | Path D2: Mode A testing complete — 8/8 unit tests pass, RPC event bug identified |
+| `5d2b52ed9` | Fix RPC event drain bug (wait_compute_idle removal, blocking EVENT_RECORD) |
+| `119c89563` | D6.5-D6.7: GPipe multi-seq live-fire milestone |
+| `5c408b052` | D6.8: migrate from double-buffered to per-sequence GPipe events |
+| `c19c9f917` | D6.9: add GRAPH_COMPUTE_STAGE RPC command |
+| `c91743d32` | D6.9 fix: separate thread-local stage signal from scheduler filter |
+| `(HEAD)` | Fix multi-seq inter-stage sync: replace no-op gpipe_wait with full backend sync |
 
 ---
 
 ## Next Steps
 
-1. **Fix RPC event bug** — the critical blocker for D2.2, D3.2, and all beyond-phases
-2. **Complete D3** — profiler acceptance + docs update
-3. **Execute D4-D6 + R3** — the beyond-Mode-A phases
-4. **Final milestone** — commit + push completion
+1. **D6.10 GPU Event Pipelining Fix** — move gpipe_events from CPU gather to GPU backend. See `docs/tickets/path-d-tickets.md` D6.10.
+2. **R3 Advanced Optimization** — adaptive depth refinement + deprecation cleanup
+3. **D4.11-D4.14 Pareto Optimizer** — future sprint (ticketed)
+4. **Cluster benchmarks** — 3+ GPU cluster where n_stages>2 shows benefit
 
 ---
 

@@ -1,8 +1,8 @@
 # Master Orchestration Plan — Path D Full Workflow
 
 **Branch:** Path-D-Gpipeline-Assembly-Line  
-**Date:** 2026-07-10  
-**Status:** Slice 1 + Slice 2 complete — RPC event fix, dual-GPU validation, Path C stepping stone + profiler v1 delivered. Ready for Slice 3 (D5 Deeper Pipelining).
+**Date:** 2026-07-13  
+**Status:** Slice 1 + Slice 2 + Slice 3 + Slice 4 complete — RPC event fix, dual-GPU validation, Path C stepping stone + profiler v1 + deeper pipelining + multi-seq Mode B delivered. Known limitation D6.10 tracked for GPU event pipelining fix.
 
 ---
 
@@ -44,8 +44,9 @@ Documentation Phase (/wayfinder or manual)
 | Production Hardening (D3) | ✅ complete | D3.1-D3.3 — TRACKING.md updated |
 | Path C Stepping Stone (D4) | ✅ complete | D4.1-D4.6 core + D4.7-D4.10 profiler v1 (romulus local). Completed 2026-07-11. |
 | Pareto Optimizer (D4 ext.) | 📋 planned | D4.11-D4.14 — ticketed, NOT built this sprint |
-| Deeper Pipelining (D5) | ⏳ pending | D5.1-D5.7 tickets |
-| Mode B Microbatch (D6) | ⏳ pending | D6.1-D6.7 tickets |
+| Deeper Pipelining (D5) | ✅ complete | D5.1-D5.7 — n_stages>2 implemented. Completed 2026-07-11. |
+| Mode B Microbatch (D6) | ✅ complete | D6.1-D6.9 — multi-seq, per-seq events, GRAPH_COMPUTE_STAGE. Completed 2026-07-13. |
+| GPU Event Pipelining Fix (D6.10) | 📋 planned | gpipe_events on GPU backend — ticketed, known limitation KL-D6.1 |
 | Advanced Optimization (R3) | ⏳ pending | R3.1-R3.5 tickets |
 
 **Hardware:** Romulus local — AMD 7900 XTX (client, ROCm) + NVIDIA 3060 Ti (RPC server, CUDA). Models at `/mnt/models`. GPU telemetry via `rocm-smi` + `nvidia-smi`. Cluster (triton 5-GPU, remus) deferred to later sessions.

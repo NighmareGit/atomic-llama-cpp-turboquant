@@ -1,8 +1,9 @@
 # D6 Agent Plan — Mode B Microbatch / Multi-Seq
 
-**Phase:** D6 (Mode B Microbatch)  
+**Phase:** D6 (Mode B Microbatch) — ✅ COMPLETE (2026-07-13)  
 **Goal:** Support multiple sequences at different pipeline positions  
-**Agent pattern:** research → design → spec → prototype → implement → test → review (loop up to 3x)
+**Agent pattern:** research → design → spec → prototype → implement → test → review (loop up to 3x)  
+**Status:** D6.1-D6.9 complete. D6.10 (GPU event pipelining fix) ticketed as follow-up.
 
 ---
 
@@ -79,14 +80,36 @@ Extend GPipe from single-sequence (Mode A) to multi-sequence pipeline sharing (M
 4. Document results in TRACKING.md
 5. Commit + push
 
+### D6.8 — Per-Sequence Events ✅ complete
+
+1. Migrate from double-buffered (2 banks) to per-sequence event arrays
+2. `gpipe_events` flattened to `[n_gpipe_seqs * GGML_SCHED_MAX_STAGES]` row-major
+3. `ggml_sched_gpipe_wait_seq`/`record_seq` accept `seq_id` parameter
+4. Remove old bank API (`record_bank`, `wait_bank`, `toggle_bank`)
+5. Commit `5c408b052`
+
+### D6.9 — GRAPH_COMPUTE_STAGE RPC ✅ complete
+
+1. Add `RPC_CMD_GRAPH_COMPUTE_STAGE` (value 23) to RPC protocol
+2. Server-side per-stage split filtering with telemetry
+3. Thread-local `tls_gpipe_active_stage` signals stage to RPC backend
+4. Profiler verified: `device_timings_us` per-stage
+5. Commits `c19c9f917`, `c91743d32`
+
+### D6.10 — GPU Event Pipelining Fix 📋 planned
+
+1. Move gpipe_events from CPU gather backend to GPU backend
+2. Fall back to full sync when no GPU backends present
+3. Revert temporary `ggml_backend_sched_synchronize` workaround
+4. See `docs/tickets/path-d-tickets.md` D6.10
+5. See `docs/path-d-spec.md` section 10.3.6 (KL-D6.1)
+
 ## Review Loop
 
-After D6.7:
-- If acceptance criteria met → milestone commit, handoff to R3
-- If test fails with obvious code fix → loop back to D6.5/D6.6
-- If design flawed → loop back to D6.2
-- If structural problem → loop back to D6.4
-- Max 3 loops → mark FAILED SPIKE, document, continue to R3
+After D6.9:
+- Acceptance criteria met → D6.1-D6.9 complete, milestone commits done
+- D6.10 follow-up ticketed (GPU event pipelining)
+- Handoff to R3
 
 ## Milestone Commit
 
@@ -110,4 +133,4 @@ git push origin Path-D-Gpipeline-Assembly-Line
 
 ---
 
-*Agent plan for D6 — 2026-07-10*
+*Agent plan for D6 — 2026-07-10. Updated 2026-07-13 with D6.1-D6.9 completion and D6.10 planning.*

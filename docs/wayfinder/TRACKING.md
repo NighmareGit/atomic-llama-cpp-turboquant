@@ -204,6 +204,9 @@ Full analysis: `docs/wayfinder/D4.1-romulus-baseline-analysis.md`
 | D6.5 | ✅ complete | State machine extended for multi-seq: double-buffered events in `ggml-backend.cpp`, per-sequence stage tracking in `llama-context.h`, multi-seq dispatch in `llama-context.cpp`. 26/26 unit test assertions pass, 0 regressions (9/9 GPipe tests) |
 | D6.6 | ✅ complete | Backend-level double-buffered event tests validated on romulus: 6/6 assertions pass (`test-gpipe-multi-seq-backend.cpp`). Tests cover: multi-bank init, separate-bank concurrent sequences, bank toggle across cycles, 3-stage 2-seq pipeline, single-bank backward compat, drain-all-banks. Real CPU backends with `ggml_backend_cpu_init()`, `ggml_backend_sched_new()`. Link fix: `--no-as-needed` needed for `libggml-rpc.so` resolution with `libggml-base.so` circular RPC deps. Multi-bank API (`ggml_sched_gpipe_init_multi`, `record_bank`, `wait_bank`, `toggle_bank`) promoted from `extern "C"` to `GGML_API` in `ggml/include/ggml-backend.h`. |
 | D6.7 | ✅ complete | End-to-end model-level integration test on romulus: 4/4 assertions pass (`test-gpipe-multi-seq-integration.cpp`). Tests: GPipe-disabled fallback returns -1, multi-seq dispatch makes progress for 2 sequences, stage ownership tracking no duplicates, fallback to single-seq when active < 2. Uses tinyllama stories15M model on ROCm (7900 XTX). Added test accessors `llama_gpipe_multi_seq_setup()` and `llama_gpipe_multi_seq_n_stages()` in `llama-context.h`/`.cpp`. Full regression: 10/10 GPipe test suites pass (0 failures). |
+| D6.8 | ✅ complete | Per-sequence GPipe events: migrated from double-buffered (2 banks) to per-sequence event arrays in `ggml_backend_sched`. `gpipe_events` now `[n_gpipe_seqs * GGML_SCHED_MAX_STAGES]` row-major. `ggml_sched_gpipe_wait_seq`/`record_seq` accept `seq_id` parameter. `ggml_sched_gpipe_init_multi` takes `n_seqs`. Old bank API (`record_bank`, `wait_bank`, `toggle_bank`) removed. Commit: `5c408b052`. |
+| D6.9 | ✅ complete | GRAPH_COMPUTE_STAGE RPC command (value 23): server-side per-stage split filtering with telemetry. Thread-local `tls_gpipe_active_stage` signals stage to RPC backend. Client sends all splits; server applies `ggml_backend_sched_set_gpipe_stage` filter. Server returns per-device timing in response. Profiler verified: `device_timings_us: [754, 1390]` per-stage. Commits: `c19c9f917`, `c91743d32`. |
+| D6.10 | 📋 planned | GPU event pipelining fix: gpipe_events currently NULL on CPU gather backend. Multi-seq dispatch uses `ggml_backend_sched_synchronize` (full drain) as temporary workaround. Proper fix: record gpipe_events on a GPU backend. See `docs/tickets/path-d-tickets.md` D6.10. |
 
 ### R3 — Advanced Optimization (pending)
 
@@ -237,10 +240,11 @@ Aborts if VRAM/RAM/disk/running-instances indicate OOM risk.
 ## Next Actions
 
 1. **D5 Deeper Pipelining** — ✅ COMPLETE (2026-07-11). n_stages > 2 implemented with topology-aware default and adaptive opt-in. Performance validated on romulus dual-GPU (2 models, profiler traces collected): n_stages=3 shows no throughput gain on 2-GPU — existing pipeline already captures overlap. Benefit expected on 3+ GPU setups only.
-2. **D6 Mode B Microbatch** — Multi-seq support. See `docs/wayfinder/D5-DEEPER-PIPELINE-AGENT-PLAN.md` (D6 section TBD)
-3. **R3 Advanced Optimization** — Adaptive depth + deprecation cleanup
-4. **D4.11-D4.14 Pareto Optimizer** — Planned + ticketed, future sprint
-5. **Cluster performance benchmarks** — D5.7 deferred: global_3bk_pct, overlap_pct on 5-GPU cluster (3+ GPUs where n_stages>2 shows benefit)
+2. **D6 Mode B Microbatch** — ✅ COMPLETE (2026-07-13). Multi-seq dispatch, per-sequence events (D6.8), GRAPH_COMPUTE_STAGE (D6.9). Known limitation: GPU event pipelining uses full sync — D6.10 ticketed.
+3. **D6.10 GPU Event Pipelining Fix** — 📋 planned. Move gpipe_events from CPU gather to GPU backend. See `docs/tickets/path-d-tickets.md`.
+4. **R3 Advanced Optimization** — Adaptive depth + deprecation cleanup
+5. **D4.11-D4.14 Pareto Optimizer** — Planned + ticketed, future sprint
+6. **Cluster performance benchmarks** — D5.7 deferred: global_3bk_pct, overlap_pct on 5-GPU cluster (3+ GPUs where n_stages>2 shows benefit)
 
 ---
 

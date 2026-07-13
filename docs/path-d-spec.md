@@ -331,6 +331,12 @@ Per-sequence KV-ready release follows ADR-0002: a sequence's next token cannot s
 | AC-D6.5 | No regression: single-seq Mode A still works | Test: existing GPipe tests pass (16 assertions as of D5.7) |
 | AC-D6.6 | Server handles per-sequence dispatch | Test: server accepts graphs from different sequences concurrently |
 
+#### 10.3.6 Known Limitations
+
+| ID | Limitation | Workaround | Fix Ticket |
+|----|-----------|------------|------------|
+| KL-D6.1 | GPU backends fully drained between multi-seq stages (`ggml_backend_sched_synchronize`). Event-based pipelining non-functional because CPU gather backend does not support events (`event_new`/`event_record`/`event_wait` all NULL), making all gpipe_events NULL. | Use single-seq Mode A (no per-stage dispatch). Multi-seq correctness is maintained, just without GPU pipelining between stages. | D6.10 |
+
 ### 10.4 Phase R3 — Advanced Optimization
 
 **Goal:** Adaptive depth refinement, deprecation of superseded flags. RDMA deferred.
