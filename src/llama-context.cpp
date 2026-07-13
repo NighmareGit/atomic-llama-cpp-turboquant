@@ -684,7 +684,15 @@ void llama_context::sched_reserve() {
     gf_res_prev.reset(new llm_graph_result(max_nodes));
     gf_res_reserve.reset(new llm_graph_result(max_nodes));
 
-    sched.reset(ggml_backend_sched_new(backend_ptrs.data(), backend_buft.data(), backend_ptrs.size(), max_nodes, cparams.pipeline_parallel, cparams.op_offload));
+    // MTP draft contexts share KV-cache state with the target context via
+    // the speculative decoding bridge (hidden states flow target->draft). When
+    // pipeline_parallel enables copy-slot rotation (n_copies > 1), the draft
+    // scheduler's independent prev_copy/cur_copy cycle races with the target
+    // scheduler, producing garbled draft tokens. The draft graphs are tiny
+    // (MTP head only, a few layers), so the pipeline benefit is negligible.
+    // Disable copy-slot rotation for MTP contexts unconditionally.
+    const bool pipeline_parallel = cparams.pipeline_parallel && (cparams.ctx_type != LLAMA_CONTEXT_TYPE_MTP);
+    sched.reset(ggml_backend_sched_new(backend_ptrs.data(), backend_buft.data(), backend_ptrs.size(), max_nodes, pipeline_parallel, cparams.op_offload));
 
     if (gpipe.enabled) {
         ggml_sched_gpipe_init(sched.get(), gpipe.n_stages);
