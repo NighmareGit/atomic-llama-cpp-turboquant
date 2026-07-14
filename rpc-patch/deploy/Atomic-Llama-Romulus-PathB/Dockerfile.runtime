@@ -8,11 +8,10 @@ RUN apt-get update && apt-get install -y libgomp1 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 COPY staging/rpc-server /usr/local/bin/rpc-server
-COPY staging/llama-server /usr/local/bin/llama-server
 COPY staging/lib/ /usr/local/lib/
 
 RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/llama.conf && ldconfig \
-    && chmod +x /usr/local/bin/rpc-server /usr/local/bin/llama-server
+    && chmod +x /usr/local/bin/rpc-server
 
 ENV NVIDIA_VISIBLE_DEVICES=0
 ENV CUDA_VISIBLE_DEVICES=0

@@ -9,6 +9,7 @@
 | **Parent mission** | [MISSION.md](MISSION.md) | [PLAN.md](PLAN.md) Phase D |
 
 Navigation: [DESIGN-b14-parallel-assembly-line.md](DESIGN-b14-parallel-assembly-line.md) | [rpc-path-c-plan.md](../../rpc-patch/docs/rpc-path-c-plan.md) | [TRACKING.md](TRACKING.md)
+**Current state (factual):** [CURRENT-STATE-pipeline-flow.md](CURRENT-STATE-pipeline-flow.md) — what actually runs today (serial split dispatch, not GPipe)
 
 ---
 
