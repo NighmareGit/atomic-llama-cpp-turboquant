@@ -97,7 +97,7 @@ The MTP draft graphs are tiny (MTP head only, a few layers), so the pipeline par
 | 3. **Skip prev_copy for shared-memory contexts** (check `ctx_other`) | Conceptually correct — "shared buffer, single owner" | Requires `ctx_other` propagation through `llama_cparams` (currently only set for Gemma4Assistant/EAGLE3) |
 | 4. **Force `n_copies=1` at ggml-backend level** when context type is MTP | Same effect as option 1, different insertion point | Couples ggml scheduler to llama-level context type |
 
-**Note:** The `Qwen3.5-9B-MTP-Q4_K_M.gguf` model (5.5 GB) produces garbled output even **without** `--spec-type draft-mtp`. This model appears to have damaged weights — it is not a valid test target for the MTP fix. The `Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf` model (22 GB) produces correct output without MTP and is the canonical test target.
+**Note:** The `Qwen3.5-9B-MTP-Q4_K_M.gguf` model (5.5 GB) produces garbled output when loaded **without** `--spec-type draft-mtp` on the Path-D branch — this is a Path-D regression, not damaged weights (the model works correctly on vanilla atomic with MTP enabled). However, this edge case is not a production concern: MTP-combined models are always used with `--spec-type draft-mtp`. The `Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf` model (22 GB) produces correct output without MTP and is the canonical test target.
 
 ### 4. VRAM fit scan (what else fits)
 

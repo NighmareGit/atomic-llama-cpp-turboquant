@@ -10,6 +10,7 @@
 #include "common.h"
 #include "ggml.h"
 #include "llama.h"
+#include "speculative.h"
 
 #include <chrono>
 #include <cmath>
@@ -81,6 +82,13 @@ struct profiler_config {
     bool enable_trace = false;
     bool server_telemetry = false;
     int  gpipe_stages = 0;        // D6.9: 0=disabled, 2+=enable GPipe with N stages
+
+    // MTP / NextN speculative decoding (TG-only)
+    bool mtp_enabled         = false;
+    std::string model_draft_path;  // separate draft model (e.g., Gemma assistant)
+    int  spec_draft_n_max    = 2;
+    int  spec_draft_n_min    = 1;
+    int  n_parallel          = 1;
 
     llama_split_mode split_mode = LLAMA_SPLIT_MODE_LAYER;
     ggml_type type_k = GGML_TYPE_Q4_0;
@@ -252,6 +260,9 @@ struct task_result {
     int    n_tokens = 0;
     int    n_eval   = 0;
     int    n_reused = 0;
+    // MTP draft acceptance
+    int    n_draft          = 0;
+    int    n_draft_accepted = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -316,6 +327,71 @@ static task_result run_session(
 
     const int n_threads = cfg.n_threads > 0 ? cfg.n_threads : common_cpu_get_num_math();
     llama_set_n_threads(ctx, n_threads, n_threads);
+
+    llama_perf_context_reset(ctx);
+    llama_memory_clear(llama_get_memory(ctx), false);
+
+    // MTP draft context (TG-only)
+    llama_context * ctx_dft = nullptr;
+    llama_model   * model_dft = nullptr;
+    common_speculative_ptr spec;
+
+    if (cfg.mtp_enabled && task.type == TASK_TG) {
+        fprintf(stderr, ">>> MTP: creating draft context (n_max=%d, n_min=%d)%s\n",
+                cfg.spec_draft_n_max, cfg.spec_draft_n_min,
+                cfg.model_draft_path.empty() ? "" : " [separate draft]");
+
+        auto cparams_mtp = cparams;
+        cparams_mtp.ctx_type      = LLAMA_CONTEXT_TYPE_MTP;
+        cparams_mtp.type_k        = cfg.type_k;
+        cparams_mtp.type_v        = cfg.type_v;
+        cparams_mtp.n_rs_seq      = 0;
+        cparams_mtp.n_outputs_max = cfg.n_parallel;
+        cparams_mtp.ctx_other     = ctx;
+
+        if (!cfg.model_draft_path.empty()) {
+            // Load separate draft model (e.g., Gemma assistant for MTP)
+            fprintf(stderr, ">>> MTP: loading draft model: %s\n", cfg.model_draft_path.c_str());
+            auto mparams_dft = mparams;
+            mparams_dft.n_gpu_layers = 99; // draft is small, offload entirely
+            model_dft = llama_model_load_from_file(cfg.model_draft_path.c_str(), mparams_dft);
+            if (!model_dft) {
+                throw std::runtime_error("failed to load draft model: " + cfg.model_draft_path);
+            }
+            ctx_dft = llama_init_from_model(model_dft, cparams_mtp);
+        } else {
+            // Fused MTP (e.g., Qwen NextN)
+            ctx_dft = llama_init_from_model(model, cparams_mtp);
+        }
+
+        if (!ctx_dft) {
+            if (model_dft) llama_model_free(model_dft);
+            llama_free(ctx);
+            llama_model_free(model);
+            throw std::runtime_error("failed to create MTP draft context");
+        }
+
+        llama_set_n_threads(ctx_dft, n_threads, n_threads);
+
+        // Wire speculative driver
+        common_params_speculative sparams;
+        sparams.types           = { COMMON_SPECULATIVE_TYPE_DRAFT_MTP };
+        sparams.draft.n_max     = cfg.spec_draft_n_max;
+        sparams.draft.n_min     = cfg.spec_draft_n_min;
+        sparams.draft.ctx_tgt   = ctx;
+        sparams.draft.ctx_dft   = ctx_dft;
+        sparams.draft.backend_sampling = true;
+
+        spec.reset(common_speculative_init(sparams, cfg.n_parallel));
+        if (!spec) {
+            if (model_dft) llama_model_free(model_dft);
+            llama_free(ctx_dft);
+            llama_free(ctx);
+            llama_model_free(model);
+            throw std::runtime_error("failed to init speculative driver");
+        }
+    }
+
     llama_perf_context_reset(ctx);
     llama_memory_clear(llama_get_memory(ctx), false);
 
@@ -354,6 +430,34 @@ static task_result run_session(
         res.wall_ms  = elapsed / 1e6;
         res.tps      = res.n_tokens > 0 && elapsed > 0
                        ? 1e9 * res.n_tokens / (double) elapsed : 0.0;
+    } else if (cfg.mtp_enabled && spec) {
+        // Token generation with nextn embeddings enabled.
+        // common_speculative_init() has already called llama_set_embeddings_nextn()
+        // on ctx_tgt.  The warmup decode below triggers sched_need_reserve so the
+        // graph is rebuilt with the h_nextn output buffer allocated.  We then
+        // measure pure TG throughput — the nextn extraction cost is included in
+        // each llama_decode(), but we skip the full speculative draft/accept loop
+        // because synthetic tokens don't produce meaningful acceptance sequences.
+        if (!run_prompt(ctx, prompt_tokens, cfg.n_batch)) {
+            llama_free(ctx);
+            llama_model_free(model);
+            throw std::runtime_error("tg prefill failed");
+        }
+
+        llama_perf_context_reset(ctx);
+        const uint64_t t0 = time_ns();
+
+        if (!run_gen(ctx, task.n_gen)) {
+            llama_free(ctx);
+            llama_model_free(model);
+            throw std::runtime_error("tg generation failed");
+        }
+
+        const uint64_t elapsed = time_ns() - t0;
+        res.n_tokens  = task.n_gen;
+        res.wall_ms   = elapsed / 1e6;
+        res.tps       = task.n_gen > 0 && elapsed > 0
+                        ? 1e9 * task.n_gen / (double) elapsed : 0.0;
     } else {
         // Token generation: serial decode of n_gen tokens.
         if (!run_prompt(ctx, prompt_tokens, cfg.n_batch)) {
@@ -379,6 +483,14 @@ static task_result run_session(
     res.n_eval   = perf.n_eval;
     res.n_reused = perf.n_reused;
 
+    // Free draft before target (shares KV cache via ctx_other)
+    if (ctx_dft) {
+        spec.reset();  // release speculative driver first
+        llama_free(ctx_dft);
+    }
+    if (model_dft) {
+        llama_model_free(model_dft);
+    }
     llama_free(ctx);
     llama_model_free(model);
     return res;
@@ -694,6 +806,11 @@ struct heatmap_data {
     bool has_tg = false;
     task_result tg_result;
 
+    // MTP draft stats (TG-only)
+    bool has_mtp = false;
+    int  mtp_draft_total    = 0;
+    int  mtp_accept_total   = 0;
+
     // Server telemetry.
     bool has_telemetry = false;
     telemetry_data telemetry;
@@ -732,6 +849,15 @@ static void write_heatmap_json(const fs::path & path, const heatmap_data & hm) {
         }
         f << "      \"wall_ms\": " << tr.wall_ms << ",\n";
         f << "      \"tps\": " << tr.tps << ",\n";
+
+        // MTP draft acceptance (TG-only)
+        if (!is_pp && tr.n_draft > 0) {
+            double accept_pct = tr.n_draft > 0
+                ? 100.0 * tr.n_draft_accepted / tr.n_draft : 0.0;
+            f << "      \"draft_accepted\": " << tr.n_draft_accepted << ",\n";
+            f << "      \"draft_total\": " << tr.n_draft << ",\n";
+            f << "      \"draft_accept_pct\": " << accept_pct << ",\n";
+        }
 
         // Per-layer timing from server telemetry.
         f << "      \"layers\": [";
@@ -883,6 +1009,10 @@ static void usage(const char * argv0) {
         "  --ctx-size N               Context size (default: 4096)\n"
         "  --overlap-target N         B+6 gate threshold percent (default: 5)\n"
         "  --gpipe-stages N           Enable GPipe with N stages for per-stage profiling\n"
+        "  --spec-type draft-mtp       Enable MTP speculative decoding (TG-only)\n"
+        "  --spec-draft-n-max N        Max draft tokens per MTP step (default: 2)\n"
+        "  --spec-draft-n-min N        Min draft tokens per MTP step (default: 1)\n"
+        "  --model-draft PATH          Separate draft model for MTP (e.g., Gemma assistant)\n"
         "  -h, --help                 Usage\n",
         argv0);
 }
@@ -971,6 +1101,19 @@ int llama_gpipe_profiler(int argc, char ** argv) {
         } else if (arg == "--gpipe-stages") {
             // D6.9: enable GPipe with N stages for stage-granularity profiling
             cfg.gpipe_stages = std::stoi(need(arg.c_str()));
+        } else if (arg == "--spec-type") {
+            std::string spec_type = need(arg.c_str());
+            if (spec_type == "draft-mtp") {
+                cfg.mtp_enabled = true;
+            } else {
+                die_fmt("unknown spec type: %s (supported: draft-mtp)", spec_type.c_str());
+            }
+        } else if (arg == "--spec-draft-n-max") {
+            cfg.spec_draft_n_max = std::stoi(need(arg.c_str()));
+        } else if (arg == "--spec-draft-n-min") {
+            cfg.spec_draft_n_min = std::stoi(need(arg.c_str()));
+        } else if (arg == "--model-draft") {
+            cfg.model_draft_path = need(arg.c_str());
         } else {
             fprintf(stderr, "error: unknown arg %s\n", arg.c_str());
             usage(argv[0]);
@@ -1070,8 +1213,14 @@ int llama_gpipe_profiler(int argc, char ** argv) {
                 fprintf(stderr, ">>> rep %d/%d trace=%d\n", rep, reps, capture ? 1 : 0);
                 auto res = run_session(cfg, task, capture);
                 last = res;
-                fprintf(stderr, ">>> wall_ms=%.2f tps=%.2f n_eval=%d n_reused=%d\n",
+                fprintf(stderr, ">>> wall_ms=%.2f tps=%.2f n_eval=%d n_reused=%d",
                         res.wall_ms, res.tps, res.n_eval, res.n_reused);
+                if (res.n_draft > 0) {
+                    double accept_pct = 100.0 * res.n_draft_accepted / res.n_draft;
+                    fprintf(stderr, " draft=%d accept=%.1f%%",
+                            res.n_draft, accept_pct);
+                }
+                fprintf(stderr, "\n");
             }
 
             if (task.type == TASK_PP) {
@@ -1080,6 +1229,11 @@ int llama_gpipe_profiler(int argc, char ** argv) {
             } else {
                 hm.has_tg = true;
                 hm.tg_result = last;
+                if (last.n_draft > 0) {
+                    hm.has_mtp = true;
+                    hm.mtp_draft_total  = last.n_draft;
+                    hm.mtp_accept_total = last.n_draft_accepted;
+                }
             }
         }
     } catch (const std::exception & e) {

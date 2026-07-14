@@ -63,6 +63,10 @@ binary profiles local-only configurations.
   -t, --threads N            Thread count (default: auto)
   --ctx-size N               Context size (default: 4096)
   --overlap-target N         B+6 gate threshold percent (default: 5)
+  --spec-type draft-mtp       Enable MTP speculative decoding (TG-only)
+  --spec-draft-n-max N        Max draft tokens per MTP step (default: 2)
+  --spec-draft-n-min N        Min draft tokens per MTP step (default: 1)
+  --model-draft PATH          Separate draft model for MTP (e.g., Gemma assistant)
   -h, --help                 Usage
 ```
 
@@ -139,6 +143,43 @@ GGML_RPC_SERVER_TELEMETRY=1 \
   --n-gen 128 \
   --repeat 10
 ```
+
+### MTP speculative decoding profile (fused, e.g., Qwen NextN)
+
+```sh
+./build/bin/llama-gpipe-profiler \
+  -m /models/Qwen3.6-35B-A3B-APEX-MTP.gguf \
+  --tasks tg \
+  --n-gen 128 \
+  --repeat 5 \
+  --spec-type draft-mtp \
+  --spec-draft-n-max 8
+```
+
+### MTP with separate draft model (e.g., Gemma assistant)
+
+```sh
+./build/bin/llama-gpipe-profiler \
+  -m /models/gemma-4-31B-it-Q4_K_M.gguf \
+  --model-draft /models/gemma-4-31B-it-assistant-Q8_0.gguf \
+  --tasks tg \
+  --n-gen 128 \
+  --repeat 5 \
+  --spec-type draft-mtp \
+  --spec-draft-n-max 8
+```
+
+**MTP TG mode:** When `--spec-type draft-mtp` is set, the profiler enables
+`embeddings_nextn` on the target context and creates a draft context. It
+measures per-token decode throughput **including** the nextn extraction cost
+but **excluding** the speculative draft/accept loop (synthetic tokens can't
+produce meaningful acceptance). This gives the MTP overhead — the pure cost
+of having MTP enabled vs disabled.
+
+For fused MTP (Qwen NextN), the draft context is created from the same model
+(`llama_init_from_model` with `LLAMA_CONTEXT_TYPE_MTP`). For separate-draft
+MTP (Gemma), pass `--model-draft` to load the assistant GGUF and the draft
+context is created from that model instead.
 
 ## Output Artifacts
 

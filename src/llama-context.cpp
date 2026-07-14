@@ -1416,6 +1416,11 @@ void llama_context::set_embeddings_nextn(bool value, bool masked) {
 
     cparams.embeddings_nextn        = value;
     cparams.embeddings_nextn_masked = masked;
+
+    // note: without this reserve, the draft acceptance drops to zero and the
+    // graph might reference the h_nextn output without having it allocated.
+    // (same pattern as set_embeddings_layer_inp)
+    sched_need_reserve = true;
 }
 
 void llama_context::set_embeddings_layer_inp(uint32_t lid, bool enable) {
