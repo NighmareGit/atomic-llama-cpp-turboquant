@@ -52,7 +52,7 @@ SKIP_ON_FAIL="${BENCH_MATRIX_SKIP:-1}"
 
 # CLI uses upstream spec-type names (draft-mtp, not legacy nextn/mtp aliases).
 SPEC_MTP_QWEN="--spec-type draft-mtp --spec-draft-n-max 2 --spec-draft-n-min 1 -ngld 99"
-SPEC_MTP_GEMMA="--spec-type draft-mtp --spec-draft-n-max 16 --spec-draft-n-min 0 -ngld 99"
+SPEC_MTP_GEMMA="--spec-type draft-mtp --spec-draft-n-max 2 --spec-draft-n-min 1 -ngld 99"
 
 mkdir -p "$LOG_DIR"
 export PATHB_REMUS_SSH_PASS="${PATHB_REMUS_SSH_PASS:-}"

@@ -64,7 +64,7 @@ ARGS=(
 if [[ "$SPEC" == "draft-mtp" ]]; then
   ARGS+=(
     --spec-type draft-mtp
-    --spec-draft-n-max "${DRAFT_MAX:-16}"
+    --spec-draft-n-max "${DRAFT_MAX:-2}"
     --spec-draft-n-min "${DRAFT_MIN:-0}"
   )
   if [[ -n "$DRAFT" && "$DRAFT" != "$MAIN" ]]; then

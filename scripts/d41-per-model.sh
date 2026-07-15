@@ -26,7 +26,7 @@ case "${1:-}" in
         CTX=8192
         CTK="q8_0"
         CTV="turbo3"
-        MTP="--spec-type draft-mtp --spec-draft-n-max 16 --spec-draft-n-min 0"
+        MTP="--spec-type draft-mtp --spec-draft-n-max 2 --spec-draft-n-min 1"
         LABEL="9b-mtp"
         ;;
     llama8b)
@@ -44,7 +44,7 @@ case "${1:-}" in
         CTX=4096
         CTK="q8_0"
         CTV="turbo3"
-        MTP="--spec-type draft-mtp --spec-draft-n-max 16 --spec-draft-n-min 0"
+        MTP="--spec-type draft-mtp --spec-draft-n-max 2 --spec-draft-n-min 1"
         LABEL="35b-mtp"
         ;;
     *)

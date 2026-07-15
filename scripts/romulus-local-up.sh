@@ -248,7 +248,7 @@ ARGS=(
 if [[ "$SPEC" != "none" ]]; then
     ARGS+=(
         --spec-type "$SPEC"
-        --spec-draft-n-max "${DRAFT_MAX:-16}"
+        --spec-draft-n-max "${DRAFT_MAX:-2}"
         --spec-draft-n-min "${DRAFT_MIN:-0}"
     )
     # Same combined *_MTP.gguf: omit -md so server reuses target llama_model (LLAMA_CONTEXT_TYPE_MTP).

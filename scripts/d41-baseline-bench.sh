@@ -77,7 +77,7 @@ bench_model() {
     # Determine mtp setting
     local mtp_flag=""
     if [[ "$model" == *MTP* ]]; then
-        mtp_flag="--spec-type draft-mtp --spec-draft-n-max 16 --spec-draft-n-min 0"
+        mtp_flag="--spec-type draft-mtp --spec-draft-n-max 2 --spec-draft-n-min 1"
     fi
 
     # 1. Run llama-bench for standardized measurements
