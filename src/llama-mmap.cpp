@@ -437,6 +437,28 @@ void llama_file::write_raw(const void * ptr, size_t len) const { pimpl->write_ra
 void llama_file::write_u32(uint32_t val) const { pimpl->write_u32(val); }
 
 // llama_mmap
+//
+// WARNING — FUSE/NTFS hard-link mmap corruption (investigated 2026-07-14):
+//
+// Model files stored on FUSE-backed mounts (e.g., fuseblk / NTFS SMB shares)
+// that have a hard-link count > 1 can return silently corrupted data when
+// mapped via MAP_SHARED. The file bytes are correct (md5sum matches), but the
+// FUSE page-fault handler delivers wrong pages for shared inodes. This produces
+// garbage logits and nondeterministic output — byte-identical files at
+// different paths give different inference results.
+//
+// Detection:
+//   stat -c '%h' /path/to/model.gguf    # if > 1, you are at risk
+//
+// Workarounds (in order of preference):
+//   1. --mlock         — forces full read + mlock into RAM, bypasses lazy mmap faults
+//   2. Copy to a fresh inode: cp model.gguf /tmp/model.gguf  (link count becomes 1)
+//   3. Mount with --bind from a native filesystem (ext4/xfs)
+//
+// --no-mmap alone is NOT sufficient — the read() path through FUSE is also affected.
+// The --mlock flag is the only reliable in-process workaround short of copying the file.
+//
+// Affected configuration: fuseblk NTFS-3G 2022.10.3, Linux 6.17.0-35, SMB 3.1.1.
 
 struct llama_mmap::impl {
 #ifdef _POSIX_MAPPED_FILES

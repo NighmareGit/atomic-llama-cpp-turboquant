@@ -2496,7 +2496,13 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
                 rpc_write_server_telemetry_jsonl(telem);
             }
         } else {
-            bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_COMPUTE, input.data(), input.size());
+            // Server always sends a 4-byte rpc_msg_graph_compute_rsp after GRAPH_COMPUTE.
+            // Drain it to avoid corrupting subsequent deferred reads on the same socket
+            // (e.g., EVENT_RECORD responses getting the GRAPH_COMPUTE response instead).
+            rpc_msg_graph_compute_rsp rsp = {};
+            bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_COMPUTE,
+                                       input.data(), input.size(),
+                                       &rsp, sizeof(rsp));
             RPC_STATUS_ASSERT(status);
         }
         rpc_ctx->last_compute_sock = nullptr;

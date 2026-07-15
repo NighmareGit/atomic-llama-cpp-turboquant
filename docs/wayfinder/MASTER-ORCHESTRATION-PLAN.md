@@ -51,6 +51,12 @@ Documentation Phase (/wayfinder or manual)
 
 **Hardware:** Romulus local — AMD 7900 XTX (client, ROCm) + NVIDIA 3060 Ti (RPC server, CUDA). Models at `/mnt/models`. GPU telemetry via `rocm-smi` + `nvidia-smi`. Cluster (triton 5-GPU, remus) deferred to later sessions.
 
+### Known Infrastructure Limitations
+
+| Limitation | Impact | Workaround | Ticket |
+|------------|--------|------------|--------|
+| **FUSE/NTFS mmap hard-link corruption** (KL-INFRA-1) — Model files on `/mnt/models` (fuseblk NTFS SMB share) with hard-link count > 1 return silently corrupted data via `MAP_SHARED`. Byte-identical files at different paths produce different inference results. Diagnosed 2026-07-14. | Any model loaded from SMB share without `--mlock` may produce garbage output. | `--mlock` flag (forces full read + mlock into RAM), or copy model to a fresh inode (local ext4/xfs). `--no-mmap` alone does NOT fix it. | Dx.1 |
+
 ---
 
 ## Agent Deployment Order

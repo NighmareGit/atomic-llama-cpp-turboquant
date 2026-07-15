@@ -1043,4 +1043,23 @@ environment on startup and decides placement without external orchestration.
 
 ---
 
+### Dx.1 — Document and mitigate FUSE/mmaps hard-link corruption (KL-INFRA-1)
+
+**Type:** documentation / infrastructure hardening
+**Blocks:** none (terminal ticket)
+**Blocked by:** none (incident-driven)
+
+**Goal:** Permanently document the FUSE/NTFS mmap hard-link corruption discovered 2026-07-14, and add a startup-time diagnostic to detect risky model files before inference begins.
+
+**Background:** Model files on `/mnt/models` (fuseblk NTFS SMB share) with `st_nlink > 1` return silently corrupted data via `mmap(MAP_SHARED)`. The file bytes are correct (md5sum matches), but the FUSE page-fault handler delivers wrong pages for shared inodes. This produces garbage logits with no error indication — byte-identical files at different paths give different inference results. See `src/llama-mmap.cpp` comment block for details.
+
+**Acceptance Criteria:**
+- [ ] `--mlock` is documented as the primary workaround in `docs/wayfinder/MASTER-ORCHESTRATION-PLAN.md` (done — this ticket)
+- [ ] Startup diagnostic: `llama_model_loader` checks `st_nlink` of model file on first load and emits a `LLAMA_LOG_WARN` if > 1 on a FUSE filesystem (statfs `f_type == 0x65735546` FUSE_SUPER_MAGIC)
+- [ ] Warning message includes: detected hard-link count, filesystem type, and recommendation to use `--mlock` or copy to local storage
+- [ ] The diagnostic is a warning only — does not block loading (false positives possible on non-broken FUSE implementations)
+- [ ] Files: `src/llama-mmap.cpp`, `src/llama-model-loader.cpp`, `docs/wayfinder/MASTER-ORCHESTRATION-PLAN.md`
+
+---
+
 *Work breakdown extended - D2-R3 phases added*
