@@ -47,7 +47,7 @@ Documentation Phase (/wayfinder or manual)
 | Deeper Pipelining (D5) | ✅ complete | D5.1-D5.7 — n_stages>2 implemented. Completed 2026-07-11. |
 | Mode B Microbatch (D6) | ✅ complete | D6.1-D6.9 — multi-seq, per-seq events, GRAPH_COMPUTE_STAGE. Completed 2026-07-13. |
 | GPU Event Pipelining Fix (D6.10) | 📋 planned | gpipe_events on GPU backend — ticketed, known limitation KL-D6.1 |
-| Pipeline Depth + Split Overhead (D7) | 🔄 in-progress | D7.1 closed, D7.2-D7.4 complete. D7.5 prototyped (copy_event fix shipped, async H2D blocked by D7.6). Slice 6 at `docs/tickets/path-d-slices.md`. |
+| Pipeline Depth + Split Overhead (D7) | ✅ complete | D7.1 closed, D7.2-D7.6 complete. All vectors A/B/B2/C resolved. q6_K matmul identified as #1 optimization target (35.2% of GPU). Slice 6 at `docs/tickets/path-d-slices.md`. |
 | Advanced Optimization (R3) | ⏳ pending | R3.1-R3.5 tickets |
 
 **Hardware:** Romulus local — AMD 7900 XTX (client, ROCm) + NVIDIA 3060 Ti (RPC server, CUDA). Models at `/mnt/models`. GPU telemetry via `rocm-smi` + `nvidia-smi`. Cluster (triton 5-GPU, remus) deferred to later sessions.
@@ -113,7 +113,7 @@ Each beyond-phase follows the workflow loop: research → design → spec → pr
 | D4 Pareto Optimizer | D4.11-D4.14 | Stored in `docs/tickets/path-d-tickets.md` — future sprint |
 | D5 Deeper Pipelining | D5.1-D5.7 | `D5-DEEPER-PIPELINE-AGENT-PLAN.md` |
 | D6 Mode B Microbatch | D6.1-D6.7 | `D6-MODE-B-AGENT-PLAN.md` |
-| D7 Pipeline Depth + Split Overhead | D7.1-D7.5 | `D7.0-pipeline-depth-research.md` |
+| D7 Pipeline Depth + Split Overhead | D7.1-D7.6 | `D7.0-pipeline-depth-research.md` |
 | R3 Advanced Optimization | R3.1-R3.5 | `R3-ADVANCED-OPT-AGENT-PLAN.md` |
 
 ---

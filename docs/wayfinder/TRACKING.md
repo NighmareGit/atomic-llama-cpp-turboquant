@@ -3,7 +3,7 @@
 **Branch:** Path-D-Gpipeline-Assembly-Line
 **Date:** 2026-07-10
 **Parent:** `docs/rpc-multi-backend-pipeline-plus/TRACKING.md`
-**Status:** SLICE 1 + SLICE 2 + SLICE 3 + SLICE 4 COMPLETE — RPC event fix, Path C stepping stone + profiler v1, deeper pipelining n_stages > 2, multi-seq Mode B (2026-07-13). SLICE 6 Phase 1-2 complete (D7.1 CLOSED, D7.2 COMPLETE); Phase 3 vectors A/B/B2/C ready.
+**Status:** SLICE 1 + SLICE 2 + SLICE 3 + SLICE 4 COMPLETE — RPC event fix, Path C stepping stone + profiler v1, deeper pipelining n_stages > 2, multi-seq Mode B (2026-07-13). SLICE 6 Phase 1-3 complete (D7.1 CLOSED, D7.2-D7.6 COMPLETE); vectors A/B/B2/C all resolved.
 
 ---
 
@@ -21,7 +21,7 @@
 | Deeper Pipelining (D5.1-D5.7) | COMPLETE | 2026-07-11 |
 | Mode B Microbatch (D6.1-D6.7) | COMPLETE | 2026-07-13 |
 | Advanced Optimization (R3.1-R3.5) | PENDING | - |
-| Pipeline Depth + Split Overhead (D7.1-D7.5) | PLANNED | - |
+| Pipeline Depth + Split Overhead (D7.1-D7.6) | COMPLETE | 2026-07-16 |
 
 ## Blockers
 
@@ -218,8 +218,8 @@ Full analysis: `docs/wayfinder/D4.1-romulus-baseline-analysis.md`
 | D7.2 | ✅ complete | GPU timeline profiling: event_wait_slot=0 in 2-GPU. FAST (3,229 µs) / SLOW (12,946 µs) 5:4 decode step pattern. Real bottleneck: ROCm GPU kernels 52.9% + RPC download 20.4%. `docs/research/d72-gpu-timeline-profile.md`. |
 | D7.3 | ✅ complete | Vector A: FA on HIP enabled — `GGML_HIP_ROCWMMA_FATTN=ON`, rebuild, benchmarked. **+7.5% TG (133.0 -> 143.0 t/s)**. WMMA FA kernel verified in `libggml-hip.so`. See `docs/research/d73-vector-a-gpu-compute-reduction.md`. |
 | D7.4 | ✅ complete | Vector B: Skip-SSM verify prototype complete. **Upper bound: +75% TG, output collapses.** 5 refinement approaches (R1-R5) + decision matrix + revisit criteria in `docs/research/d74-code-skip-ssm-verify.md`. |
-| D7.5 | 🟡 prototyped | Vector B2: RPC download overlap. Prototype: async H2D crashes (CUDA graph incompat), early-issue regresses (-17%). copy_event fix shipped. `docs/research/d75-rpc-overlap-research.md`. **Blocked by D7.6** (need rocprofv3 to confirm bottleneck). |
-| D7.6 | ⏸️ blocked | Vector C: rocprofv3 GPU kernel profiling — fix ggml+rocprofv3 SIGABRT. Target: per-kernel timing within 6,843 µs window. Blocked by HIP interception conflict. |
+| D7.5 | ✅ complete | Vector B2: RPC download overlap. Prototype: async H2D crashes (CUDA graph incompat), early-issue regresses (-17%). copy_event fix shipped. `docs/research/d75-rpc-overlap-research.md`. |
+| D7.6 | ✅ complete | Vector C: rocprofv3 kernel profiling. Fix: `--kernel-trace` without `--hip-trace` avoids HIP interception conflict. Per-kernel breakdown: MatMul 55.4% (q6_K 35.2%), FlashAttn 3.4%, SSM 2.4%, MoE routing 4.0%. `docs/research/d76-rocprofv3-kernel-profile.md`. |
 
 ### R3 — Advanced Optimization (pending)
 
@@ -255,7 +255,8 @@ Aborts if VRAM/RAM/disk/running-instances indicate OOM risk.
 1. **D7.3 Vector A** — ✅ COMPLETE (2026-07-16). FA on HIP: `GGML_HIP_ROCWMMA_FATTN=ON`, rebuild, benchmarked. **+7.5% TG (133.0 -> 143.0 t/s)**. `docs/research/d73-vector-a-gpu-compute-reduction.md`.
 2. **D7.4 Vector B** — ✅ COMPLETE (2026-07-16). Skip-SSM verify: +75% upper bound established, output collapses. 5 refinement approaches + decision matrix + revisit criteria in `docs/research/d74-code-skip-ssm-verify.md`.
 3. **D7.5 Vector B2** — 🟡 PROTOTYPED. Async H2D crashes (CUDA graph incompat), early-issue regresses (-17%). copy_event fix shipped. Blocked by D7.6. `docs/research/d75-rpc-overlap-research.md`.
-4. **D7.6 Vector C** — ⏸️ BLOCKED. Fix rocprofv3+ggml SIGABRT for per-kernel profiling.
+4. **D7.6 Vector C** — ✅ COMPLETE (2026-07-16). rocprofv3 `--kernel-trace` works (HIP tracing was the crash culprit). Per-kernel breakdown: MatMul 55.4% (q6_K 35.2%), flash_attn 3.4%, SSM 2.4%, MoE routing 4.0%. `docs/research/d76-rocprofv3-kernel-profile.md`.
+5. **D7.7 Next vectors** — q6_K matmul is the #1 optimization target (35.2% of GPU time). SSM layers are only 2.4%, so D7.4 skip-SSM upper bound revised to 10-15% (was +75%). D7.5 overlap target is data movement + quantization (16.3% combined).
 5. **D6.10 GPU Event Pipelining Fix** — 📋 planned. Move gpipe_events from CPU gather to GPU backend. See `docs/tickets/path-d-tickets.md`.
 6. **R3 Advanced Optimization** — Adaptive depth + deprecation cleanup (paused for Slice 6 vectors)
 7. **D4.11-D4.14 Pareto Optimizer** — Planned + ticketed, future sprint

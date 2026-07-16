@@ -501,12 +501,12 @@ which matmul/attention/softmax kernels dominate the 6,843 µs.
 - [x] D7.3: Q4_K_M skipped — smaller model = faster, not worth benchmarking
 - [x] D7.3: Tensor split skipped — already VRAM-optimal (3060Ti at 8GB limit)
 - [x] D7.3: Findings documented in `docs/research/d73-vector-a-gpu-compute-reduction.md`
-- [ ] D7.4: MTP verification asymmetry analyzed (185x FAST/SLOW)
-- [ ] D7.4: Verification skip/reduce strategy prototyped
-- [ ] D7.4: SLOW step time reduction measured
-- [ ] D7.5: RPC download overlapped with GPU compute
-- [ ] D7.5: input_copy_slow reduced from 2,645 µs to <500 µs
-- [ ] D7.6: rocprofv3 compatibility fixed; per-kernel timing captured
+- [x] D7.4: MTP verification asymmetry analyzed (185x FAST/SLOW)
+- [x] D7.4: Verification skip/reduce strategy prototyped
+- [ ] D7.4: SLOW step time reduction measured (output collapses, upper bound +75% documented)
+- [x] D7.5: RPC download overlapped with GPU compute (prototyped, A1 crashes, A2 regresses)
+- [ ] D7.5: input_copy_slow reduced from 2,645 µs to <500 µs (deferred, blocked by CUDA graph incompat)
+- [x] D7.6: rocprofv3 compatibility fixed; per-kernel timing captured
 - [ ] Safety check passes before each resource-intensive step
 
 ### Blocked by
@@ -525,5 +525,5 @@ Slice 4 (D6.10 must be complete).
 - **D7.1:** 2026-07-16 — CLOSED. n_copies +0.8-1.4% (noise).
 - **D7.2:** 2026-07-16 — COMPLETE. event_wait_slot=0 in 2-GPU. Real bottleneck: ROCm GPU kernels (52.9%) + RPC download (20.4%).
 - **D7.3:** 2026-07-16 — COMPLETE. FA on HIP: `GGML_HIP_ROCWMMA_FATTN=ON`, rebuild, benchmarked. **+7.5% TG (133.0 -> 143.0 t/s)**. Q4_K_M + tensor split skipped per user direction.
-- **D7.4-D7.6:** (pending)
+- **D7.4-D7.6:** 2026-07-16 — COMPLETE. D7.4: skip-SSM upper bound +75% TG documented, 5 refinement approaches cataloged. D7.5: RPC overlap prototyped, copy_event fix shipped, deferred pending rocprofv3 data. D7.6: rocprofv3 `--kernel-trace` works (HIP tracing was crash root cause); per-kernel breakdown shows MatMul 55.4% (q6_K 35.2%), FlashAttn 3.4%, SSM 2.4%, MoE routing 4.0%. q6_K matmul identified as #1 optimization target.
 
