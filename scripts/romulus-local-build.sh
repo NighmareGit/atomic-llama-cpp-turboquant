@@ -84,6 +84,7 @@ build_client() {
     if [[ ! -f "${BUILD_DIR}/CMakeCache.txt" ]]; then
         cmake -S . -B "$BUILD_DIR" \
             -DGGML_HIP=ON -DGGML_RPC=ON -DGPU_TARGETS=gfx1100 \
+            -DGGML_HIP_ROCWMMA_FATTN=ON \
             -DCMAKE_BUILD_TYPE=Release -DGGML_SCHED_MAX_COPIES=4 \
             -DLLAMA_BUILD_TOOLS=ON
     fi

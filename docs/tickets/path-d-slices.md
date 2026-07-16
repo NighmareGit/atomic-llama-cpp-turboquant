@@ -396,3 +396,134 @@ Slice 4 (needs multi-seq empirical data for adaptive depth refinement).
 - **Commit range:** (first..last)
 - **Notes:** (any deviations, trade-offs, or open follow-ups)
 
+---
+
+## Slice 6: Pipeline Depth + event_wait_slot Attack Vectors
+
+**Status:** D7.1 CLOSED, D7.2 COMPLETE, D7.3 COMPLETE — D7.4 ready-for-agent
+**Blocked by:** Slice 4
+**Detail tickets:** D7.1, D7.2, D7.3 (Vector A), D7.4 (Vector B), D7.5 (Vector B2), D7.6 (Vector C)
+
+### Phase 1 — D7.1: n_copies > 1 (CLOSED)
+
+Strategy 1 disproven via 5-config A/B test. n_copies has +0.8-1.4% impact (noise).
+GPipe bypasses `pipeline_barrier()` entirely; uses `ggml_sched_gpipe_wait_seq()`
+for per-stage event synchronization. Production baseline: 2-GPU RPC + n_max=2 =
+**133.0 t/s TG**.
+
+### Phase 2 — D7.2: GPU Timeline Profiling (COMPLETE)
+
+Research at `docs/research/d72-gpu-timeline-profile.md`. Key findings:
+
+- **event_wait_slot = 0 µs** in 2-GPU config. The 8.6ms bottleneck from 1-GPU D7.0
+  research is completely absent — both GPUs finish compute before the next step.
+- **Two decode step types** cycling 5:4 (MTP draft + verification): FAST (3,229 µs)
+  and SLOW (12,946 µs). Split 2 (ROCm/7900XTX) shows **185x** compute asymmetry
+  (37 µs FAST vs 6,843 µs SLOW).
+- **SLOW step bottleneck**: ROCm GPU kernels = 6,843 µs (52.9%), RPC download wait
+  from 3060Ti = 2,645 µs (20.4%), input copy sync = 1,319 µs (10.2%).
+- **rocprofv3 crashes** with SIGABRT — HIP interception conflict with ggml.
+  GPU kernel-level profiling is blocked until compatibility is fixed.
+
+### Phase 3 — Attack Vectors (A → B → B2 → C)
+
+Vectors ordered by actionable leverage. A is config-only (lowest effort). B requires
+code analysis. B2 requires RPC pipeline changes. C requires tooling fix.
+
+| # | Vector | Mechanism | Target | Est. Gain | Effort | Status |
+|---|--------|-----------|--------|-----------|--------|--------|
+| **A** | D7.3 | Reduce GPU compute | Enable FA on HIP, test Q4_K_M, optimize tensor split | 6,843 µs → 4,500-6,000 µs | 10-30% TG | **✅ complete (+7.5%)** |
+| **B** | D7.4 | Reduce MTP verification cost | Investigate 185x FAST/SLOW asymmetry; skip or reduce verification | SLOW steps from 12,946 → ~4,000 µs | up to 3x SLOW | blocked by A |
+| **B2**| D7.5 | Overlap RPC download with compute | Start RPC tensor fetch earlier; pipeline H2D copy | Hide 1,300-2,600 µs of Split 2 wait | 16-31% Split 2 | blocked by A |
+| **C** | D7.6 | rocprofv3 GPU kernel profiling | Fix ggml+rocprofv3 SIGABRT; get per-kernel timing | Decompose 6,843 µs into individual kernels | informational | blocked |
+
+### Vector A Detail (D7.3): Reduce GPU Compute Time
+
+**Target**: Split 2 `graph_compute_async` = 6,843 µs (52.9% of SLOW step).
+
+**Mechanisms** (in priority order):
+1. **Enable Flash Attention on HIP**: Set `GGML_HIP_ROCWMMA_FATTN=ON` in CMakeCache.
+   Currently OFF. FA reduces attention compute from O(n²) to O(n) for long contexts.
+2. **Test Q4_K_M quantization**: Smaller weight format = less memory bandwidth and
+   fewer compute cycles. Q6_K → Q4_K_M roughly halves weight size.
+3. **Optimize tensor split**: Use D7.2 timing data to move bottleneck layers from
+   ROCm to RPC/3060Ti if certain layers are disproportionately slow.
+
+**Workflow**: `/research` → `/prototype` (build+benchmark each change) → `/improve-codebase-architecture` → `/code-review` → test → `/implement`.
+
+**Expected gain**: 10-30% TG from reduced GPU compute time.
+
+### Vector B Detail (D7.4): Reduce MTP Verification Cost
+
+**Target**: The 185x compute asymmetry between FAST draft (37 µs) and SLOW
+verification (6,843 µs) on the ROCm GPU.
+
+**Hypothesis**: SLOW steps evaluate the full model across all layers for MTP
+verification, while FAST steps only run the MTP draft head. If verification
+can be made cheaper (fewer layers, speculative skip, or confidence-gated),
+SLOW step time drops dramatically.
+
+**Deliverable**: `docs/research/d74-mtp-verification-analysis.md` — per-layer
+timing during verification vs draft, skip strategies, acceptance rate tradeoffs.
+
+### Vector B2 Detail (D7.5): Overlap RPC Download with Compute
+
+**Target**: Split 2 `input_copy_slow` = 2,645 µs (20.4%) — waiting for RPC tensor
+download from 3060Ti.
+
+**Mechanism**: The current flow is sequential: RPC download → H2D copy → GPU compute.
+If RPC download can start during the previous step's compute (prefetch), the
+2,645 µs wait gets hidden behind GPU kernel execution.
+
+**Code location**: `ggml_backend_sched_compute_splits()` line 2342-2368 (RPC gather
+prefetch) and lines 2670-2700 (RPC download flush).
+
+### Vector C Detail (D7.6): rocprofv3 GPU Kernel Profiling
+
+**Target**: Fix ggml + rocprofv3 compatibility to get per-kernel timing within the
+6,843 µs GPU compute window.
+
+**Blocked by**: rocprofv3 (`/opt/rocm/bin/rocprofv3`, ROCm 7.2.3) crashes the
+profiler with SIGABRT (`ggml_uncaught_exception`). Likely HIP interception
+conflict with ggml's stream management.
+
+**Deliverable**: Working rocprofv3 invocation + per-kernel timing table showing
+which matmul/attention/softmax kernels dominate the 6,843 µs.
+
+### Acceptance Criteria
+
+- [x] D7.1: n_copies prototyped, A/B tested, CLOSED (noise-level impact)
+- [x] D7.2: GPU timeline profiled; 8.6ms event_wait_slot confirmed absent in 2-GPU config
+- [x] D7.2: Two step types identified (FAST 3,229 µs / SLOW 12,946 µs)
+- [x] D7.2: Bottleneck identified — ROCm GPU kernels 52.9% + RPC download 20.4%
+- [x] D7.2: Findings documented in `docs/research/d72-gpu-timeline-profile.md`
+- [x] D7.3: FA enabled on HIP, benchmarked vs OFF (+7.5% TG, 133.0 -> 143.0 t/s)
+- [x] D7.3: Q4_K_M skipped — smaller model = faster, not worth benchmarking
+- [x] D7.3: Tensor split skipped — already VRAM-optimal (3060Ti at 8GB limit)
+- [x] D7.3: Findings documented in `docs/research/d73-vector-a-gpu-compute-reduction.md`
+- [ ] D7.4: MTP verification asymmetry analyzed (185x FAST/SLOW)
+- [ ] D7.4: Verification skip/reduce strategy prototyped
+- [ ] D7.4: SLOW step time reduction measured
+- [ ] D7.5: RPC download overlapped with GPU compute
+- [ ] D7.5: input_copy_slow reduced from 2,645 µs to <500 µs
+- [ ] D7.6: rocprofv3 compatibility fixed; per-kernel timing captured
+- [ ] Safety check passes before each resource-intensive step
+
+### Blocked by
+
+Slice 4 (D6.10 must be complete).
+
+### Research Artifacts
+
+- **Primary**: `docs/research/split-overhead-mitigation.md` — Section 6: D7.1 prototype
+- **Vector C research**: `docs/research/d72-gpu-timeline-profile.md` — per-phase timing, step classification, bottleneck ID
+- **Lateral**: `docs/wayfinder/D7.0-pipeline-depth-research.md`
+- **Trace data**: `/tmp/d72-profiling/sched-trace.txt` (18,740 lines)
+
+### Completion
+
+- **D7.1:** 2026-07-16 — CLOSED. n_copies +0.8-1.4% (noise).
+- **D7.2:** 2026-07-16 — COMPLETE. event_wait_slot=0 in 2-GPU. Real bottleneck: ROCm GPU kernels (52.9%) + RPC download (20.4%).
+- **D7.3:** 2026-07-16 — COMPLETE. FA on HIP: `GGML_HIP_ROCWMMA_FATTN=ON`, rebuild, benchmarked. **+7.5% TG (133.0 -> 143.0 t/s)**. Q4_K_M + tensor split skipped per user direction.
+- **D7.4-D7.6:** (pending)
+

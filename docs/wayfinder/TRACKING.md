@@ -3,7 +3,7 @@
 **Branch:** Path-D-Gpipeline-Assembly-Line
 **Date:** 2026-07-10
 **Parent:** `docs/rpc-multi-backend-pipeline-plus/TRACKING.md`
-**Status:** SLICE 1 + SLICE 2 + SLICE 3 + SLICE 4 COMPLETE — RPC event fix, Path C stepping stone + profiler v1, deeper pipelining n_stages > 2, multi-seq Mode B (2026-07-13)
+**Status:** SLICE 1 + SLICE 2 + SLICE 3 + SLICE 4 COMPLETE — RPC event fix, Path C stepping stone + profiler v1, deeper pipelining n_stages > 2, multi-seq Mode B (2026-07-13). SLICE 6 Phase 1-2 complete (D7.1 CLOSED, D7.2 COMPLETE); Phase 3 vectors A/B/B2/C ready.
 
 ---
 
@@ -21,6 +21,7 @@
 | Deeper Pipelining (D5.1-D5.7) | COMPLETE | 2026-07-11 |
 | Mode B Microbatch (D6.1-D6.7) | COMPLETE | 2026-07-13 |
 | Advanced Optimization (R3.1-R3.5) | PENDING | - |
+| Pipeline Depth + Split Overhead (D7.1-D7.5) | PLANNED | - |
 
 ## Blockers
 
@@ -207,6 +208,18 @@ Full analysis: `docs/wayfinder/D4.1-romulus-baseline-analysis.md`
 | D6.8 | ✅ complete | Per-sequence GPipe events: migrated from double-buffered (2 banks) to per-sequence event arrays in `ggml_backend_sched`. `gpipe_events` now `[n_gpipe_seqs * GGML_SCHED_MAX_STAGES]` row-major. `ggml_sched_gpipe_wait_seq`/`record_seq` accept `seq_id` parameter. `ggml_sched_gpipe_init_multi` takes `n_seqs`. Old bank API (`record_bank`, `wait_bank`, `toggle_bank`) removed. Commit: `5c408b052`. |
 | D6.9 | ✅ complete | GRAPH_COMPUTE_STAGE RPC command (value 23): server-side per-stage split filtering with telemetry. Thread-local `tls_gpipe_active_stage` signals stage to RPC backend. Client sends all splits; server applies `ggml_backend_sched_set_gpipe_stage` filter. Server returns per-device timing in response. Profiler verified: `device_timings_us: [754, 1390]` per-stage. Commits: `c19c9f917`, `c91743d32`. |
 | D6.10 | 📋 planned | GPU event pipelining fix: gpipe_events currently NULL on CPU gather backend. Multi-seq dispatch uses `ggml_backend_sched_synchronize` (full drain) as temporary workaround. Proper fix: record gpipe_events on a GPU backend. See `docs/tickets/path-d-tickets.md` D6.10. |
+| D7.0 | ✅ complete | Pipeline depth research: `docs/research/split-overhead-mitigation.md` + lateral `docs/wayfinder/D7.0-pipeline-depth-research.md`. Key finding: only 2 splits with GPipe stage filtering; bottleneck is `event_wait_slot` at 89.9% of wall time (143:1 wait/compute). 5 strategies ranked. Slice 6 defined. |
+
+### D7 — Pipeline Depth + event_wait_slot Attack Vectors
+
+| Ticket | Status | Notes |
+|--------|--------|-------|
+| D7.1 | ✅ closed | n_copies>1 disproven: +0.8-1.4% (noise). GPipe bypasses pipeline_barrier. Prod baseline: 133.0 t/s TG (2-GPU RPC + n_max=2). |
+| D7.2 | ✅ complete | GPU timeline profiling: event_wait_slot=0 in 2-GPU. FAST (3,229 µs) / SLOW (12,946 µs) 5:4 decode step pattern. Real bottleneck: ROCm GPU kernels 52.9% + RPC download 20.4%. `docs/research/d72-gpu-timeline-profile.md`. |
+| D7.3 | ✅ complete | Vector A: FA on HIP enabled — `GGML_HIP_ROCWMMA_FATTN=ON`, rebuild, benchmarked. **+7.5% TG (133.0 -> 143.0 t/s)**. WMMA FA kernel verified in `libggml-hip.so`. See `docs/research/d73-vector-a-gpu-compute-reduction.md`. |
+| D7.4 | ⏳ pending | Vector B: Reduce MTP verification cost — investigate 185x FAST/SLOW compute asymmetry. Target: SLOW steps from 12,946 -> ~4,000 µs. |
+| D7.5 | ⏳ pending | Vector B2: Overlap RPC download with GPU compute — hide 2,645 µs input_copy_slow. Target: Split 2 input_copy_slow from 2,645 µs to <500 µs. |
+| D7.6 | ⏸️ blocked | Vector C: rocprofv3 GPU kernel profiling — fix ggml+rocprofv3 SIGABRT. Target: per-kernel timing within 6,843 µs window. Blocked by HIP interception conflict. |
 
 ### R3 — Advanced Optimization (pending)
 
@@ -239,12 +252,14 @@ Aborts if VRAM/RAM/disk/running-instances indicate OOM risk.
 
 ## Next Actions
 
-1. **D5 Deeper Pipelining** — ✅ COMPLETE (2026-07-11). n_stages > 2 implemented with topology-aware default and adaptive opt-in. Performance validated on romulus dual-GPU (2 models, profiler traces collected): n_stages=3 shows no throughput gain on 2-GPU — existing pipeline already captures overlap. Benefit expected on 3+ GPU setups only.
-2. **D6 Mode B Microbatch** — ✅ COMPLETE (2026-07-13). Multi-seq dispatch, per-sequence events (D6.8), GRAPH_COMPUTE_STAGE (D6.9). Known limitation: GPU event pipelining uses full sync — D6.10 ticketed.
-3. **D6.10 GPU Event Pipelining Fix** — 📋 planned. Move gpipe_events from CPU gather to GPU backend. See `docs/tickets/path-d-tickets.md`.
-4. **R3 Advanced Optimization** — Adaptive depth + deprecation cleanup
-5. **D4.11-D4.14 Pareto Optimizer** — Planned + ticketed, future sprint
-6. **Cluster performance benchmarks** — D5.7 deferred: global_3bk_pct, overlap_pct on 5-GPU cluster (3+ GPUs where n_stages>2 shows benefit)
+1. **D7.3 Vector A** — ✅ COMPLETE (2026-07-16). FA on HIP: `GGML_HIP_ROCWMMA_FATTN=ON`, rebuild, benchmarked. **+7.5% TG (133.0 -> 143.0 t/s)**. `docs/research/d73-vector-a-gpu-compute-reduction.md`.
+2. **D7.4 Vector B** — ⏳ PENDING. Reduce MTP verification cost (185x FAST/SLOW asymmetry). Next attack vector.
+3. **D7.5 Vector B2** — ⏳ PENDING. Overlap RPC download with GPU compute.
+4. **D7.6 Vector C** — ⏸️ BLOCKED. Fix rocprofv3+ggml SIGABRT for per-kernel profiling.
+2. **D6.10 GPU Event Pipelining Fix** — 📋 planned. Move gpipe_events from CPU gather to GPU backend. See `docs/tickets/path-d-tickets.md`.
+3. **R3 Advanced Optimization** — Adaptive depth + deprecation cleanup (paused for Slice 6 vectors)
+4. **D4.11-D4.14 Pareto Optimizer** — Planned + ticketed, future sprint
+5. **Cluster performance benchmarks** — D5.7 deferred: global_3bk_pct, overlap_pct on 5-GPU cluster (3+ GPUs where n_stages>2 shows benefit)
 
 ---
 

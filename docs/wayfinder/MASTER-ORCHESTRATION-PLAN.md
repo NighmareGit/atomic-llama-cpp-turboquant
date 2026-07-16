@@ -2,7 +2,7 @@
 
 **Branch:** Path-D-Gpipeline-Assembly-Line  
 **Date:** 2026-07-13  
-**Status:** Slice 1 + Slice 2 + Slice 3 + Slice 4 complete — RPC event fix, dual-GPU validation, Path C stepping stone + profiler v1 + deeper pipelining + multi-seq Mode B delivered. Known limitation D6.10 tracked for GPU event pipelining fix.
+**Status:** Slice 1 + Slice 2 + Slice 3 + Slice 4 complete — RPC event fix, dual-GPU validation, Path C stepping stone + profiler v1 + deeper pipelining + multi-seq Mode B delivered. Known limitation D6.10 tracked for GPU event pipelining fix. Slice 6 planned — pipeline depth (n_copies > 1) + split overhead mitigation (2026-07-16).
 
 ---
 
@@ -47,6 +47,7 @@ Documentation Phase (/wayfinder or manual)
 | Deeper Pipelining (D5) | ✅ complete | D5.1-D5.7 — n_stages>2 implemented. Completed 2026-07-11. |
 | Mode B Microbatch (D6) | ✅ complete | D6.1-D6.9 — multi-seq, per-seq events, GRAPH_COMPUTE_STAGE. Completed 2026-07-13. |
 | GPU Event Pipelining Fix (D6.10) | 📋 planned | gpipe_events on GPU backend — ticketed, known limitation KL-D6.1 |
+| Pipeline Depth + Split Overhead (D7) | 📋 planned | n_copies > 1 (1.4-1.8x TG) + 4 deferred strategies. Research complete: `docs/research/split-overhead-mitigation.md`. Slice 6 at `docs/tickets/path-d-slices.md`. |
 | Advanced Optimization (R3) | ⏳ pending | R3.1-R3.5 tickets |
 
 **Hardware:** Romulus local — AMD 7900 XTX (client, ROCm) + NVIDIA 3060 Ti (RPC server, CUDA). Models at `/mnt/models`. GPU telemetry via `rocm-smi` + `nvidia-smi`. Cluster (triton 5-GPU, remus) deferred to later sessions.
@@ -112,6 +113,7 @@ Each beyond-phase follows the workflow loop: research → design → spec → pr
 | D4 Pareto Optimizer | D4.11-D4.14 | Stored in `docs/tickets/path-d-tickets.md` — future sprint |
 | D5 Deeper Pipelining | D5.1-D5.7 | `D5-DEEPER-PIPELINE-AGENT-PLAN.md` |
 | D6 Mode B Microbatch | D6.1-D6.7 | `D6-MODE-B-AGENT-PLAN.md` |
+| D7 Pipeline Depth + Split Overhead | D7.1-D7.5 | `D7.0-pipeline-depth-research.md` |
 | R3 Advanced Optimization | R3.1-R3.5 | `R3-ADVANCED-OPT-AGENT-PLAN.md` |
 
 ---
@@ -244,9 +246,26 @@ Path C core (D4.1-D4.6) + Profiler v1 (D4.7-D4.10) delivered on romulus dual-GPU
 
 ## Next Action
 
-**Ready for Slice 5 — R3 Advanced Optimization + Deprecation Cleanup.**
+**Ready for Slice 6 — Pipeline Depth: n_copies > 1 + Split Overhead Mitigation.**
 
-Grab Slice 5 from `docs/tickets/path-d-slices.md`:
+Grab Slice 6 from `docs/tickets/path-d-slices.md`:
+
+```
+/handoff "Slice 6: Pipeline Depth — n_copies > 1 + split overhead mitigation"
+→ Read docs/tickets/path-d-slices.md Slice 6 section,
+  docs/research/split-overhead-mitigation.md,
+  docs/wayfinder/D7.0-pipeline-depth-research.md
+→ Execute D7.1 (increase n_copies 1→2):
+  1. /prototype — A/B test n_copies=1 vs 2 via llama-cli --parallel
+  2. /code-review — review prototype diff
+  3. /improve-codebase-architecture — assess default config
+  4. Test run — validate TG > 130 t/s, no OOM
+  5. /implement — bake into production config
+→ D7.2-D7.5: document deferred strategies with activation conditions
+→ On completion update path-d-slices.md completion footer and TRACKING.md D7 status
+```
+
+**After Slice 6: Slice 5 — R3 Advanced Optimization + Deprecation Cleanup.**
 
 ```
 /handoff "Slice 5: Advanced Optimization — adaptive depth refinement + deprecation cleanup" → Read docs/tickets/path-d-slices.md Slice 5 section, docs/tickets/path-d-tickets.md R3.1-R3.5, docs/wayfinder/TRACKING.md, docs/wayfinder/D5.1-split-timing-analysis.md, docs/adr/0003-adaptive-pipeline-depth.md → Execute R3.1-R3.5 (analyze adaptive depth → ADR-006 → deprecation warnings for B+11/B+14/B+7f → refine adaptive depth → full regression test) → On completion update path-d-slices.md completion footer and TRACKING.md R3 status
