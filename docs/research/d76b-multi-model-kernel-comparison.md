@@ -3,25 +3,33 @@
 **Date:** 2026-07-16
 **Task:** Profile GPU kernels across Qwen and Gemma-4 variants to build a broad comparison dataset
 **Tool:** rocprofv3 `--kernel-trace --stats --summary` with `GGML_CUDA_GRAPHS=0`
-**Status:** COMPLETE (4 of 6 models profiled; gemma4-26B/31B exceed 8GB RPC VRAM)
+**Status:** COMPLETE (6/6 models profiled; gemma4-31B exceeds 8GB RPC VRAM, not retried)
 
 ## 1. Models Profiled
 
-| # | Model | Arch | Type | Quant | Size | MTP | Split | TPS | GPU Time |
+| # | Model | Arch | Type | Quant | Size | MTP | n_gen | TPS | GPU Time |
 |---|-------|------|------|-------|------|-----|-------|-----|----------|
-| 1 | Qwen3.6-35B-A3B-MTP | qwen35moe | MoE (8/256 active) | Q6_K | 21.9 GB | yes | 30/70 | 15.1 | 1,156 ms |
-| 2 | Qwen3.6-35B-A3B-abliterated | qwen35moe | MoE (8/256 active) | Q4_K | 21 GB | yes | 30/70 | 15.7 | 1,178 ms |
-| 3 | Qwen3.5-35B-A3B | qwen35moe | MoE (8/256 active) | Q4_K_M | 20 GB | no | 30/70 | 9.0 | 1,160 ms |
-| 4 | Gemma-4-12B-it | gemma4 | Dense (34 layers) | Q4_K_M | 6.7 GB | no | 55/45 | 20.1 | 1,757 ms |
+| 1 | Qwen3.6-35B-A3B-MTP | qwen35moe | MoE (8/256) | Q6_K | 21.9 GB | yes | 64 | 15.1 | 1,156 ms |
+| 2 | Qwen3.6-35B-A3B-abliterated | qwen35moe | MoE (8/256) | Q4_K | 21 GB | yes | 64 | 15.7 | 1,178 ms |
+| 3 | Qwen3.5-35B-A3B | qwen35moe | MoE (8/256) | Q4_K_M | 20 GB | no | 64 | 9.0 | 1,160 ms |
+| 4 | Gemma-4-12B-it | gemma4 | Dense (34 layers) | Q4_K_M | 6.7 GB | no | 64 | 20.1 | 1,757 ms |
+| 5 | Qwen3.6-35B-A3B-MTP (retry) | qwen35moe | MoE (8/256) | Q6_K | 21.9 GB | yes | 32 | 12.6 | 577 ms |
+| 6 | Gemma-4-26B-A4B | gemma4 | MoE (8/128) | Q5_K_M | 18 GB | no | 32 | -- | 778 ms |
 
-**Failed to profile:**
+**Failed (not retried):**
 | Model | Reason |
 |-------|--------|
-| gemma4-26B-A4B Q5_K_M | 18 GB MoE, RPC GPU (8 GB) can't fit even with 75/25 split |
-| gemma4-31B-it Q4_K_M | 18 GB dense, RPC GPU (8 GB) can't fit even with 70/30 split |
+| gemma4-31B-it Q4_K_M | 18 GB dense, all layers to ROCm0 (21.4 GB of 24 GB VRAM) + RPC scratch fails |
 
-**Note:** All TPS values include rocprofv3 profiling overhead (~9.5x slowdown vs unprofiled).
-Relative kernel percentages are reliable; absolute timings are inflated.
+**Batch failure diagnosis:** The original batch script used `--tensor-split 30,70`
+which put 70% of model weights on the 8 GB 3060Ti RPC GPU, causing VRAM exhaustion.
+The default VRAM-proportional split (~72/28 for Qwen35B, ~70/30 for Gemma4-26B)
+works correctly. Retries with default split succeeded.
+
+**Profiling overhead:** rocprofv3 adds ~9.5x slowdown vs unprofiled baseline
+(143 t/s -> 15.1 t/s for Qwen35B-MTP Q6_K). Relative kernel percentages are
+reliable; absolute timings are inflated. Models 5-6 used n_gen=32 (half the
+tokens of models 1-4), so their GPU times are proportionally lower.
 
 ## 2. Per-Model Kernel Breakdown
 
@@ -92,19 +100,63 @@ Relative kernel percentages are reliable; absolute timings are inflated.
 
 **Categories:** MatMul 76.0% | Attention 9.5% | Quant 6.2% | Norm 5.7% | RoPE 1.4% | ElemWise 0.5% | Data 0.6% | Other 0.0%
 
+### 2.5 Qwen3.6-35B-A3B-MTP Q6_K (Retry, default split, n_gen=32)
+
+| Rank | Kernel | % GPU | Avg (us) | Calls | Category |
+|------|--------|-------|----------|-------|----------|
+| 1 | q6_K matmul (fwd) | 31.7% | 20.6 | 8,896 | MatMul |
+| 2 | quantize_q8_1 | 7.7% | 2.6 | 16,832 | Quant |
+| 3 | get_rows | 4.4% | 8.8 | 2,880 | Data |
+| 4 | iq4_xs matmul (trans) | 4.3% | 18.7 | 1,344 | MatMul |
+| 5 | topk_moe | 4.0% | 11.9 | 1,920 | MoE |
+| 6 | iq4_xs matmul (fwd) | 3.7% | 16.0 | 1,344 | MatMul |
+| 7 | q8_0 matmul (fwd) | 3.5% | 10.5 | 1,920 | MatMul |
+| 8 | flash_attn_vec | 3.5% | 38.9 | 512 | Attention |
+| 9 | fp32 matmul | 3.4% | 5.1 | 3,840 | MatMul |
+| 10 | q6_K matmul (trans) | 3.2% | 24.0 | 768 | MatMul |
+
+**Categories:** MatMul 55.1% | Quant 9.8% | ElemWise 8.8% | Data 8.1% | Norm 6.4% | MoE 4.0% | Attention 3.5% | SSM 2.5% | RoPE 1.2% | Other 0.7%
+
+**Note:** This retry confirms the original Q6_K profile (section 2.1) -- percentages
+within 0.5% across all categories. The absolute GPU time is halved (577 ms vs 1,156 ms)
+because n_gen=32 vs n_gen=64. Default split (~72/28) vs explicit `--tensor-split 30,70`
+made no difference to the kernel mix.
+
+### 2.6 Gemma-4-26B-A4B MoE Q5_K_M (Default split, n_gen=32)
+
+| Rank | Kernel | % GPU | Avg (us) | Calls | Category |
+|------|--------|-------|----------|-------|----------|
+| 1 | q5_K matmul (mixed) | 24.0% | 20.6 | 9,024 | MatMul |
+| 2 | q8_0 matmul (mixed) | 10.7% | 53.9 | 1,536 | MatMul |
+| 3 | q5_K matmul (mixed, large) | 10.5% | 127.7 | 640 | MatMul |
+| 4 | q6_K matmul (mixed) | 8.5% | 51.6 | 1,280 | MatMul |
+| 5 | copyBuffer | 7.4% | 37.6 | 1,534 | Data |
+| 6 | flash_attn_tile | 6.1% | 185.5 | 256 | Attention |
+| 7 | flash_attn_vec | 4.6% | 30.9 | 1,152 | Attention |
+| 8 | quantize_q8_1 | 4.2% | 2.6 | 12,480 | Quant |
+| 9 | set_rows (dequant) | 4.1% | 11.2 | 2,816 | Data |
+| 10 | rms_norm (causal) | 3.9% | 5.4 | 5,696 | Norm |
+
+**Categories:** MatMul 54.6% | Attention 10.8% | Norm 9.7% | Quant 8.6% | Data 8.4% | ElemWise 4.3% | MoE 2.0% | RoPE 1.6% | Other 0.0%
+
+**Architecture:** 30 layers, all with attention (SWA on most, full on every 6th),
+128 experts (8 activated). No SSM layers. This is a fundamentally different MoE
+architecture from Qwen: attention on every layer instead of SSM on 75% of layers.
+
 ## 3. Cross-Model Comparison
 
 ### 3.1 Category Distribution
 
-| Category | Qwen3.6 Q6_K | Qwen3.6 Q4_K | Qwen3.5 Q4_K_M | Gemma4-12B | Notes |
-|----------|-------------|-------------|----------------|------------|-------|
-| MatMul | 55.4% | 60.7% | 60.0% | **76.0%** | Dense = matmul-dominated |
-| Attention | 3.4% | 2.8% | 2.9% | **9.5%** | Dense has 3x more attention |
-| MoE Routing | 4.0% | 3.5% | 3.6% | **0.0%** | Dense has no expert routing |
-| SSM | 2.4% | 2.2% | 2.1% | **0.0%** | Dense has no SSM layers |
-| Quantization | 9.9% | 8.7% | 9.0% | 6.2% | Dense models need less dequant |
-| Element-wise | 8.6% | 7.7% | 7.9% | 0.5% | MoE gating ops absent in dense |
-| Normalization | 6.4% | 5.8% | 5.8% | 5.7% | Consistent across all models |
+| Category | Qwen3.6 Q6_K | Qwen3.6 Q4_K | Qwen3.5 Q4_K_M | Gemma4-12B | Gemma4-26B | Notes |
+|----------|-------------|-------------|----------------|------------|------------|-------|
+| MatMul | 55.4% | 60.7% | 60.0% | **76.0%** | 54.6% | Dense = matmul-dominated; MoE = consistent ~55-60% |
+| Attention | 3.4% | 2.8% | 2.9% | 9.5% | **10.8%** | Gemma4 uses attention on ALL layers, Qwen uses SSM on 75% |
+| MoE Routing | 4.0% | 3.5% | 3.6% | **0.0%** | 2.0% | 128-experts (Gemma4) cheaper than 256 (Qwen) |
+| SSM | 2.4% | 2.2% | 2.1% | 0.0% | **0.0%** | Qwen-only feature, replaces attention on 30/40 layers |
+| Quantization | 9.9% | 8.7% | 9.0% | 6.2% | 8.6% | Dense models need less dequant (fewer weight tensors) |
+| Element-wise | 8.6% | 7.7% | 7.9% | 0.5% | 4.3% | MoE gating ops absent in dense; Gemma4 has fewer than Qwen |
+| Normalization | 6.4% | 5.8% | 5.8% | 5.7% | 9.7% | Gemma4 norms are more expensive (larger hidden dim: 2816 vs 2048) |
+| Data Movement | 7.9% | 6.8% | 6.9% | 0.6% | 8.4% | copyBuffer dominant in Gemma4 (SWA KV cache management) |
 
 ### 3.2 Quantization Impact (Qwen MoE Models)
 
@@ -137,25 +189,26 @@ the verification runs full layers. The 9:5 step ratio (FAST:SLOW = 5:4 in D7.2)
 means MTP achieves higher token throughput by emitting multiple tokens per SLOW
 verification pass.
 
-### 3.4 Architecture Comparison: MoE vs Dense
+### 3.4 Architecture Comparison: MoE vs Dense vs Hybrid MoE
 
-| Metric | Qwen MoE (avg) | Gemma-4 Dense | Ratio |
-|--------|---------------|---------------|-------|
-| Layers | 40 (10 attn + 30 SSM) | 34 (all attention) | -- |
-| MatMul proportion | ~58% | 76% | 1.3x |
-| Attention proportion | ~3% | 9.5% | 3.2x |
-| MoE routing | ~3.7% | 0% | -- |
-| SSM | ~2.2% | 0% | -- |
-| Avg matmul latency | 15-21 us (Q4-Q6) | 56-206 us (Q4-iq4) | 3-10x |
-| Per-layer attention | 38 us (vec) | 32 us (vec) + 189 us (tile) | 5.8x |
-| Profiled TPS | 9-16 | 20.1 | Dense faster (6.7 GB vs 20 GB) |
+| Metric | Qwen MoE (SSM-hybrid) | Gemma4-26B MoE | Gemma-4 Dense | Notes |
+|--------|----------------------|----------------|---------------|-------|
+| Layers | 40 (10 attn + 30 SSM) | 30 (all attention) | 34 (all attention) | Qwen replaces 75% of attention with SSM |
+| Experts | 256 (8 active) | 128 (8 active) | 0 | Qwen has 2x more experts |
+| Hidden dim | 2,048 | 2,816 | 2,816 | Gemma4 has larger hidden dimension |
+| MatMul % | ~58% | 54.6% | 76.0% | MoE FFN matmul dominates regardless |
+| Attention % | ~3% | 10.8% | 9.5% | Without SSM, attention is 10x more expensive |
+| MoE routing % | ~3.7% | 2.0% | 0% | 128 experts cheaper to route than 256 |
+| Norm % | ~6% | 9.7% | 5.7% | Larger hidden dim = more expensive norms |
+| Per-attn avg | 38 us (vec) | 31 us (vec) + 186 us (tile) | 32 us (vec) + 189 us (tile) | Tile attention for SWA in Gemma4 |
+| Per-SSM avg | ~10 us | N/A | N/A | SSM layers are 4x cheaper than attention |
 
-**Takeaway:** The Qwen MoE architecture dramatically reduces attention cost
-(3% vs 9.5% of GPU time) by replacing 30 of 40 attention layers with SSM.
-Gemma-4's dense architecture spends 76% of GPU time in matmul alone, with
-per-matmul latencies 3-10x higher due to larger weight matrices (no expert
-sparsity). However, Gemma-4-12B is a much smaller model (6.7 GB vs 20 GB),
-so it achieves higher raw TPS.
+**Takeaway:** Two MoE architectures, two different trade-offs. Qwen uses SSM on
+75% of layers to reduce attention cost to ~3% of GPU time. Gemma4 uses full
+attention on all 30 layers, resulting in 10.8% attention cost -- 3.6x higher
+than Qwen. However, Gemma4's 128-expert routing is half the cost of Qwen's
+256-expert routing (2.0% vs 3.7%). Dense models pay the highest attention cost
+(9.5%) but have no MoE routing overhead.
 
 ## 4. Key Findings
 

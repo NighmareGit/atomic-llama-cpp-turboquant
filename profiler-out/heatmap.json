@@ -1,18 +1,18 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-14T03:41:25Z",
-  "git_sha": "f2d627a6a",
+  "generated_at": "2026-07-16T14:13:20Z",
+  "git_sha": "f2c0e1192",
   "model": {
-    "path": "/mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf",
+    "path": "/mnt/980pro/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf",
     "n_layers": 40,
     "param_count_b": 35.5053,
-    "ctx_size": 512
+    "ctx_size": 4096
   },
   "tasks": {
     "tg": {
-      "n_gen_tokens": 1,
-      "wall_ms": 27.9635,
-      "tps": 35.7609,
+      "n_gen_tokens": 50,
+      "wall_ms": 334.834,
+      "tps": 149.328,
       "layers": [],
       "kv_source": "estimated"
     }
