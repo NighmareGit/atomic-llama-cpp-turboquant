@@ -2443,7 +2443,21 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
             struct ggml_tensor * input_cpy = tensor_copy(input, split_backend_id, sched->cur_copy);
             // inputs from the user must be copied immediately to prevent the user overwriting the data before the copy is done
             if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
-                ggml_backend_event_synchronize(sched->events[split_backend_id][sched->cur_copy]);
+                // D6.10: skip GPU event wait for host-sourced INPUT copies when
+                // copy-slot rotation (n_copies > 1) ensures no buffer conflict
+                // with in-flight GPU operations. The event gates GPU compute
+                // completion, which is irrelevant for CPU-provided scalars
+                // (position IDs, masks) that don't depend on prior GPU output.
+                bool skip_wait = false;
+                if (sched->n_copies > 1) {
+                    ggml_backend_buffer_t buf_src = input->view_src ? input->view_src->buffer : input->buffer;
+                    if (buf_src != nullptr && ggml_backend_buffer_is_host(buf_src)) {
+                        skip_wait = true;
+                    }
+                }
+                if (!skip_wait) {
+                    ggml_backend_event_synchronize(sched->events[split_backend_id][sched->cur_copy]);
+                }
             } else {
                 ggml_backend_synchronize(split_backend);
             }
