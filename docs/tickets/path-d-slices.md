@@ -506,7 +506,7 @@ which matmul/attention/softmax kernels dominate the 6,843 µs.
 - [ ] D7.4: SLOW step time reduction measured (output collapses, upper bound +75% documented)
 - [x] D7.5: RPC download overlapped with GPU compute (prototyped, A1 crashes, A2 regresses)
 - [ ] D7.5: input_copy_slow reduced from 2,645 µs to <500 µs (deferred, blocked by CUDA graph incompat)
-- [x] D7.6: rocprofv3 compatibility fixed; per-kernel timing captured
+- [x] D7.6: rocprofv3 compatibility fixed; per-kernel timing captured (4 models: Qwen35B-MoE x3 + Gemma4-12B-dense)
 - [ ] Safety check passes before each resource-intensive step
 
 ### Blocked by

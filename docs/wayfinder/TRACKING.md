@@ -219,7 +219,7 @@ Full analysis: `docs/wayfinder/D4.1-romulus-baseline-analysis.md`
 | D7.3 | ✅ complete | Vector A: FA on HIP enabled — `GGML_HIP_ROCWMMA_FATTN=ON`, rebuild, benchmarked. **+7.5% TG (133.0 -> 143.0 t/s)**. WMMA FA kernel verified in `libggml-hip.so`. See `docs/research/d73-vector-a-gpu-compute-reduction.md`. |
 | D7.4 | ✅ complete | Vector B: Skip-SSM verify prototype complete. **Upper bound: +75% TG, output collapses.** 5 refinement approaches (R1-R5) + decision matrix + revisit criteria in `docs/research/d74-code-skip-ssm-verify.md`. |
 | D7.5 | ✅ complete | Vector B2: RPC download overlap. Prototype: async H2D crashes (CUDA graph incompat), early-issue regresses (-17%). copy_event fix shipped. `docs/research/d75-rpc-overlap-research.md`. |
-| D7.6 | ✅ complete | Vector C: rocprofv3 kernel profiling. Fix: `--kernel-trace` without `--hip-trace` avoids HIP interception conflict. Per-kernel breakdown: MatMul 55.4% (q6_K 35.2%), FlashAttn 3.4%, SSM 2.4%, MoE routing 4.0%. `docs/research/d76-rocprofv3-kernel-profile.md`. |
+| D7.6 | ✅ complete | Vector C: rocprofv3 kernel profiling. Fix: `--kernel-trace` without `--hip-trace` avoids HIP interception conflict. Per-kernel breakdown for 4 models across Qwen/Gemma-4 MoE and dense architectures. MatMul 55-76%, attention 3-10%, SSM 0-2.4%, MoE routing 0-4%. `docs/research/d76-rocprofv3-kernel-profile.md` + `docs/research/d76b-multi-model-kernel-comparison.md`. |
 
 ### R3 — Advanced Optimization (pending)
 
@@ -255,8 +255,8 @@ Aborts if VRAM/RAM/disk/running-instances indicate OOM risk.
 1. **D7.3 Vector A** — ✅ COMPLETE (2026-07-16). FA on HIP: `GGML_HIP_ROCWMMA_FATTN=ON`, rebuild, benchmarked. **+7.5% TG (133.0 -> 143.0 t/s)**. `docs/research/d73-vector-a-gpu-compute-reduction.md`.
 2. **D7.4 Vector B** — ✅ COMPLETE (2026-07-16). Skip-SSM verify: +75% upper bound established, output collapses. 5 refinement approaches + decision matrix + revisit criteria in `docs/research/d74-code-skip-ssm-verify.md`.
 3. **D7.5 Vector B2** — 🟡 PROTOTYPED. Async H2D crashes (CUDA graph incompat), early-issue regresses (-17%). copy_event fix shipped. Blocked by D7.6. `docs/research/d75-rpc-overlap-research.md`.
-4. **D7.6 Vector C** — ✅ COMPLETE (2026-07-16). rocprofv3 `--kernel-trace` works (HIP tracing was the crash culprit). Per-kernel breakdown: MatMul 55.4% (q6_K 35.2%), flash_attn 3.4%, SSM 2.4%, MoE routing 4.0%. `docs/research/d76-rocprofv3-kernel-profile.md`.
-5. **D7.7 Next vectors** — q6_K matmul is the #1 optimization target (35.2% of GPU time). SSM layers are only 2.4%, so D7.4 skip-SSM upper bound revised to 10-15% (was +75%). D7.5 overlap target is data movement + quantization (16.3% combined).
+4. **D7.6 Vector C** — ✅ COMPLETE (2026-07-16). rocprofv3 `--kernel-trace` works. 4-model comparison: MatMul 55-76%, attention 3-10% (dense 3x more), SSM 2% (10x cheaper than attention). Q4_K matmul 29% faster than Q6_K. MTP gives +74% TPS. `docs/research/d76-rocprofv3-kernel-profile.md` + `docs/research/d76b-multi-model-kernel-comparison.md`.
+5. **D7.7 Next vectors** — q6_K matmul is #1 target (20-32% GPU). Q4_K_M quantization is the low-hanging fruit (29% faster matmul). Dense models need different approach (matmul 76%, attention 10%). WMMA acceleration for gfx1100 (7900XTX) worth investigating.
 5. **D6.10 GPU Event Pipelining Fix** — 📋 planned. Move gpipe_events from CPU gather to GPU backend. See `docs/tickets/path-d-tickets.md`.
 6. **R3 Advanced Optimization** — Adaptive depth + deprecation cleanup (paused for Slice 6 vectors)
 7. **D4.11-D4.14 Pareto Optimizer** — Planned + ticketed, future sprint
