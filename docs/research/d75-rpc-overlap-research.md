@@ -1,8 +1,10 @@
-# D7.5 — Overlap RPC Download with GPU Compute
+# D7.5 — Overlap RPC Download with GPU Compute (RESOLVED: No H2D bottleneck found)
 
 **Date:** 2026-07-16
-**Task:** Vector B2 — Hide Split 2's `input_copy_slow` (2,645 µs, 20.4% of SLOW decode) behind GPU kernel execution
-**Target:** Reduce Split 2 `input_copy_slow` from 2,645 µs to <500 µs
+**Status:** RESOLVED — Pivot to D6.10 GPU event pipelining
+**Task:** Vector B2 — Investigate hiding Split 2's `input_copy_slow` (2,645 µs, 20.4% of SLOW decode) behind GPU kernel execution
+**Finding:** `input_copy_slow` is GPU event synchronization, not H2D copies. No copy to overlap.
+**Target:** Redirect effort to D6.10 (GPU event pipelining) which addresses the real bottleneck.
 **Context:** Qwen3.6-35B-A3B-APEX-MTP on dual-GPU ROMULUS (7900XTX ROCm + 3060Ti RPC), GPipe stages=3, MTP n_max=2
 
 ---
@@ -309,6 +311,90 @@ The 2,645 µs `input_copy_slow` is emitted by `sched_trace_emit_sync_detail` for
 3. Profile the impact of async H2D on graph-compute kernel timing
 
 The copy_event fix and env var infrastructure remain in the codebase behind `GGML_SCHED_INPUT_COPY_ASYNC=1` for quick re-testing when rocprofv3 is available.
+
+---
+
+## 9. Post-D7.6 Diagnostic (2026-07-16): `input_copy_slow` is GPU Event Wait
+
+### 9.1 Method
+
+Ran `GGML_SCHED_TRACE=2` on Qwen3.6-35B-MTP (no rocprofv3, 124 t/s unprofiled, n_gen=32, MTP n_max=2, GPipe stages=3, default tensor split):
+
+```bash
+env GGML_SCHED_TRACE=2 GGML_SCHED_TRACE_FILE=/tmp/d75-diagnostic/sched-trace.jsonl \
+  GGML_CUDA_GRAPHS=0 \
+  build/bin/llama-gpipe-profiler \
+  -m /mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf \
+  -rpc 127.0.0.1:50051 --n-gpu-layers 99 --gpipe-stages 3 \
+  --tasks tg --n-gen 32 --repeat 1 --no-warmup \
+  --spec-type draft-mtp --spec-draft-n-max 2
+```
+
+The `sched_trace_emit_sync_detail` function logs tensor name, nbytes, src_buft, dst_buft, host_src/host_dst, and rpc_src/rpc_dst for each `input_copy_slow` entry.
+
+### 9.2 Results: 97.6% is `leaf_70` (16 bytes)
+
+142 `input_copy_slow` entries totaled 172,651 µs across 32 decode steps:
+
+| Tensor | Count | Size | Split(s) | Total Time | Avg | % of Total |
+|--------|-------|------|----------|:----------:|:---:|:----------:|
+| `leaf_70` | 108 | 16 B | 1, 2 | 168,512 µs | 1,560 µs | **97.6%** |
+| `attn_inp_kq_mask` | 9 | 512 B | 1, 2 | 1,200 µs | 133 µs | 0.7% |
+| `leaf_76` | 11 | 8 B | 1 | 1,106 µs | 100 µs | 0.6% |
+| `leaf_74` | 10 | 8 B | 1 | 1,073 µs | 107 µs | 0.6% |
+| `model.input_embed` | 3 | 8 KB | 1 | 692 µs | 230 µs | 0.4% |
+
+Split-by-split `leaf_70` breakdown:
+
+| Split | Backend | Avg | Range | Interpretation |
+|-------|---------|:---:|:-----:|---------------|
+| Split 1 | RPC/3060Ti | ~100 µs | 55-526 µs | RPC GPU finishes compute quickly; short wait |
+| Split 2 | ROCm/7900XTX | **~3,500 µs** | 1,811-5,236 µs | Waiting for previous iteration's ROCm GPU to drain |
+
+### 9.3 Root Cause
+
+The `input_copy_slow` measurement is NOT a copy — it's the `ggml_backend_event_synchronize` call at `ggml-backend.cpp:2447` waiting for the previous iteration's GPU compute to finish:
+
+```cpp
+// ggml-backend.cpp:2446-2448
+if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
+    ggml_backend_event_synchronize(sched->events[split_backend_id][sched->cur_copy]);
+}
+```
+
+The ROCm GPU takes 6,843 µs of compute per SLOW step (D7.2 data). The next iteration's Split 2 starts after Split 0 (20 µs) + Split 1 (4,665 µs) = 4,685 µs have elapsed. The remaining 6,843 - 4,685 = **2,158 µs** of GPU work is still in-flight, causing the event_synchronize to block.
+
+The copy itself (`leaf_70`, 16 bytes, CPU→ROCm) takes <1 µs. The remaining 3,500 µs is pure GPU wait.
+
+### 9.4 Revised Assessment
+
+**D7.5's original premise (overlap H2D with GPU compute) is invalid.** There is no H2D bottleneck. The `input_copy_slow` time is GPU synchronization overhead from sequential iteration processing.
+
+| Original D7.5 Hypothesis | Diagnostic Finding | Verdict |
+|--------------------------|-------------------|---------|
+| "H2D copies are slow (2,645 µs)" | Copies are 16 bytes, <1 µs each | **DISPROVEN** |
+| "Async H2D would hide copy time" | No copy time to hide | **N/A** |
+| "Early-issue pre-copies would help" | Copies aren't the bottleneck; GPU is | **Explains A2 regression** |
+| "RPC download is the bottleneck" | RPC tensors handled via gather path, not INPUT | **Wrong path** |
+
+### 9.5 New Direction: D6.10 GPU Event Pipelining
+
+The real fix is enabling overlap between iterations. With n_copies > 1 and GPU event pipelining, the pipeline could process as:
+
+```
+Iteration N:   [Split 0][Split 1][Split 2: GPU compute 6,843 µs]
+Iteration N+1:           [Split 0][Split 1][Split 2: wait ~2,158 µs]
+```
+
+Split 0+1 of iteration N+1 would run concurrently with Split 2 GPU compute of iteration N, reducing the event_synchronize wait from ~3,500 µs to ~2,158 µs. Savings: ~1,300 µs per SLOW step (10% of the 12,946 µs SLOW decode).
+
+**D7.5 is resolved: no H2D overlap needed. The copy_event fix stays. Move to D6.10.**
+
+### 9.6 Artifacts
+
+- Trace file: `/tmp/d75-diagnostic/sched-trace.jsonl` (1756 lines, 142 input_copy_slow entries)
+- Heatmap: `/tmp/d75-diagnostic/heatmap.json`
+- Raw tool: `docs/research/rocprofv3-profiling-guide.md`
 
 ---
 

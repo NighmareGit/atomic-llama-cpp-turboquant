@@ -4,6 +4,7 @@
 **Task:** Profile GPU kernels across Qwen and Gemma-4 variants to build a broad comparison dataset
 **Tool:** rocprofv3 `--kernel-trace --stats --summary` with `GGML_CUDA_GRAPHS=0`
 **Status:** COMPLETE (6/6 models profiled; gemma4-31B exceeds 8GB RPC VRAM, not retried)
+**See also:** `docs/research/rocprofv3-profiling-guide.md` — practical usage guide
 
 ## 1. Models Profiled
 

@@ -4,6 +4,7 @@
 **Task:** Fix rocprofv3 + ggml compatibility; get per-kernel timing within the 6,843 us GPU compute window
 **Tool:** rocprofv3 (ROCm 7.2.3) `--kernel-trace --stats --summary`
 **Status:** COMPLETE
+**See also:** `docs/research/rocprofv3-profiling-guide.md` — practical usage guide
 
 ## 1. Compatibility Fix
 
