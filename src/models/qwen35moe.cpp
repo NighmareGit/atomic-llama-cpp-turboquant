@@ -174,6 +174,20 @@ llama_model_qwen35moe::graph::graph(const llama_model & model, const llm_graph_p
 
     auto * inp = build_inp_mem_hybrid();
 
+    // When skipping SSM during verify, the recurrent-state input tensors are
+    // unused in the graph.  The scheduler will not allocate backend buffers
+    // for them, which causes set_input() to crash on a null buffer pointer.
+    // Expanding them here forces the scheduler to allocate buffers so that
+    // set_input() can safely write the snapshot ids into host memory.
+    if (cparams.skip_ssm_verify) {
+        auto * recr = inp->get_recr();
+        if (recr) {
+            ggml_build_forward_expand(gf, recr->s_copy);
+            ggml_build_forward_expand(gf, recr->s_copy_main);
+            ggml_build_forward_expand(gf, recr->s_copy_extra);
+        }
+    }
+
     ggml_tensor * inp_pos     = build_inp_pos();
     ggml_tensor * inp_out_ids = build_inp_out_ids();
 
@@ -188,8 +202,14 @@ llama_model_qwen35moe::graph::graph(const llama_model & model, const llm_graph_p
 
         // Determine layer type and build appropriate attention mechanism
         if (hparams.is_recr(il)) {
-            // Linear attention layer (gated delta net)
-            cur = build_layer_attn_linear(inp->get_recr(), cur, il);
+            if (cparams.skip_ssm_verify) {
+                // Skip SSM attention during verify: cur already holds attn_norm(inpL).
+                // The residual below (cur + inpSA) gives attn_norm(inpL) + inpL,
+                // preserving the hidden state flow while saving compute.
+            } else {
+                // Linear attention layer (gated delta net)
+                cur = build_layer_attn_linear(inp->get_recr(), cur, il);
+            }
         } else {
             // Full attention layer
             cur = build_layer_attn(inp->get_attn(), cur, inp_pos, sections, il);

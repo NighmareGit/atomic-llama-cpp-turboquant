@@ -45,6 +45,7 @@ struct llama_cparams {
     bool kv_unified;
     bool pipeline_parallel;
     bool gpipe_enabled;
+    bool skip_ssm_verify;     // skip SSM attention in hybrid models during verification
 
     std::vector<bool> embeddings_layer_inp; // [n_layer()] extract input embeddings for layer
 

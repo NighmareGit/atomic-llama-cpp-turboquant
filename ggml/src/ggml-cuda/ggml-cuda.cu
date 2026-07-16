@@ -620,6 +620,10 @@ ggml_backend_cuda_context::~ggml_backend_cuda_context() {
     if (copy_event != nullptr) {
         CUDA_CHECK(cudaEventDestroy(copy_event));
     }
+    for (auto ev : pending_copy_events) {
+        cudaEventDestroy(ev);
+    }
+    pending_copy_events.clear();
     for (int i = 0; i < GGML_CUDA_MAX_DEVICES; ++i) {
         for (int j = 0; j < GGML_CUDA_MAX_STREAMS; ++j) {
             if (streams[i][j] != nullptr) {
@@ -3456,11 +3460,12 @@ static void ggml_cuda_issue_pinned_h2d_async(ggml_backend_cuda_context * cuda_ct
     memcpy(pin, src, nbytes);
     cudaStream_t stream = cuda_ctx->stream();
     CUDA_CHECK(cudaMemcpyAsync(dst, pin, nbytes, cudaMemcpyHostToDevice, cudaStreamPerThread));
-    if (!cuda_ctx->copy_event) {
-        CUDA_CHECK(cudaEventCreateWithFlags(&cuda_ctx->copy_event, cudaEventDisableTiming));
-    }
-    CUDA_CHECK(cudaEventRecord(cuda_ctx->copy_event, cudaStreamPerThread));
-    CUDA_CHECK(cudaStreamWaitEvent(stream, cuda_ctx->copy_event, 0));
+    // B+17: per-call event to avoid overwriting prior copies (was: single copy_event)
+    cudaEvent_t ev;
+    CUDA_CHECK(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming));
+    CUDA_CHECK(cudaEventRecord(ev, cudaStreamPerThread));
+    CUDA_CHECK(cudaStreamWaitEvent(stream, ev, 0));
+    cuda_ctx->pending_copy_events.push_back(ev);
 }
 
 static void ggml_backend_cuda_set_tensor_async(ggml_backend_t backend, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
@@ -3598,6 +3603,12 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
 
     CUDA_CHECK(cudaStreamSynchronize(cuda_ctx->stream()));
+
+    // B+17: destroy per-call copy events (now safe after stream sync)
+    for (auto ev : cuda_ctx->pending_copy_events) {
+        cudaEventDestroy(ev);
+    }
+    cuda_ctx->pending_copy_events.clear();
 
     GGML_UNUSED(backend);
 }

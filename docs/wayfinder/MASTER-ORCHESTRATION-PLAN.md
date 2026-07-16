@@ -47,7 +47,7 @@ Documentation Phase (/wayfinder or manual)
 | Deeper Pipelining (D5) | ✅ complete | D5.1-D5.7 — n_stages>2 implemented. Completed 2026-07-11. |
 | Mode B Microbatch (D6) | ✅ complete | D6.1-D6.9 — multi-seq, per-seq events, GRAPH_COMPUTE_STAGE. Completed 2026-07-13. |
 | GPU Event Pipelining Fix (D6.10) | 📋 planned | gpipe_events on GPU backend — ticketed, known limitation KL-D6.1 |
-| Pipeline Depth + Split Overhead (D7) | 📋 planned | n_copies > 1 (1.4-1.8x TG) + 4 deferred strategies. Research complete: `docs/research/split-overhead-mitigation.md`. Slice 6 at `docs/tickets/path-d-slices.md`. |
+| Pipeline Depth + Split Overhead (D7) | 🔄 in-progress | D7.1 closed, D7.2-D7.4 complete. D7.5 prototyped (copy_event fix shipped, async H2D blocked by D7.6). Slice 6 at `docs/tickets/path-d-slices.md`. |
 | Advanced Optimization (R3) | ⏳ pending | R3.1-R3.5 tickets |
 
 **Hardware:** Romulus local — AMD 7900 XTX (client, ROCm) + NVIDIA 3060 Ti (RPC server, CUDA). Models at `/mnt/models`. GPU telemetry via `rocm-smi` + `nvidia-smi`. Cluster (triton 5-GPU, remus) deferred to later sessions.

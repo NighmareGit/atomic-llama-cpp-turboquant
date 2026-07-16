@@ -103,6 +103,16 @@ static bool ggml_sched_moe_async_copy_enabled() {
     return v != 0 && ggml_sched_pipeline_plus_enabled();
 }
 
+// B+17: async H2D for INPUT tensor copies on GPU backends (overlap copy with RPC compute).
+static bool ggml_sched_input_copy_async_enabled() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_SCHED_INPUT_COPY_ASYNC");
+        v = e ? atoi(e) : 0;
+    }
+    return v != 0;
+}
+
 // B+14: wavefront assembly-line dispatch (W1 intra-token + W2 cross-decode).
 static bool ggml_sched_wavefront_master_enabled() {
     static int v = -1;

@@ -10,9 +10,11 @@
 #include "common.h"
 #include "ggml.h"
 #include "llama.h"
+#include "sampling.h"
 #include "speculative.h"
 
 #include <chrono>
+#include <fstream>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -88,7 +90,10 @@ struct profiler_config {
     std::string model_draft_path;  // separate draft model (e.g., Gemma assistant)
     int  spec_draft_n_max    = 2;
     int  spec_draft_n_min    = 1;
+    float spec_draft_p_min   = 0.0f;
+    std::string prompt_file;       // real prompt text for TG (forces diverse output)
     int  n_parallel          = 1;
+    bool sample              = false; // use real sampling instead of synthetic token cycling
 
     llama_split_mode split_mode = LLAMA_SPLIT_MODE_LAYER;
     ggml_type type_k = GGML_TYPE_Q4_0;
@@ -234,16 +239,55 @@ static bool run_prompt(llama_context * ctx, const std::vector<llama_token> & tok
     return true;
 }
 
-static bool run_gen(llama_context * ctx, int n_gen) {
+static bool run_gen(llama_context * ctx, int n_gen, bool use_sampling = false) {
     const llama_model * model = llama_get_model(ctx);
     const llama_vocab * vocab = llama_model_get_vocab(model);
     const int32_t n_vocab = llama_vocab_n_tokens(vocab);
-    llama_token token = llama_vocab_get_add_bos(vocab) ? llama_vocab_bos(vocab) : 0;
+
+    common_sampler_ptr smpl;
+    if (use_sampling) {
+        common_params_sampling sparams;
+        sparams.no_perf  = true;
+        sparams.temp     = 0.7f;
+        sparams.top_k    = 40;
+        sparams.top_p    = 0.95f;
+        sparams.samplers = { COMMON_SAMPLER_TYPE_TOP_K, COMMON_SAMPLER_TYPE_TOP_P, COMMON_SAMPLER_TYPE_TEMPERATURE };
+        smpl.reset(common_sampler_init(model, sparams));
+    }
+
+    llama_token token;
+    if (use_sampling && smpl) {
+        // After run_prompt, the context is positioned past the prompt.
+        // Sample the first token from the logits at the last prompt position.
+        common_sampler_reset(smpl.get());
+        token = common_sampler_sample(smpl.get(), ctx, -1);
+        char buf[256];
+        int n = llama_token_to_piece(vocab, token, buf, sizeof(buf), 0, true);
+        if (n > 0) {
+            fwrite(buf, 1, n, stdout);
+            fflush(stdout);
+        }
+    } else {
+        token = llama_vocab_get_add_bos(vocab) ? llama_vocab_bos(vocab) : 0;
+    }
+
     for (int i = 0; i < n_gen; ++i) {
         if (llama_decode(ctx, llama_batch_get_one(&token, 1)) != 0) {
             return false;
         }
-        token = (llama_token) (i + 1) % n_vocab;
+        if (use_sampling && smpl) {
+            common_sampler_reset(smpl.get());
+            common_sampler_accept(smpl.get(), token, false);
+            token = common_sampler_sample(smpl.get(), ctx, 0);
+            char buf[256];
+            int n = llama_token_to_piece(vocab, token, buf, sizeof(buf), 0, true);
+            if (n > 0) {
+                fwrite(buf, 1, n, stdout);
+                fflush(stdout);
+            }
+        } else {
+            token = (llama_token) (i + 1) % n_vocab;
+        }
     }
     llama_synchronize(ctx);
     return true;
@@ -319,6 +363,27 @@ static task_result run_session(
         }
     }
 
+    // Real prompt for TG — processed once to seed KV cache, then generation starts
+    std::vector<llama_token> tg_prompt_tokens;
+    if (task.type == TASK_TG) {
+        if (!cfg.prompt_file.empty()) {
+            std::ifstream pf(cfg.prompt_file);
+            if (!pf) {
+                throw std::runtime_error("failed to open prompt file: " + cfg.prompt_file);
+            }
+            std::string text((std::istreambuf_iterator<char>(pf)),
+                             std::istreambuf_iterator<char>());
+            tg_prompt_tokens = common_tokenize(vocab_pre, text, true, false);
+            fprintf(stderr, ">>> tg prompt: %zu tokens from %s\n",
+                    tg_prompt_tokens.size(), cfg.prompt_file.c_str());
+        } else {
+            // Fallback: single BOS token (minimal prompt, high MTP acceptance)
+            if (llama_vocab_get_add_bos(vocab_pre)) {
+                tg_prompt_tokens.push_back(llama_vocab_bos(vocab_pre));
+            }
+        }
+    }
+
     llama_context * ctx = llama_init_from_model(model, cparams);
     if (!ctx) {
         llama_model_free(model);
@@ -378,6 +443,7 @@ static task_result run_session(
         sparams.types           = { COMMON_SPECULATIVE_TYPE_DRAFT_MTP };
         sparams.draft.n_max     = cfg.spec_draft_n_max;
         sparams.draft.n_min     = cfg.spec_draft_n_min;
+        sparams.draft.p_min     = cfg.spec_draft_p_min;
         sparams.draft.ctx_tgt   = ctx;
         sparams.draft.ctx_dft   = ctx_dft;
         sparams.draft.backend_sampling = true;
@@ -431,23 +497,19 @@ static task_result run_session(
         res.tps      = res.n_tokens > 0 && elapsed > 0
                        ? 1e9 * res.n_tokens / (double) elapsed : 0.0;
     } else if (cfg.mtp_enabled && spec) {
-        // Token generation with nextn embeddings enabled.
-        // common_speculative_init() has already called llama_set_embeddings_nextn()
-        // on ctx_tgt.  The warmup decode below triggers sched_need_reserve so the
-        // graph is rebuilt with the h_nextn output buffer allocated.  We then
-        // measure pure TG throughput — the nextn extraction cost is included in
-        // each llama_decode(), but we skip the full speculative draft/accept loop
-        // because synthetic tokens don't produce meaningful acceptance sequences.
-        if (!run_prompt(ctx, prompt_tokens, cfg.n_batch)) {
-            llama_free(ctx);
-            llama_model_free(model);
-            throw std::runtime_error("tg prefill failed");
+        // Prompt processing — use tg_prompt_tokens for TG (real prompt or BOS)
+        if (!tg_prompt_tokens.empty()) {
+            if (!run_prompt(ctx, tg_prompt_tokens, cfg.n_batch)) {
+                llama_free(ctx);
+                llama_model_free(model);
+                throw std::runtime_error("tg prefill failed");
+            }
         }
 
         llama_perf_context_reset(ctx);
         const uint64_t t0 = time_ns();
 
-        if (!run_gen(ctx, task.n_gen)) {
+        if (!run_gen(ctx, task.n_gen, cfg.sample)) {
             llama_free(ctx);
             llama_model_free(model);
             throw std::runtime_error("tg generation failed");
@@ -467,7 +529,7 @@ static task_result run_session(
         }
         llama_perf_context_reset(ctx);
         const uint64_t t0 = time_ns();
-        if (!run_gen(ctx, task.n_gen)) {
+        if (!run_gen(ctx, task.n_gen, cfg.sample)) {
             llama_free(ctx);
             llama_model_free(model);
             throw std::runtime_error("tg generation failed");
@@ -1012,7 +1074,10 @@ static void usage(const char * argv0) {
         "  --spec-type draft-mtp       Enable MTP speculative decoding (TG-only)\n"
         "  --spec-draft-n-max N        Max draft tokens per MTP step (default: 2)\n"
         "  --spec-draft-n-min N        Min draft tokens per MTP step (default: 1)\n"
+        "  --spec-draft-p-min N        Min probability threshold for draft (default: 0.0)\n"
+        "  --prompt-file PATH          Text file for TG prompt (default: BOS-only)\n"
         "  --model-draft PATH          Separate draft model for MTP (e.g., Gemma assistant)\n"
+        "  --sample                   Use real sampling instead of token cycling (TG quality test)\n"
         "  -h, --help                 Usage\n",
         argv0);
 }
@@ -1112,6 +1177,12 @@ int llama_gpipe_profiler(int argc, char ** argv) {
             cfg.spec_draft_n_max = std::stoi(need(arg.c_str()));
         } else if (arg == "--spec-draft-n-min") {
             cfg.spec_draft_n_min = std::stoi(need(arg.c_str()));
+        } else if (arg == "--spec-draft-p-min") {
+            cfg.spec_draft_p_min = std::stof(need(arg.c_str()));
+        } else if (arg == "--prompt-file") {
+            cfg.prompt_file = need(arg.c_str());
+        } else if (arg == "--sample") {
+            cfg.sample = true;
         } else if (arg == "--model-draft") {
             cfg.model_draft_path = need(arg.c_str());
         } else {

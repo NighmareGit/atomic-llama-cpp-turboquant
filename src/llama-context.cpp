@@ -406,6 +406,14 @@ llama_context::llama_context(
     gpipe.adaptive_enabled = gpipe.enabled && llama_gpipe_adaptive_enabled();
 
     {
+        const char * LLAMA_SKIP_SSM_VERIFY = getenv("LLAMA_SKIP_SSM_VERIFY");
+        cparams.skip_ssm_verify = LLAMA_SKIP_SSM_VERIFY ? (atoi(LLAMA_SKIP_SSM_VERIFY) != 0) : false;
+        if (cparams.skip_ssm_verify) {
+            LLAMA_LOG_WARN("%s: SSM layers will be skipped during verify (experimental)\n", __func__);
+        }
+    }
+
+    {
         const char * LLAMA_GRAPH_REUSE_DISABLE = getenv("LLAMA_GRAPH_REUSE_DISABLE");
         graph_reuse_disable = LLAMA_GRAPH_REUSE_DISABLE ? (atoi(LLAMA_GRAPH_REUSE_DISABLE) != 0) : graph_reuse_disable;
 
