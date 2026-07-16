@@ -1114,6 +1114,7 @@ struct ggml_backend_sched {
     int n_gpipe_seqs;                            // Mode B: number of concurrent sequences (1 for single-seq)
     ggml_backend_event_t * gpipe_events;         // [n_gpipe_seqs * GGML_SCHED_MAX_STAGES] row-major, per-sequence event arrays
     int gpipe_active_stage;                      // D6.9: filter splits to this backend_id, -1 = all stages
+    int gpipe_event_host_bid = -1;               // D6.10: GPU backend index hosting gpipe events, -1 if none (fallback: full sync)
     struct ggml_tensor * graph_inputs[GGML_SCHED_MAX_SPLIT_INPUTS];
     int n_graph_inputs;
 
@@ -2882,8 +2883,22 @@ void ggml_sched_gpipe_init_multi(ggml_backend_sched_t sched, int n_stages, int n
     }
     GGML_ASSERT(n_stages <= GGML_SCHED_MAX_STAGES);
 
+    // D6.10: find a GPU backend to host events (CPU gather backend has no event support).
+    // Scan from last (gather) to first; use first GPU found. If none, fall back to gather
+    // (events will be NULL, triggering full-sync fallback in wait_seq).
     const int gather_bid = sched->n_backends - 1;
-    ggml_backend_t gather_backend = sched->backends[gather_bid];
+    int event_host_bid = -1;
+    for (int b = gather_bid; b >= 0; b--) {
+        if (sched->backends[b]->device->iface.event_new != NULL) {
+            event_host_bid = b;
+            break;
+        }
+    }
+    sched->gpipe_event_host_bid = event_host_bid;
+
+    ggml_backend_dev_t event_dev = event_host_bid >= 0
+        ? sched->backends[event_host_bid]->device
+        : sched->backends[gather_bid]->device;
 
     // Allocate flat row-major array: [n_seqs * GGML_SCHED_MAX_STAGES]
     const int total = n_seqs * GGML_SCHED_MAX_STAGES;
@@ -2892,7 +2907,7 @@ void ggml_sched_gpipe_init_multi(ggml_backend_sched_t sched, int n_stages, int n
     for (int seq = 0; seq < n_seqs; seq++) {
         for (int s = 0; s < n_stages; s++) {
             sched->gpipe_events[seq * GGML_SCHED_MAX_STAGES + s] =
-                ggml_backend_event_new(gather_backend->device);
+                ggml_backend_event_new(event_dev);
         }
     }
     sched->n_gpipe_stages = n_stages;
@@ -2918,30 +2933,27 @@ void ggml_sched_gpipe_wait_seq(ggml_backend_sched_t sched, int split_id, int seq
         return;
     }
 
-    const int gather_bid = sched->n_backends - 1;
-    ggml_backend_t gather_backend = sched->backends[gather_bid];
+    // D6.10: if no GPU backend with events, fall back to full scheduler sync
+    if (sched->gpipe_event_host_bid < 0) {
+        ggml_backend_sched_synchronize(sched);
+        return;
+    }
+
+    ggml_backend_t host_backend = sched->backends[sched->gpipe_event_host_bid];
     const int row_off = seq_id * GGML_SCHED_MAX_STAGES;
 
     if (split_id < 0) {
         for (int s = 0; s < sched->n_gpipe_stages; s++) {
             ggml_backend_event_t ev = sched->gpipe_events[row_off + s];
             if (ev != NULL) {
-                if (gather_backend->iface.event_wait != NULL) {
-                    ggml_backend_event_wait(gather_backend, ev);
-                } else {
-                    ggml_backend_event_synchronize(ev);
-                }
+                ggml_backend_event_wait(host_backend, ev);
             }
         }
     } else {
         if (split_id < sched->n_gpipe_stages) {
             ggml_backend_event_t ev = sched->gpipe_events[row_off + split_id];
             if (ev != NULL) {
-                if (gather_backend->iface.event_wait != NULL) {
-                    ggml_backend_event_wait(gather_backend, ev);
-                } else {
-                    ggml_backend_event_synchronize(ev);
-                }
+                ggml_backend_event_wait(host_backend, ev);
             }
         }
     }
@@ -2957,12 +2969,16 @@ void ggml_sched_gpipe_record_seq(ggml_backend_sched_t sched, int stage_id, int s
     if (stage_id < 0 || stage_id >= sched->n_gpipe_stages || seq_id < 0 || seq_id >= sched->n_gpipe_seqs) {
         return;
     }
+    // D6.10: guard against no-GPU-backend config where events are NULL
+    if (sched->gpipe_event_host_bid < 0) {
+        return;
+    }
     ggml_backend_event_t ev = sched->gpipe_events[seq_id * GGML_SCHED_MAX_STAGES + stage_id];
     if (ev == NULL) {
         return;
     }
-    const int gather_bid = sched->n_backends - 1;
-    ggml_backend_event_record(ev, sched->backends[gather_bid]);
+    // D6.10: record on the GPU event host backend (was: gather backend)
+    ggml_backend_event_record(ev, sched->backends[sched->gpipe_event_host_bid]);
 }
 
 void ggml_sched_gpipe_record(ggml_backend_sched_t sched, int stage_id) {
