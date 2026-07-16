@@ -218,7 +218,109 @@ all kernel types, which is approximate but directionally correct.
 - Per-kernel timing now available for targeted optimization
 - q6_K matmul identified as the #1 optimization target (35.2% of GPU time)
 
-## 6. Next Steps
+## 6. Stall Hunt — GPU Idle Gap Analysis (D7.6 post-D6.10.1)
+
+After D6.10.1 eliminated the `input_copy_slow` event_synchronize wait (-98.6%,
+Split 2: 165,000 us -> 2,359 us), we ran a rocprofv3 kernel-trace on the patched
+binary to search for remaining sync stalls or unnecessary GPU idle periods.
+
+### 6.1 Test Configuration
+
+- Model: Qwen3.6-35B-A3B-APEX-MTP-I-Quality (IQ4_XS, moe_interleave)
+- GPUs: 7900XTX (ROCm, local) + 3060Ti (RPC, remote)
+- GPipe stages: 3 (CPU -> RPC -> ROCm)
+- MTP speculative decoding: n_max=2
+- GGML_CUDA_GRAPHS=0 (required for per-kernel tracing)
+- Tasks: tg, n_gen=16, repeat=1
+- Profiling overhead: 16.3 t/s (vs 143.0 t/s baseline) = 8.8x slowdown
+- ROCm agent: gfx1100 (Radeon RX 7900 XTX), 5 HIP queues, 4 streams
+- Total GPU kernel dispatches: 40,343
+
+### 6.2 Micro-Level: Perfect Inter-Kernel Pipelining
+
+The two main compute streams (Queue 3 and Queue 4, 19,740 kernels each) show
+near-perfect pipelining at the micro level:
+
+| Metric | Queue 3 | Queue 4 |
+|--------|---------|---------|
+| Kernels | 19,740 | 19,740 |
+| Median gap | 4.8 us | 4.8 us |
+| P95 gap | **5.2 us** | **5.0 us** |
+| P99 gap | **9.4 us** | **9.3 us** |
+| % gaps < 10 us | **99.08%** | **99.14%** |
+| GPU util (kernel/wall) | 13.80% | 15.31% |
+
+The 4-5 us inter-kernel gaps are rocprofv3's per-dispatch recording overhead.
+At production speed these vanish — there are no micro-stalls between consecutive
+kernels on either compute stream.
+
+### 6.3 Macro-Level: GPipe Stage Boundary Bubbles
+
+Larger gaps exist but are all GPipe pipeline fill/drain bubbles at stage
+boundaries, not CPU-side sync stalls:
+
+| Gap Threshold | Queue 3 Count | Queue 4 Count | Total Time (Q3) |
+|---------------|:------------:|:------------:|:---------------:|
+| > 1 ms | 107 | 95 | 816.6 ms |
+| > 5 ms | 75 | 72 | 750.2 ms |
+| > 10 ms | 37 | 34 | ~650 ms |
+| Largest | — | — | 35.9 ms (Q3), 12.8 ms (Q4) |
+
+The gaps follow a clear repeating cycle pattern at stage boundaries:
+
+| Transition Pattern | Typical Gap | Interpretation |
+|--------------------|:-----------:|----------------|
+| `copyBuffer` -> `rms_norm_f32` | ~10 ms | H2D copy + RMS norm at stage start |
+| `k_bin_bcast<op_add>` -> `unary_gated_op_kernel<op_softplus>` | ~12 ms | Element-wise output -> MoE gate (stage boundary) |
+| `cpy_scalar` -> `k_get_rows_float` | ~6 ms | Scalar copy -> embedding lookup |
+| `mul_mat_vec_q` -> `k_bin_bcast<op_mul>` | ~10 ms | Matmul -> element-wise (attention->FFN transition) |
+
+**Critical finding:** When Queue 3 has a gap >5 ms, Queue 4 has 0% coverage
+(zero kernels executing). And vice versa. Both compute streams idle
+simultaneously at the same stage boundaries — this is the GPipe fill/drain
+bubble, not a scheduler stall.
+
+Queue 1 (copy, 857 kernels) and Queue 2 (fill, 6 kernels) have isolated large
+gaps (9.4 s and 8.2 s respectively) — these are the H2D/D2H copy queues that
+only fire at inter-iteration sync points, which is expected behavior.
+
+### 6.4 Key Insight: Profiling Magnification
+
+The 8.8x profiling overhead inflates everything proportionally:
+
+| Metric | Profiled | Estimated Unprofiled | Factor |
+|--------|:--------:|:--------------------:|:------:|
+| TG throughput | 16.3 t/s | 143.0 t/s | 8.8x |
+| Typical stage boundary gap | 10-12 ms | **1.1-1.4 ms** | 8.8x |
+| Largest gap | 35.9 ms | **4.1 ms** | 8.8x |
+
+The 10-36 ms gaps we observe in the profiler trace would be 1-4 ms at production
+speed — well within normal GPipe bubble range for a 3-stage pipeline. The gaps
+are real (inherent to the GPipe algorithm), but their magnitude is dominated by
+the profiling instrumentation overhead, not by sync stalls.
+
+### 6.5 Copy Queue (Q1/Q2) Analysis
+
+| Queue | Kernels | Largest Gap | Role |
+|-------|:-------:|:-----------:|------|
+| Q1 | 857 | 9,415 ms | H2D/D2H copy operations |
+| Q2 | 6 | 8,250 ms | Buffer fill/clear operations |
+
+These queues are sparse by design — copies only happen at pipeline sync points
+between iterations. The 8-9 second gaps span the entire generation run (16 tokens
+with profiling overhead) and are expected behavior.
+
+### 6.6 Conclusion
+
+**No new unnecessary sync stalls found.** The D6.10/D6.10.1 fixes eliminated
+the real stalls. All remaining GPU idle periods are:
+1. GPipe stage boundary bubbles (inherent to the algorithm, 1-4 ms at production speed)
+2. Sparse copy/fill queue intervals (expected async behavior)
+3. rocprofv3 instrumentation overhead (8.8x magnification artifact)
+
+The GGML_SCHED_TRACE=2 scheduler trace was correct — proceed to D7.7.
+
+## 7. Next Steps
 
 1. **D7.7: Targeted kernel optimization** -- Focus on q6_K matmul (35.2%).
    Investigate WMMA-accelerated matmul for gfx1100 (7900 XTX supports WMMA).
@@ -232,9 +334,11 @@ all kernel types, which is approximate but directionally correct.
 4. **D7.9: SLOW-step-only profiling** -- Parse the 159K-line kernel trace CSV
    to isolate SLOW steps and get the exact kernel mix for verification steps.
 
-## 7. Artifacts
+## 8. Artifacts
 
 - Kernel stats CSV: `/tmp/d76-profiling/rocprofv3-kernel/kernel-trace_kernel_stats.csv`
 - Kernel trace CSV: `/tmp/d76-profiling/rocprofv3-kernel/kernel-trace_kernel_trace.csv` (159K lines)
 - Agent info: `/tmp/d76-profiling/rocprofv3-kernel/kernel-trace_agent_info.csv`
 - Profiler invocation: `GGML_CUDA_GRAPHS=0 rocprofv3 --kernel-trace --stats --summary`
+- D6.10.1 post-fix stall hunt results DB: `/tmp/d610-rocprof/Romulus/287965_results.db` (12 MB, 40,343 dispatches)
+- Stall hunt heatmap: `/tmp/d610-rocprof/heatmap.json`

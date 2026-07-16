@@ -907,6 +907,116 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1(
     return vec_dot_q4_K_q8_1_impl_vmmq(v, u, sc, m, bq4_K->dm, d8);
 }
 
+#ifdef GGML_HIP_WMMA_VECDOT_EXPERIMENTAL
+// D7.7 prototype: WMMA-accelerated Q4_K vec_dot for RDNA3/gfx1100.
+// Replaces dp4a with 16x16x16 fp16 WMMA. Computes full outer product
+// and sums diagonal — architecturally wasteful (16x too much work)
+// but may win if WMMA hardware throughput beats dp4a + integer unpack.
+static __device__ __forceinline__ float vec_dot_q4_K_q8_1_wmma(
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
+
+    const block_q4_K * bq4_K = (const block_q4_K *) vbq + kbx;
+
+    // Same dequant setup as dp4a path
+    const int bq8_offset = QR4_K * ((iqs/2) / (QI8_1/2));
+    const int * q4 = (const int *)(bq4_K->qs + 16 * bq8_offset + 4 * ((iqs/2)%4));
+    int v[2];
+    v[0] = q4[0];
+    v[1] = q4[4];
+
+    const uint16_t * scales = (const uint16_t *)bq4_K->scales;
+    uint16_t aux[2];
+    const int j = bq8_offset/2;
+    if (j < 2) {
+        aux[0] = scales[j+0] & 0x3f3f;
+        aux[1] = scales[j+2] & 0x3f3f;
+    } else {
+        aux[0] = ((scales[j+2] >> 0) & 0x0f0f) | ((scales[j-2] & 0xc0c0) >> 2);
+        aux[1] = ((scales[j+2] >> 4) & 0x0f0f) | ((scales[j-0] & 0xc0c0) >> 2);
+    }
+    const uint8_t * sc = (const uint8_t *)aux;
+    const uint8_t * m  = sc + 2;
+
+    // Dequant q8_1 activations to fp16 values in [16][16] layout
+    // activations[i][k] = d8[i] * (int8 value at position k within block i)
+    _Float16 act_h[16][16];
+    for (int i = 0; i < QR4_K; ++i) {
+        const block_q8_1 * bq8i = bq8_1 + bq8_offset + i;
+        const float d8_val = __low2float(bq8i->ds);
+        const int * q8 = (const int *)bq8i->qs + ((iqs/2)%4);
+        int u[2];
+        u[0] = q8[0];
+        u[1] = q8[4];
+        // Each int packs 4 int8 values; extract each byte
+        for (int k = 0; k < 16; ++k) {
+            const int byte_idx = k / 4;
+            const int shift   = 8 * (k % 4);
+            const int8_t val  = (int8_t)((u[byte_idx] >> shift) & 0xFF);
+            act_h[i][k] = (_Float16)(d8_val * (float)val);
+        }
+    }
+
+    // Dequant Q4_K weights: extract 4-bit nibbles, apply scale+dm correction
+    // weights[i][k] = dm * (nibble * sc[i] - m[i])
+    const float2 dm4f = __half22float2(bq4_K->dm);
+    _Float16 wgt_h[16][16];
+    for (int i = 0; i < QR4_K; ++i) {
+        const float scale  = (float)sc[i];
+        const float minval = (float)m[i];
+        for (int k = 0; k < 16; ++k) {
+            const int nibble_group = k / 4;
+            const int nibble_idx   = k % 4;
+            const int shift        = 4 * nibble_idx;
+            const int nibble       = (v[nibble_group] >> shift) & 0x0F;
+            const float fval = dm4f.x * ((float)nibble * scale) - dm4f.y * minval;
+            wgt_h[i][k] = (_Float16)fval;
+        }
+    }
+
+    // Load into WMMA tiles (halfx16_t = 16 half values, 32 bytes)
+    // WMMA A = activations [16 x 16], B = weights^T for diagonal semantics
+    using halfx16_t = __attribute__((ext_vector_type(16))) _Float16;
+
+    halfx16_t tile_a[2]; // 32 half values (mirrored layout for RDNA3 WMMA A input)
+    halfx16_t tile_b[1]; // 16 half values (mirrored layout for RDNA3 WMMA B input)
+    halfx16_t tile_d = {}; // 16 half values (accumulator, I_MAJOR layout)
+
+    // A tile: activations in I_MAJOR_MIRRORED layout
+    // RDNA3 WMMA expects A as [32 half2 values per lane] in mirror layout
+    // We pack 16 rows x 2 half values per halfx16_t
+    for (int i = 0; i < 16; ++i) {
+        ((half *)&tile_a[0])[i]      = act_h[i][0];  // opsel=0: K[0..7]
+        ((half *)&tile_a[1])[i]      = act_h[i][8];  // opsel=1: K[8..15]
+    }
+    // Fill remaining with zeros (WMMA tile has extra space)
+    for (int i = 16; i < 32; ++i) {
+        ((half *)&tile_a[0])[i] = (_Float16)0.0f;
+        ((half *)&tile_a[1])[i] = (_Float16)0.0f;
+    }
+
+    // B tile: weights^T in I_MAJOR_MIRRORED layout
+    // B[k][j] = wgt_h[j][k] (transposed so diagonal gives dot product)
+    for (int j = 0; j < 16; ++j) {
+        ((half *)&tile_b[0])[j] = wgt_h[j][0]; // first K element of each row
+    }
+
+    // WMMA: D = A * B + D (16x16x16 fp16)
+    tile_d = __builtin_amdgcn_wmma_f16_16x16x16_f16_w32(tile_a[0], tile_b[0], tile_d, 0);
+    tile_d = __builtin_amdgcn_wmma_f16_16x16x16_f16_w32(tile_a[1], tile_b[0], tile_d, 1);
+
+    // Reduce: sum diagonal of 16x16 result = dot product
+    // D[i][j] with i row index, j col index: diagonal is D[i][i]
+    float sum = 0.0f;
+    const half * d_half = (const half *)&tile_d;
+    // In WMMA I_MAJOR layout for 16x16: row-major, 16 elements per row
+    for (int i = 0; i < 16; ++i) {
+        sum += (float)d_half[i * 16 + i];
+    }
+
+    return sum;
+}
+#endif // GGML_HIP_WMMA_VECDOT_EXPERIMENTAL
+
 static __device__ __forceinline__ float vec_dot_q5_K_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 

@@ -141,6 +141,10 @@ if (GGML_HIP_ROCWMMA_FATTN)
     add_compile_definitions(GGML_HIP_ROCWMMA_FATTN)
 endif()
 
+if (GGML_HIP_WMMA_VECDOT_EXPERIMENTAL)
+    add_compile_definitions(GGML_HIP_WMMA_VECDOT_EXPERIMENTAL)
+endif()
+
 if (NOT GGML_HIP_MMQ_MFMA)
     add_compile_definitions(GGML_HIP_NO_MMQ_MFMA)
 endif()
