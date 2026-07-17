@@ -165,6 +165,8 @@ Implementation of a phase may be multiple PRs; acceptance is per phase below.
 
 **Goal:** Deterministic deploy from a versioned plan file.
 
+**Status (2026-07-17):** **Layer-range apply shipped** (issue 09). Tensor `overrides[]` apply is **issue 10**. Design: `docs/research/placement-plan-ir-apply-design.md` §12.
+
 **Deliverables**
 
 - Plan JSON schema (assignments, overrides, split_mode, capacity snapshot fields, heat section may be empty).
@@ -174,14 +176,23 @@ Implementation of a phase may be multiple PRs; acceptance is per phase below.
 - Plan-wins warnings for classic knobs.
 - Fail-loud apply re-discover; optional degrade flags stubbed or implemented behind off-default switches.
 
+**Shipped surface (issue 09)**
+
+| Item | Notes |
+|------|--------|
+| Code | `common/placement-plan.*`; `layer_devices` on `llama_model_params` |
+| CLI | `--placement PATH` / `LLAMA_ARG_PLACEMENT` |
+| Overrides | Empty only; non-empty refused until issue 10 |
+| Tests | `tests/test-placement-plan.cpp` |
+
 **Acceptance**
 
-- [ ] Same plan + same topology → same layer→device assignment (log or debug dump).
-- [ ] Plan placing a minority of layers on 8 GB RPC and majority on 24 GB local loads without OOM on smoke model.
-- [ ] Conflicting `-ts` does not change assignment (warning only).
-- [ ] Tensor `overrides[]` (e.g. expert patterns → cpu) applied as specified.
-- [ ] Missing `backend_id` at apply ⇒ refuse load.
-- [ ] Placement off ⇒ bit-identical classic path for a fixed argv without `--placement`.
+- [x] Same plan + same topology → same layer→device assignment (log or debug dump).
+- [x] Plan placing a minority of layers on 8 GB RPC and majority on 24 GB local loads without OOM on smoke model (romulus docker RPC + ROCm; Qwen3.5-0.8B).
+- [x] Conflicting `-ts` does not change assignment (warning only).
+- [ ] Tensor `overrides[]` (e.g. expert patterns → cpu) applied as specified. **(issue 10)**
+- [x] Missing `backend_id` at apply ⇒ refuse load.
+- [x] Placement off ⇒ classic path for fixed argv without `--placement`.
 
 **Non-goals for P1:** heat-aware packing quality, Shape A, perfect reserve numerics.
 

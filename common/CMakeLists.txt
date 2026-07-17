@@ -96,6 +96,8 @@ add_library(${TARGET}
     peg-parser.h
     placement-capacity.cpp
     placement-capacity.h
+    placement-plan.cpp
+    placement-plan.h
     preset.cpp
     preset.h
     regex-partial.cpp

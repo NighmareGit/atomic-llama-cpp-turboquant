@@ -711,6 +711,13 @@ struct common_params {
     bool        placement_discover = false; // --placement-discover / LLAMA_ARG_PLACEMENT_DISCOVER
     std::string placement_inventory_path;   // write inventory JSON; empty => stdout when discover
     std::vector<std::string> rpc_endpoints; // configured --rpc host:port list (for topology checks)
+
+    // Placement plan apply (P1): --placement PATH / LLAMA_ARG_PLACEMENT
+    std::string placement_plan_path;
+    // Filled by common_init when plan is active (storage for llama_model_params pointers)
+    std::vector<ggml_backend_dev_t> placement_devices;       // null-terminated for mparams.devices
+    std::vector<ggml_backend_dev_t> placement_layer_devices; // per-layer map
+    bool placement_plan_active = false;
 };
 
 // call once at the start of a program if it uses libcommon

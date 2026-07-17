@@ -7,6 +7,7 @@
 #include "json-schema-to-grammar.h"
 #include "log.h"
 #include "placement-capacity.h"
+#include "placement-plan.h"
 #include "sampling.h"
 #include "speculative.h"
 #include "preset.h"
@@ -2324,6 +2325,13 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.placement_discover = true;
         }
     ).set_env("LLAMA_ARG_PLACEMENT_INVENTORY"));
+    add_opt(common_arg(
+        {"--placement"}, "PATH",
+        "opt-in: load model using placement plan JSON (layer ranges); plan wins over -ts/-fit",
+        [](common_params & params, const std::string & value) {
+            params.placement_plan_path = value;
+        }
+    ).set_env("LLAMA_ARG_PLACEMENT"));
     add_opt(common_arg(
         {"--mlock"},
         "force system to keep model in RAM rather than swapping or compressing",

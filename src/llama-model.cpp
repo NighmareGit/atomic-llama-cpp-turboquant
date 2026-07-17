@@ -1272,8 +1272,31 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
 
     const int i_gpu_start = std::max(n_layer_all + 1 - n_gpu_layers, 0);
     const int act_gpu_layers = devices.empty() ? 0 : std::min(n_gpu_layers, n_layer_all + 1);
+    const bool use_layer_map = params.layer_devices != nullptr && params.n_layer_devices > 0;
+    if (use_layer_map) {
+        LLAMA_LOG_INFO("%s: using explicit layer_devices map (%d entries) from placement plan\n",
+            __func__, params.n_layer_devices);
+    }
     auto get_layer_buft_list = [&](int il) -> llama_model::impl::layer_dev {
         const bool is_swa = il < n_layer_all && hparams.is_swa(il);
+        // Placement plan: explicit per-layer device (NULL => CPU)
+        if (use_layer_map && il < params.n_layer_devices) {
+            ggml_backend_dev_t mapped = params.layer_devices[il];
+            if (mapped == nullptr) {
+                LLAMA_LOG_INFO("load_tensors: layer %3d assigned to device %s (plan), is_swa = %d\n",
+                    il, ggml_backend_dev_name(cpu_dev), is_swa);
+                return {cpu_dev, &pimpl->cpu_buft_list};
+            }
+            // ensure buft list exists even if device was not in model->devices prep
+            if (pimpl->gpu_buft_list.find(mapped) == pimpl->gpu_buft_list.end()) {
+                buft_list_t buft_list = make_gpu_buft_list(mapped, split_mode, tensor_split);
+                buft_list.insert(buft_list.end(), pimpl->cpu_buft_list.begin(), pimpl->cpu_buft_list.end());
+                pimpl->gpu_buft_list.emplace(mapped, std::move(buft_list));
+            }
+            LLAMA_LOG_INFO("load_tensors: layer %3d assigned to device %s (plan), is_swa = %d\n",
+                il, ggml_backend_dev_name(mapped), is_swa);
+            return {mapped, &pimpl->gpu_buft_list.at(mapped)};
+        }
         if (il < i_gpu_start || (il - i_gpu_start) >= act_gpu_layers) {
             LLAMA_LOG_DEBUG("load_tensors: layer %3d assigned to device %s, is_swa = %d\n", il, ggml_backend_dev_name(cpu_dev), is_swa);
             return {cpu_dev, &pimpl->cpu_buft_list};
@@ -1295,7 +1318,14 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
     }
 
     // assign the output layer
-    pimpl->dev_output = get_layer_buft_list(n_layer_all);
+    if (use_layer_map && n_layer_all > 0 && params.n_layer_devices >= n_layer_all) {
+        // same device as last transformer layer (plan covers [0, n_layer) only)
+        pimpl->dev_output = get_layer_buft_list(n_layer_all - 1);
+        LLAMA_LOG_INFO("%s: output layer follows plan last layer device %s\n",
+            __func__, ggml_backend_dev_name(pimpl->dev_output.dev));
+    } else {
+        pimpl->dev_output = get_layer_buft_list(n_layer_all);
+    }
 
     const auto TENSOR_NOT_REQUIRED = llama_model_loader::TENSOR_NOT_REQUIRED;
 
@@ -2266,6 +2296,8 @@ llama_model_params llama_model_default_params() {
         /*.split_mode                  =*/ LLAMA_SPLIT_MODE_LAYER,
         /*.main_gpu                    =*/ 0,
         /*.tensor_split                =*/ nullptr,
+        /*.layer_devices               =*/ nullptr,
+        /*.n_layer_devices             =*/ 0,
         /*.progress_callback           =*/ nullptr,
         /*.progress_callback_user_data =*/ nullptr,
         /*.kv_overrides                =*/ nullptr,

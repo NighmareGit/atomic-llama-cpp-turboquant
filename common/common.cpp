@@ -6,6 +6,8 @@
 #include "fit.h"
 #include "log.h"
 #include "llama.h"
+#include "placement-capacity.h"
+#include "placement-plan.h"
 #include "sampling.h"
 #include "speculative.h"
 #include "unicode.h"
@@ -1187,8 +1189,129 @@ struct common_init_result::impl {
     std::vector<llama_sampler_seq_config> samplers_seq_config;
 };
 
+// Apply placement plan: re-discover, validate, fill params.placement_* storage.
+// Returns false on hard failure (caller should abort load).
+static bool common_placement_prepare(common_params & params) {
+    if (params.placement_plan_path.empty()) {
+        params.placement_plan_active = false;
+        return true;
+    }
+
+    std::vector<placement_plan_error> errors;
+    placement_plan plan;
+    if (!placement_plan_load_file(params.placement_plan_path, plan, errors)) {
+        for (const auto & e : errors) {
+            LOG_ERR("%s: %s\n", __func__, e.message.c_str());
+        }
+        return false;
+    }
+
+    // Plan wins over classic knobs
+    if (params.fit_params) {
+        LOG_WRN("%s: placement plan active: ignoring --fit\n", __func__);
+        params.fit_params = false;
+    }
+    {
+        bool ts_set = false;
+        for (size_t i = 0; i < llama_max_devices(); ++i) {
+            if (params.tensor_split[i] != 0.0f) {
+                ts_set = true;
+                break;
+            }
+        }
+        if (ts_set) {
+            LOG_WRN("%s: placement plan active: ignoring -ts / tensor_split\n", __func__);
+            std::fill(std::begin(params.tensor_split), std::end(params.tensor_split), 0.0f);
+        }
+    }
+    if (params.n_gpu_layers >= 0 && params.n_gpu_layers < 999) {
+        LOG_WRN("%s: placement plan active: ignoring -ngl (using full layer map from plan)\n", __func__);
+    }
+    params.n_gpu_layers = -1;
+    if (params.split_mode != LLAMA_SPLIT_MODE_LAYER) {
+        LOG_WRN("%s: placement plan active: plan split_mode wins over CLI -sm\n", __func__);
+    }
+    params.split_mode = LLAMA_SPLIT_MODE_LAYER;
+
+    ggml_backend_load_all();
+
+    placement_reserve_params rp;
+    rp.n_ctx = params.n_ctx;
+    rp.n_parallel = params.n_parallel;
+    rp.flash_attn = (params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_ENABLED);
+    placement_inventory inv = placement_discover_live(params.rpc_endpoints, rp);
+    if (!inv.topology_complete && !params.rpc_endpoints.empty()) {
+        for (const auto & e : inv.discover_errors) {
+            LOG_ERR("%s: discover error %s: %s\n", __func__, e.target.c_str(), e.message.c_str());
+        }
+        // still allow if plan only needs reachable backends; prepare_apply will fail missing ids
+        LOG_WRN("%s: discover topology_complete=false; continuing if plan backends resolve\n", __func__);
+    }
+
+    int32_t n_layer = plan.n_layer;
+    if (n_layer <= 0) {
+        // Metadata-only load to learn n_layer
+        auto meta_mp = common_model_params_to_llama(params);
+        meta_mp.no_alloc = true;
+        meta_mp.layer_devices = nullptr;
+        meta_mp.n_layer_devices = 0;
+        llama_model * meta = llama_model_load_from_file(params.model.path.c_str(), meta_mp);
+        if (!meta) {
+            LOG_ERR("%s: failed to load model metadata for n_layer (set model.n_layer in plan)\n", __func__);
+            return false;
+        }
+        n_layer = llama_model_n_layer(meta);
+        llama_model_free(meta);
+        LOG_INF("%s: plan n_layer from model metadata: %d\n", __func__, n_layer);
+    }
+
+    bool has_local = false;
+    bool has_rpc = false;
+    for (const auto & r : inv.records) {
+        if (r.kind == PLACEMENT_KIND_LOCAL_GPU) {
+            has_local = true;
+        }
+        if (r.kind == PLACEMENT_KIND_RPC_DEVICE) {
+            has_rpc = true;
+        }
+    }
+    const bool mixed = has_local && has_rpc;
+
+    placement_apply_result apply;
+    errors.clear();
+    if (!placement_plan_prepare_apply(plan, n_layer, inv, mixed, apply, errors)) {
+        for (const auto & e : errors) {
+            LOG_ERR("%s: plan apply: %s\n", __func__, e.message.c_str());
+        }
+        return false;
+    }
+
+    // Store device list (null-terminated) and layer map for mparams
+    params.placement_devices = apply.devices;
+    params.placement_devices.push_back(nullptr);
+    params.placement_layer_devices = apply.layer_devices;
+    params.devices.clear();
+    for (auto * d : apply.devices) {
+        if (d) {
+            params.devices.push_back(d);
+        }
+    }
+    params.devices.push_back(nullptr);
+    params.placement_plan_active = true;
+
+    LOG_INF("%s: placement plan %s applied (%d layers)\n",
+        __func__, params.placement_plan_path.c_str(), n_layer);
+    LOG_INF("%s: layer map:\n%s", __func__, apply.debug_dump.c_str());
+
+    return true;
+}
+
 common_init_result::common_init_result(common_params & params, bool model_only) :
     pimpl(new impl{}) {
+    if (!common_placement_prepare(params)) {
+        return;
+    }
+
     auto mparams = common_model_params_to_llama(params);
     auto cparams = common_context_params_to_llama(params);
 
@@ -1532,6 +1655,16 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
     mparams.main_gpu        = params.main_gpu;
     mparams.split_mode      = params.split_mode;
     mparams.tensor_split    = params.tensor_split;
+    if (params.placement_plan_active && !params.placement_layer_devices.empty()) {
+        mparams.layer_devices   = params.placement_layer_devices.data();
+        mparams.n_layer_devices = (int32_t) params.placement_layer_devices.size();
+        mparams.n_gpu_layers    = -1;
+        mparams.split_mode      = LLAMA_SPLIT_MODE_LAYER;
+        mparams.tensor_split    = nullptr;
+        if (!params.placement_devices.empty()) {
+            mparams.devices = params.placement_devices.data();
+        }
+    }
     mparams.use_mmap        = params.use_mmap;
     mparams.use_direct_io   = params.use_direct_io;
     mparams.use_mlock       = params.use_mlock;
