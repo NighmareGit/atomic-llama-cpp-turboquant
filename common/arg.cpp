@@ -6,6 +6,7 @@
 #include "download.h"
 #include "json-schema-to-grammar.h"
 #include "log.h"
+#include "placement-capacity.h"
 #include "sampling.h"
 #include "speculative.h"
 #include "preset.h"
@@ -643,10 +644,44 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
         common_params_handle_models(params, ctx_arg.ex);
     }
 
-    // model is required (except for server)
+    // model is required (except for server / placement discover dump)
     // TODO @ngxson : maybe show a list of available models in CLI in this case
-    if (params.model.path.empty() && ctx_arg.ex != LLAMA_EXAMPLE_SERVER && !skip_model_download && !params.usage && !params.completion) {
+    if (params.model.path.empty() && ctx_arg.ex != LLAMA_EXAMPLE_SERVER && !skip_model_download && !params.usage && !params.completion && !params.placement_discover) {
         throw std::invalid_argument("error: --model is required\n");
+    }
+
+    // Placement capacity discovery (opt-in). Classic argv without this flag: no side effects.
+    {
+        const char * env_disc = std::getenv("LLAMA_ARG_PLACEMENT_DISCOVER");
+        const char * env_inv  = std::getenv("LLAMA_ARG_PLACEMENT_INVENTORY");
+        if (env_inv && env_inv[0] && params.placement_inventory_path.empty()) {
+            params.placement_inventory_path = env_inv;
+            params.placement_discover = true;
+        }
+        if (placement_discover_is_enabled(params.placement_discover, env_disc)) {
+            params.placement_discover = true;
+            ggml_backend_load_all();
+            placement_reserve_params rp;
+            rp.n_ctx = params.n_ctx;
+            rp.n_parallel = params.n_parallel;
+            rp.flash_attn = (params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_ENABLED);
+            placement_inventory inv = placement_discover_live(params.rpc_endpoints, rp);
+            if (!params.placement_inventory_path.empty()) {
+                if (!placement_inventory_write_file(inv, params.placement_inventory_path)) {
+                    throw std::runtime_error(string_format(
+                        "error: failed to write placement inventory to %s\n",
+                        params.placement_inventory_path.c_str()));
+                }
+                LOG_INF("placement inventory written to %s (%zu records, topology_complete=%s)\n",
+                    params.placement_inventory_path.c_str(),
+                    inv.records.size(),
+                    inv.topology_complete ? "true" : "false");
+            } else {
+                printf("%s\n", placement_inventory_to_json(inv, 2).c_str());
+            }
+            // Discover is a dump-and-exit entrypoint (no model load / serve).
+            exit(inv.topology_complete ? 0 : 2);
+        }
     }
 
     if (params.escape) {
@@ -855,7 +890,7 @@ static std::vector<ggml_backend_dev_t> parse_device_list(const std::string & val
     return devices;
 }
 
-static void add_rpc_devices(const std::string & servers) {
+static void add_rpc_devices(common_params & params, const std::string & servers) {
     auto rpc_servers = string_split<std::string>(servers, ',');
     if (rpc_servers.empty()) {
         throw std::invalid_argument("no RPC servers specified");
@@ -871,8 +906,12 @@ static void add_rpc_devices(const std::string & servers) {
         throw std::invalid_argument("failed to find RPC add server function");
     }
     for (const auto & server : rpc_servers) {
+        params.rpc_endpoints.push_back(server);
         auto reg = ggml_backend_rpc_add_server_fn(server.c_str());
-        ggml_backend_register(reg);
+        if (reg) {
+            ggml_backend_register(reg);
+        }
+        // unreachable endpoints leave no devices; placement discover reports them
     }
 }
 
@@ -2258,8 +2297,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             {"--rpc"}, "SERVERS",
             "comma-separated list of RPC servers (host:port)",
             [](common_params & params, const std::string & value) {
-                add_rpc_devices(value);
-                GGML_UNUSED(params);
+                add_rpc_devices(params, value);
             }
         ).set_env("LLAMA_ARG_RPC"));
         add_opt(common_arg(
@@ -2271,6 +2309,21 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             }
         ).set_env("GGML_RPC_MULTIDEVICE"));
     }
+    add_opt(common_arg(
+        {"--placement-discover"},
+        "opt-in: run capacity discovery, print/write inventory JSON, then exit (no model load)",
+        [](common_params & params) {
+            params.placement_discover = true;
+        }
+    ).set_env("LLAMA_ARG_PLACEMENT_DISCOVER"));
+    add_opt(common_arg(
+        {"--placement-inventory"}, "PATH",
+        "with --placement-discover: write inventory JSON to PATH (default: stdout)",
+        [](common_params & params, const std::string & value) {
+            params.placement_inventory_path = value;
+            params.placement_discover = true;
+        }
+    ).set_env("LLAMA_ARG_PLACEMENT_INVENTORY"));
     add_opt(common_arg(
         {"--mlock"},
         "force system to keep model in RAM rather than swapping or compressing",

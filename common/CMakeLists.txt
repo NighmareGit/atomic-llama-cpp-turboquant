@@ -94,6 +94,8 @@ add_library(${TARGET}
     ngram-mod.h
     peg-parser.cpp
     peg-parser.h
+    placement-capacity.cpp
+    placement-capacity.h
     preset.cpp
     preset.h
     regex-partial.cpp

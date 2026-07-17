@@ -706,6 +706,11 @@ struct common_params {
     llama_progress_callback load_progress_callback = NULL;
     void *                  load_progress_callback_user_data = NULL;
     bool no_alloc = false; // Don't allocate model buffers
+
+    // Placement capacity discovery (opt-in add-on; classic path unchanged when off)
+    bool        placement_discover = false; // --placement-discover / LLAMA_ARG_PLACEMENT_DISCOVER
+    std::string placement_inventory_path;   // write inventory JSON; empty => stdout when discover
+    std::vector<std::string> rpc_endpoints; // configured --rpc host:port list (for topology checks)
 };
 
 // call once at the start of a program if it uses libcommon
