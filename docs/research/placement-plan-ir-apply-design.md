@@ -249,6 +249,26 @@ Logs: `using explicit layer_devices map`, `layer N assigned to device X (plan)`.
 
 Smoke (2026-07-17): Qwen3.5-0.8B (25 layers) — layers 0-2 on `rpc://127.0.0.1:50051#0` (romulus docker 8 GB), 3-24 on `local:pci:…` ROCm; also CPU+local plan. Triton dual-RPC load hit legacy server crash (unrelated proto/image); local RPC path OK.
 
+### Issue 10 — tensor overrides
+
+| Item | Behavior |
+|------|----------|
+| Apply | Each `overrides[]` entry: `match` (regex) + `backend_id` → `llama_model_tensor_buft_override` |
+| Empty `overrides` | Still valid |
+| Conflict policy | **Override wins** for matched tensor names; layer ranges still apply to unmatched tensors (warn at prepare) |
+| Unknown override `backend_id` | Fail-loud at apply re-discover |
+| CLI `-ot` | Ignored with warning when `--placement` active |
+| CPU target | Uses `ggml_backend_cpu_buffer_type()` (same path as classic `-ot …=CPU`; mmap may use host buft — prefer `--no-mmap` for pure CPU) |
+
+Example:
+
+```json
+"overrides": [
+  { "match": "token_embd", "backend_id": "cpu" },
+  { "match": "blk\\..*\\.ffn_.*_exps", "backend_id": "cpu" }
+]
+```
+
 ---
 
 ## Decisions index (grilling)
