@@ -196,10 +196,12 @@ No parallelization possible — each phase depends on the previous one's output.
 
 ## Next Steps
 
-1. **D6.10 GPU Event Pipelining Fix** — move gpipe_events from CPU gather to GPU backend. See `docs/tickets/path-d-tickets.md` D6.10.
-2. **R3 Advanced Optimization** — adaptive depth refinement + deprecation cleanup
-3. **D4.11-D4.14 Pareto Optimizer** — future sprint (ticketed)
-4. **Cluster benchmarks** — 3+ GPU cluster where n_stages>2 shows benefit
+1. ~~**D6.10 GPU Event Pipelining Fix**~~ — **COMPLETE** (commit `f29a92eb1`). `input_copy_slow` -98.6%, TPS +4.3%. See `docs/wayfinder/D6.10-implementation-analysis.md`.
+2. **Slice 7 — Layer 1-3 Kernel Optimization** — kernel-anvil integration vectors D/E/F/G. See `docs/research/slice-7-kernel-anvil-integration.md`.
+3. **D7.0-D7.8 Re-examination** — completed 2026-07-17. Identified resolved items, corrected false negatives, surfaced complementary leads (dp4a micro-optimizations, LDS debug). See `docs/wayfinder/D7-REEXAMINATION.md`.
+4. **R3 Advanced Optimization** — adaptive depth refinement + deprecation cleanup (paused for Slice 7 vectors).
+5. **D4.11-D4.14 Pareto Optimizer** — future sprint (ticketed).
+6. **Cluster benchmarks** — 3+ GPU cluster where n_stages>2 shows benefit.
 
 ---
 

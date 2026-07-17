@@ -5,6 +5,69 @@
 
 #include <cstdint>
 
+// ─── PROTOTYPE: LDS activation caching for Q4_K MMVQ ───────────────────────
+// D7.8: Cooperative shared-memory caching of q8_1 activation data.
+// Question: does reducing redundant global memory loads of the same
+// activation bytes (loaded 16x independently by threads in a half-warp)
+// measurably improve tg128 throughput?
+//
+// Enable with: -DGGML_HIP_MMVQ_LDS_PROTOTYPE in CMake
+// This is THROWAWAY code — delete or absorb after benchmarking.
+// ───────────────────────────────────────────────────────────────────────────
+
+#ifdef GGML_HIP_MMVQ_LDS_PROTOTYPE
+// Cache size: for a half-warp processing one kby step, each thread in
+// the half-warp accesses the same 16 block_q8_1 structures.
+// 16 * sizeof(block_q8_1) = 16 * (32 + sizeof(half2)) = 576 bytes.
+#define MMVQ_LDS_ACTIVATION_BLOCKS 16
+
+// LDS-cached vec_dot wrapper for Q4_K.
+// Identical to vec_dot_q4_K_q8_1 except bq8_1_lds points to shared memory.
+// The HIP compiler automatically uses ds_read for LDS pointers.
+static __device__ __forceinline__ float vec_dot_q4_K_q8_1_lds(
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1_lds,
+    const int & kbx, const int & iqs) {
+
+    const block_q4_K * bq4_K = (const block_q4_K *) vbq + kbx;
+
+    int    v[2];
+    int    u[2*QR4_K];
+    float d8[QR4_K];
+
+    const int bq8_offset = QR4_K * ((iqs/2) / (QI8_1/2));
+
+    const int * q4 = (const int *)(bq4_K->qs + 16 * bq8_offset + 4 * ((iqs/2)%4));
+    v[0] = q4[0];
+    v[1] = q4[4];
+
+    const uint16_t * scales = (const uint16_t *)bq4_K->scales;
+    uint16_t aux[2];
+    const int j = bq8_offset/2;
+    if (j < 2) {
+        aux[0] = scales[j+0] & 0x3f3f;
+        aux[1] = scales[j+2] & 0x3f3f;
+    } else {
+        aux[0] = ((scales[j+2] >> 0) & 0x0f0f) | ((scales[j-2] & 0xc0c0) >> 2);
+        aux[1] = ((scales[j+2] >> 4) & 0x0f0f) | ((scales[j-0] & 0xc0c0) >> 2);
+    }
+    const uint8_t * sc = (const uint8_t *)aux;
+    const uint8_t * m  = sc + 2;
+
+    // Load activation from LDS — reads from shared memory instead of global
+    for (int i = 0; i < QR4_K; ++i) {
+        const block_q8_1 * bq8i = bq8_1_lds + bq8_offset + i;
+        d8[i] = __low2float(bq8i->ds);
+
+        const int * q8 = (const int *)bq8i->qs + ((iqs/2)%4);
+        u[2*i+0] = q8[0];
+        u[2*i+1] = q8[4];
+    }
+
+    return vec_dot_q4_K_q8_1_impl_vmmq(v, u, sc, m, bq4_K->dm, d8);
+}
+#endif // GGML_HIP_MMVQ_LDS_PROTOTYPE
+// ─── END PROTOTYPE ─────────────────────────────────────────────────────────
+
 typedef float (*vec_dot_q_cuda_t)(const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs);
 
 static constexpr __device__ vec_dot_q_cuda_t get_vec_dot_q_cuda(ggml_type type) {
@@ -421,6 +484,13 @@ static constexpr __host__ __device__ int calc_nwarps(ggml_type type, int ncols_d
                     return 2;
                 case GGML_TYPE_IQ4_NL:
                     return 8;
+#ifdef GGML_HIP_D713_NWARPS8_Q4K
+                // PROTOTYPE: D7.13 — force nwarps=8 for Q4_K on RDNA3 (gfx1100).
+                // Measures correctness + throughput + register pressure.
+                // Throwaway flag; NOT for production or upstream.
+                case GGML_TYPE_Q4_K:
+                    return 8;
+#endif
                 default:
                     return 1;
             }
@@ -679,6 +749,149 @@ static __global__ void mul_mat_vec_q(
     }
 }
 
+#ifdef GGML_HIP_MMVQ_LDS_PROTOTYPE
+// ─── PROTOTYPE: LDS-cached MMVQ kernel for Q4_K (single-token decode) ─────
+// D7.8 throwaway: cooperatively caches q8_1 activation in __shared__
+// to cut redundant global memory loads. Compare tg128 vs baseline.
+//
+// Grid: (ceil(nrows_x / rows_per_block), nchannels_dst)
+// Block: (warp_size, 1) — single warp, no cross-warp reduction.
+//
+// NOTE: vec_dot computation is INLINED to ensure the compiler emits ds_read
+// instructions for the __shared__ y_lds array. Passing a __shared__ pointer
+// through a function call may cause the compiler to fall back to global
+// memory loads (flat pointer vs address-space-3 ambiguity on AMDGPU).
+// ───────────────────────────────────────────────────────────────────────────
+
+// Hardcoded for Q4_K, ncols_dst=1, no fusion.
+// Activation range: each half-warp needs 16 consecutive block_q8_1 structs
+// at kby (even kbx) and kby+8 (odd kbx). Cache kby..kby+24 = 24 blocks = 864 B.
+#define LDS_CACHE_BLOCKS (MMVQ_LDS_ACTIVATION_BLOCKS + 8)
+
+__launch_bounds__(ggml_cuda_get_physical_warp_size(), 1)
+static __global__ void mul_mat_vec_q_lds_prototype(
+        const void * vx_ptr, const void * vy_ptr, const int32_t * ids_ptr,
+        const ggml_cuda_mm_fusion_args_device fusion, float * dst_ptr,
+        const uint32_t ncols_x, const uint3 nchannels_y, const uint32_t stride_row_x,
+        const uint32_t stride_col_y, const uint32_t stride_col_dst,
+        const uint3 channel_ratio, const uint32_t stride_channel_x,
+        const uint32_t stride_channel_y, const uint32_t stride_channel_dst,
+        const uint3 sample_ratio, const uint32_t stride_sample_x,
+        const uint32_t stride_sample_y, const uint32_t stride_sample_dst,
+        const uint32_t ids_stride) {
+
+    constexpr ggml_type type = GGML_TYPE_Q4_K;
+    constexpr int ncols_dst = 1;
+    constexpr int qk  = ggml_cuda_type_traits<type>::qk;   // 256
+    constexpr int qi  = ggml_cuda_type_traits<type>::qi;   // 32
+    constexpr int vdr = get_vdr_mmvq(type);                 // 2
+    constexpr int warp_size = ggml_cuda_get_physical_warp_size(); // 32
+    constexpr int blocks_per_iter = vdr * warp_size / qi;   // 2
+    constexpr int rows_per_cuda_block = 1;
+
+    const void    * GGML_CUDA_RESTRICT vx  = vx_ptr;
+    const void    * GGML_CUDA_RESTRICT vy  = vy_ptr;
+    const int32_t * GGML_CUDA_RESTRICT ids = ids_ptr;
+    float         * GGML_CUDA_RESTRICT dst = dst_ptr;
+
+    const int tid = threadIdx.x;
+    const int row0 = rows_per_cuda_block * blockIdx.x;
+    const int blocks_per_row_x = ncols_x / qk;
+
+    const uint32_t channel_dst = blockIdx.y;
+    const uint32_t sample_dst  = blockIdx.z;
+
+    ggml_cuda_pdl_sync();
+    const uint32_t channel_x = ncols_dst == 1 && ids ? ids[channel_dst]
+                               : fastdiv(channel_dst, channel_ratio);
+    const uint32_t channel_y = ncols_dst == 1 && ids ? fastmodulo(channel_dst, nchannels_y)
+                               : channel_dst;
+    const uint32_t sample_x  = fastdiv(sample_dst, sample_ratio);
+    const uint32_t sample_y  = sample_dst;
+
+    float tmp = 0.0f;
+
+    const block_q8_1 * y = ((const block_q8_1 *) vy)
+        + sample_y*stride_sample_y + channel_y*stride_channel_y;
+    const int kbx_offset = sample_x*stride_sample_x + channel_x*stride_channel_x
+        + row0*stride_row_x;
+
+    // Cooperative LDS cache for activation data
+    __shared__ block_q8_1 y_lds[LDS_CACHE_BLOCKS];
+
+    // Fixed per-thread LDS offset: threads 0-15 process even kbx (kby%16=0),
+    // threads 16-31 process odd kbx (kby%16=8). Offset is constant per thread.
+    const int lds_offset = ((tid / (qi/vdr)) % 2) * (qk/QK8_1);
+
+    for (int kbx = tid / (qi/vdr); kbx < blocks_per_row_x; kbx += blocks_per_iter) {
+        const int kby = kbx * (qk/QK8_1);
+
+        // Cooperative load: threads 0-23 load, 24-31 idle
+        if (tid < LDS_CACHE_BLOCKS) {
+            y_lds[tid] = y[kby + tid];
+        }
+        __syncthreads();
+
+        const int kqs = vdr * (tid % (qi/vdr));
+
+        // Inlined vec_dot_q4_K_q8_1 — reads y_lds as __shared__ directly
+        // to guarantee ds_read instructions on AMDGPU
+        {
+            const block_q4_K * bq4_K = (const block_q4_K *) vx + kbx_offset + kbx;
+
+            int    v[2];
+            int    u[2*QR4_K];
+            float d8[QR4_K];
+
+            const int bq8_offset = QR4_K * ((kqs/2) / (QI8_1/2));
+
+            const int * q4 = (const int *)(bq4_K->qs + 16 * bq8_offset + 4 * ((kqs/2)%4));
+            v[0] = q4[0];
+            v[1] = q4[4];
+
+            const uint16_t * scales = (const uint16_t *)bq4_K->scales;
+            uint16_t aux[2];
+            const int j = bq8_offset/2;
+            if (j < 2) {
+                aux[0] = scales[j+0] & 0x3f3f;
+                aux[1] = scales[j+2] & 0x3f3f;
+            } else {
+                aux[0] = ((scales[j+2] >> 0) & 0x0f0f) | ((scales[j-2] & 0xc0c0) >> 2);
+                aux[1] = ((scales[j+2] >> 4) & 0x0f0f) | ((scales[j-0] & 0xc0c0) >> 2);
+            }
+            const uint8_t * sc = (const uint8_t *)aux;
+            const uint8_t * m  = sc + 2;
+
+            for (int i = 0; i < QR4_K; ++i) {
+                const int idx = lds_offset + bq8_offset + i;
+                d8[i] = __low2float(y_lds[idx].ds);
+
+                const int * q8 = (const int *)y_lds[idx].qs + ((kqs/2)%4);
+                u[2*i+0] = q8[0];
+                u[2*i+1] = q8[4];
+            }
+
+            tmp += vec_dot_q4_K_q8_1_impl_vmmq(v, u, sc, m, bq4_K->dm, d8);
+        }
+
+        __syncthreads();
+    }
+
+    // Warp-level reduction (same as original for nwarps=1)
+    tmp = warp_reduce_sum<warp_size>(tmp);
+
+    dst += sample_dst*stride_sample_dst + channel_dst*stride_channel_dst + row0;
+
+    if (tid < rows_per_cuda_block &&
+        (rows_per_cuda_block == 1 || uint32_t(row0 + tid) < stride_col_dst)) {
+        dst[tid] = tmp;
+    }
+
+    GGML_UNUSED(ids_stride);
+    GGML_UNUSED_VARS(fusion, channel_x, sample_x, sample_dst);
+}
+#endif // GGML_HIP_MMVQ_LDS_PROTOTYPE
+
 // Dedicated MoE multi-token kernel.
 // Grid: (ceil(nrows_x / c_rows_per_block), nchannels_dst)
 // Block: (warp_size, ncols_dst) - each warp handles one token independently.
@@ -890,6 +1103,24 @@ static void mul_mat_vec_q_switch_ncols_dst(
             ncols_dst, ids_stride, warp_size, nchannels_dst, stream);
         return;
     }
+
+#ifdef GGML_HIP_MMVQ_LDS_PROTOTYPE
+    // PROTOTYPE: route Q4_K single-token decode through LDS-cached kernel
+    if (type == GGML_TYPE_Q4_K && ncols_dst == 1 && !has_fusion) {
+        constexpr int c_rows_per_block = 1;
+        const int64_t nblocks = (nrows_x + c_rows_per_block - 1) / c_rows_per_block;
+        const dim3 block_nums(nblocks, nchannels_dst, nsamples_dst);
+        const dim3 block_dims(warp_size, 1, 1);
+        const int nbytes_shared = LDS_CACHE_BLOCKS * sizeof(block_q8_1);
+        const ggml_cuda_kernel_launch_params launch_params =
+            ggml_cuda_kernel_launch_params(block_nums, block_dims, nbytes_shared, stream);
+        ggml_cuda_kernel_launch(mul_mat_vec_q_lds_prototype, launch_params,
+            vx, vy, ids, fusion, dst, ncols_x, nchannels_y_fd, stride_row_x, stride_col_y, stride_col_dst,
+            channel_ratio_fd, stride_channel_x, stride_channel_y, stride_channel_dst,
+            sample_ratio_fd, stride_sample_x, stride_sample_y, stride_sample_dst, ids_stride);
+        return;
+    }
+#endif
 
     switch (ncols_dst) {
         case 1: {

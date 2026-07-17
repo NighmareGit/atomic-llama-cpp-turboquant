@@ -102,6 +102,8 @@ tile setup cost. For M=1 (single-token decode), dp4a is the correct choice.
 
 ## 7. Next Steps: dp4a Micro-Optimizations
 
+> **Status: NEVER PURSUED.** These micro-optimizations were scoped out during Slice 6 but never executed. D7.6 kernel profiling shows Q4_K matmul is a meaningful fraction of GPU time (q6_K = 35.2% of GPU, iq4_xs = 8.0%), so dp4a optimizations on the same kernels may have ROI. These leads are carried forward to Slice 7 as complementary to Vector D (kernel-anvil tuning). See `docs/wayfinder/D7-REEXAMINATION.md`.
+
 Pivot to optimizing the existing dp4a path for Q4_K/Q4_K_S:
 
 1. **Instruction scheduling**: Reorder loads/computes for gfx1100 dual-issue

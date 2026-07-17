@@ -503,10 +503,12 @@ which matmul/attention/softmax kernels dominate the 6,843 µs.
 - [x] D7.3: Findings documented in `docs/research/d73-vector-a-gpu-compute-reduction.md`
 - [x] D7.4: MTP verification asymmetry analyzed (185x FAST/SLOW)
 - [x] D7.4: Verification skip/reduce strategy prototyped
-- [ ] D7.4: SLOW step time reduction measured (output collapses, upper bound +75% documented)
+- [x] D7.4: Upper bound +75% TG documented, output collapses. 5 refinement approaches (R1-R5) cataloged. `docs/research/d74-code-skip-ssm-verify.md`.
 - [x] D7.5: RPC download overlapped with GPU compute (prototyped, A1 crashes, A2 regresses)
-- [ ] D7.5: input_copy_slow reduced from 2,645 µs to <500 µs (deferred, blocked by CUDA graph incompat)
+- [x] D7.5: input_copy_slow resolved: no H2D bottleneck found. Pivoted to D6.10 (GPU event pipelining) which shipped -98.6% reduction. `docs/research/d75-rpc-overlap-research.md`.
 - [x] D7.6: rocprofv3 compatibility fixed; per-kernel timing captured (4 models: Qwen35B-MoE x3 + Gemma4-12B-dense)
+- [x] D7.7: WMMA vec_dot prototype built and benchmarked. CLOSED as not viable for M=1 decode (dequant overhead dominates). Pivoted to dp4a micro-optimizations. `docs/research/d77-wmma-prototype-findings.md`.
+- [x] D7.8: LDS activation caching prototype built. Smoke test PASSED (garbage token bug was CMake misconfiguration, resolved). No significant throughput delta. `docs/wayfinder/HANDOFF-D7.8-LDS-prototype.md`.
 - [ ] Safety check passes before each resource-intensive step
 
 ### Blocked by
@@ -526,4 +528,144 @@ Slice 4 (D6.10 must be complete).
 - **D7.2:** 2026-07-16 — COMPLETE. event_wait_slot=0 in 2-GPU. Real bottleneck: ROCm GPU kernels (52.9%) + RPC download (20.4%).
 - **D7.3:** 2026-07-16 — COMPLETE. FA on HIP: `GGML_HIP_ROCWMMA_FATTN=ON`, rebuild, benchmarked. **+7.5% TG (133.0 -> 143.0 t/s)**. Q4_K_M + tensor split skipped per user direction.
 - **D7.4-D7.6:** 2026-07-16 — COMPLETE. D7.4: skip-SSM upper bound +75% TG documented, 5 refinement approaches cataloged. D7.5: RPC overlap prototyped, copy_event fix shipped, deferred pending rocprofv3 data. D7.6: rocprofv3 `--kernel-trace` works (HIP tracing was crash root cause); per-kernel breakdown shows MatMul 55.4% (q6_K 35.2%), FlashAttn 3.4%, SSM 2.4%, MoE routing 4.0%. q6_K matmul identified as #1 optimization target.
+
+---
+
+## Slice 7: Layer 1-3 Kernel Optimization (kernel-anvil Integration)
+
+**Status:** ready-for-agent
+**Blocked by:** None (D7.8 resolved: CMake misconfiguration, not kernel bug)
+**Detail tickets:** D7.9 (Vector E), D7.10 (Vector D), D7.11 (Vector F), D7.12 (Vector G)
+**Research:** `docs/research/slice-7-kernel-anvil-integration.md`
+**Landscape:** `OPTIMIZATION-LANDSCAPE-L1-L3.md`
+
+### What to build
+
+Integrate kernel-anvil's profile-guided kernel optimization methods into Path-D to attack Layer 1 (single-GPU kernel performance), which D7.6 identified as 55.4% of GPU time (MatMul alone). Slice 6 attacked Layers 2-3 (pipeline overlap, system-level) but left Layer 1 largely untouched except for D7.7 (WMMA, closed as not viable) and D7.8 (LDS, prototype complete -- CMake misconfiguration resolved, no significant throughput delta).
+
+The slice introduces four new vectors ordered by priority:
+
+| # | Vector | Ticket | Mechanism | Target | Est. Gain | Effort |
+|---|--------|--------|-----------|--------|-----------|--------|
+| **E** | small_k fix | D7.9 | Change `<` to `<=` in `should_use_small_k` threshold | K=4096 shapes (gate/up/q/o_proj) | 5-15% | 1 line |
+| **D** | kernel-anvil tuning | D7.10 | Apply smithy patch, run `gguf-optimize`, benchmark | All MatMul (55.4% GPU) | 10-30% | medium |
+| **F** | quantize fusion | D7.11 | Fuse quantize_q8_1 into MMVQ kernel | quantize_q8_1 (7.9% GPU) | 5-10% | medium |
+| **G** | autoforge custom | D7.12 | Generate purpose-built HIP kernels for top 5 shapes | Top 5 dominant shapes | 15-25% | high |
+
+### Vector E Detail (D7.9): small_k Off-by-One Fix
+
+**Target:** The `should_use_small_k` threshold in `ggml/src/ggml-cuda/mmvq.cu` uses strict `<` instead of `<=`, so K=4096 shapes never trigger the multi-row optimization.
+
+**Current code:**
+```cpp
+const bool use_small_k = nwarps > 1 && blocks_per_row_x < nwarps * blocks_per_iter_1warp;
+```
+
+**Fix:**
+```cpp
+const bool use_small_k = nwarps > 1 && blocks_per_row_x <= nwarps * blocks_per_iter_1warp;
+```
+
+For Q4_K with K=4096: blocks_per_row_x = 16, threshold = 16, `16 < 16 = false` (current), `16 <= 16 = true` (fixed). This activates `rows_per_block = nwarps = 8` for the majority of MMVQ dispatches.
+
+**Workflow:** `/implement` → rebuild → benchmark on romulus (Gemma-4-12B Q4_K_M, Qwen3.5-9B Q4_K_M) → `/code-review`.
+
+### Vector D Detail (D7.10): kernel-anvil Shape-Specific Tuning
+
+**Target:** MatMul = 55.4% of GPU time. llama.cpp uses hardcoded nwarps=8 for all shapes on RDNA3. kernel-anvil profiles each unique (quant, N, K) shape and finds optimal (nwarps, rows_per_block).
+
+**Steps:**
+1. Apply `kernel-anvil/patches/apply.sh` to llama.cpp tree
+2. Run `kernel-anvil gguf-optimize` for each model in `/mnt/models`
+3. Benchmark with `SMITHY_CONFIG=... llama-bench` vs baseline
+4. Document per-model speedup
+
+**Expected:** 10-30% TG improvement (based on kernel-anvil's published 2.25x on Qwen3.5-27B).
+
+**Workflow:** `/prototype` (apply patch + profile + benchmark) → `/code-review` → `/implement` (integrate winning configs).
+
+### Vector F Detail (D7.11): quantize_q8_1 Fusion
+
+**Target:** quantize_q8_1 = 7.9% of GPU time (90.9M ns in D7.6). Every MMVQ dispatch requires a preceding q8_1 quantization of the input vector.
+
+**Mechanism:** Modify the MMVQ kernel to accept float activations directly (like Vulkan does), eliminating the separate quantization kernel. On RDNA3, the integer DP4A advantage over float is less clear than on NVIDIA.
+
+**Workflow:** `/research` (analyze fusion feasibility) → `/prototype` (implement fused kernel) → verify correctness → benchmark.
+
+### Vector G Detail (D7.12): Autoforge Custom Kernels
+
+**Target:** The top 5 shapes that dominate GPU time (from D7.6: q6_K 35.2%, iq4_xs 8.0%, q8_0 6.1%, q5_K 2.7%, fp32 3.5%).
+
+**Mechanism:** Use kernel-anvil's `autoforge` to generate purpose-built HIP kernels with hardcoded N/K dimensions, optimal nwarps/rows_per_block, unrolled inner loops.
+
+**Workflow:** `/prototype` (run autoforge for top shapes) → benchmark vs stock + smithy-tuned → `/code-review`.
+
+### Re-examination Leads (D7.0-D7.8)
+
+A retrospective of D7.0-D7.8 (2026-07-17) identified open leads complementary to the four official vectors. Full analysis: `docs/wayfinder/D7-REEXAMINATION.md`.
+
+**Resolved items (corrected in source docs):**
+- rocprofv3: ~~BLOCKED~~ **RESOLVED (D7.6)** — `--kernel-trace` without `--hip-trace` works
+- Skip-SSM +75% upper bound: **REVISED to ~5% (D7.6)** — SSM = 2.4% of GPU time
+- D6.10: **NOT missing** — `docs/wayfinder/D6.10-implementation-analysis.md`, shipped as `f29a92eb1`
+
+**Open leads carried to Slice 7:**
+
+| Lead | Source | Priority | Mechanism | Connection |
+|------|--------|----------|-----------|------------|
+| dp4a micro-optimizations | D7.7 | HIGH | 6 ideas: instruction scheduling, loop unrolling, prefetch, register analysis, dual-issue | Same Q4_K/Q6_K kernels as Vector D |
+| LDS standalone test | D7.8 | HIGH | Run `test-lds-mmvq.hip.cu` with rocprofv3 to root-cause -1.9 t/s regression | Multiplicative with Vector D |
+| FA + Q4_K_M benchmark | D7.3 | MEDIUM | One benchmark run, 20GB model exists | Independent quick win |
+| 5:4 FAST/SLOW pattern | D7.2 | LOW | Quantify which layers/tokens cause each step type | Targets L1 to right step type |
+
+**Key insight:** D7.7 and D7.8 were abandoned prematurely. D7.7's dp4a checklist (6 specific ideas) was never pursued. D7.8's negative result was never root-caused — the standalone test exists but was never run. Both are Layer 1 kernel optimizations that directly feed Slice 7's vectors.
+
+These leads are ticketed as **D7.13-D7.16** in `docs/tickets/path-d-tickets.md` and tracked in `docs/wayfinder/TRACKING.md`.
+
+### Acceptance Criteria
+
+- [ ] D7.9: small_k threshold changed from `<` to `<=`
+- [ ] D7.9: TG improvement measured on K=4096 model (target >= 5%)
+- [ ] D7.9: No regression on non-K=4096 shapes
+- [ ] D7.10: smithy patch applied to llama.cpp tree
+- [ ] D7.10: `gguf-optimize` run for at least 2 models (Gemma-4-12B, Qwen3.5-9B)
+- [ ] D7.10: Benchmark comparison (stock vs smithy) documented
+- [ ] D7.10: TG improvement >= 10% on at least 1 model
+- [ ] D7.11: quantize_q8_1 fusion prototype implemented
+- [ ] D7.11: Correctness verified (output matches stock within tolerance)
+- [ ] D7.11: quantize_q8_1 time reduced by >= 50%
+- [ ] D7.12: autoforge run for top 5 shapes
+- [ ] D7.12: Custom kernels benchmarked vs stock + smithy
+- [ ] Safety check passes before each resource-intensive step
+
+### Blocked by
+
+None. D7.8 (LDS prototype) is complete -- functional but no significant throughput gain. Vectors are complementary with D7.9-D7.11.
+
+### Complementarity with D7.8
+
+| Approach | Mechanism | Target |
+|----------|-----------|--------|
+| D7.8 LDS (complete) | Cache q8_1 activations in `__shared__` | Activation memory traffic |
+| D7.9 small_k | Fix threshold boundary | Multi-row processing |
+| D7.10 smithy | Tune nwarps/rows_per_block per shape | Thread utilization |
+| D7.11 fusion | Fuse quantize into MMVQ | Kernel count + dispatch |
+| D7.12 autoforge | Custom kernels per shape | Maximum per-shape perf |
+
+These are **complementary, not competing**. Combined effect is multiplicative.
+
+### Research Artifacts
+
+- **Primary:** `docs/research/slice-7-kernel-anvil-integration.md` — full kernel-anvil research + vector definitions
+- **Landscape:** `OPTIMIZATION-LANDSCAPE-L1-L3.md` — Layer 1-3 framework with all leads
+- **Re-examination:** `docs/wayfinder/D7-REEXAMINATION.md` — D7.0-D7.8 retrospective, resolved items, open leads
+- **D7.6 profiling:** `docs/research/d76-rocprofv3-kernel-profile.md` — per-kernel timing breakdown
+- **kernel-anvil source:** `~/projects/kernel-anvil` — the optimization tool itself
+
+### Completion
+
+<!-- Agent: fill this section on completion -->
+- **Completed:** (date)
+- **Commit range:** (first..last)
+- **Notes:** (any deviations, trade-offs, or open follow-ups)
 

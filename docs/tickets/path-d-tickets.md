@@ -720,6 +720,365 @@ Then `ggml_sched_gpipe_wait_seq` and `ggml_sched_gpipe_record_seq` use `sched->b
 
 ---
 
+## Pipeline Depth Attack Vector Tickets (Slice 6)
+
+### D7.1 -- n_copies > 1 (CLOSED)
+
+**Type:** research
+**Blocks:** none
+**Blocked by:** none
+
+**Goal:** Test whether increasing `n_copies` (copy-slot count) improves pipeline overlap in 2-GPU RPC config. Hypothesis: more copy slots allow earlier prefetch for the next step.
+
+**Result:** CLOSED -- +0.8-1.4% impact (within noise). GPipe bypasses `pipeline_barrier()` entirely; uses per-stage event synchronization. Production baseline: 2-GPU RPC + n_max=2 = **133.0 t/s TG**.
+
+**Reference:** `docs/research/split-overhead-mitigation.md` Section 6
+
+---
+
+### D7.2 -- GPU Timeline Profiling
+
+**Type:** research
+**Blocks:** D7.3, D7.4, D7.5, D7.6
+**Blocked by:** none
+**Status:** complete
+
+**Goal:** Profile GPU compute timeline to identify bottlenecks in the 12,946 us SLOW decode step.
+
+**Acceptance Criteria:**
+- [x] event_wait_slot measured in 2-GPU config (result: 0 us -- absent)
+- [x] Two decode step types identified: FAST (3,229 us) and SLOW (12,946 us) cycling 5:4
+- [x] Bottleneck attribution: ROCm GPU kernels 52.9%, RPC download 20.4%, input copy sync 10.2%
+- [x] Findings documented in `docs/research/d72-gpu-timeline-profile.md`
+
+---
+
+### D7.3 -- Vector A: Enable Flash Attention on HIP
+
+**Type:** implementation
+**Blocks:** D7.4
+**Blocked by:** D7.2
+**Status:** complete
+
+**Goal:** Enable Flash Attention on HIP via `GGML_HIP_ROCWMMA_FATTN=ON` and benchmark.
+
+**Acceptance Criteria:**
+- [x] FA enabled on HIP: `GGML_HIP_ROCWMMA_FATTN=ON` in CMake, rebuild
+- [x] Benchmark vs OFF: **+7.5% TG (133.0 -> 143.0 t/s)**
+- [x] WMMA FA kernel verified in `libggml-hip.so`
+- [x] Findings documented in `docs/research/d73-vector-a-gpu-compute-reduction.md`
+
+---
+
+### D7.4 -- Vector B: Reduce MTP Verification Cost
+
+**Type:** research
+**Blocks:** D7.5
+**Blocked by:** D7.3
+**Status:** complete
+
+**Goal:** Investigate the 185x compute asymmetry between FAST draft (37 us) and SLOW verification (6,843 us) on the ROCm GPU during MTP speculative decoding.
+
+**Acceptance Criteria:**
+- [x] MTP verification asymmetry analyzed (185x FAST/SLOW)
+- [x] Verification skip/reduce strategy prototyped
+- [x] Upper bound established: +75% TG, but output collapses
+- [x] 5 refinement approaches (R1-R5) + decision matrix + revisit criteria documented in `docs/research/d74-code-skip-ssm-verify.md`
+
+---
+
+### D7.5 -- Vector B2: Overlap RPC Download with GPU Compute
+
+**Type:** research/prototype
+**Blocks:** D7.6
+**Blocked by:** D7.4
+**Status:** resolved
+
+**Goal:** Overlap RPC tensor fetch from 3060Ti with local GPU compute to hide the 2,645 us `input_copy_slow` wait.
+
+**Acceptance Criteria:**
+- [x] RPC download overlap prototyped (two approaches: A1 crashes, A2 regresses)
+- [x] `input_copy_slow` diagnosed: 97.6% is 16-byte `leaf_70` -- GPU event_synchronize wait, not H2D copy
+- [x] Root cause: no H2D copy to overlap; redirect to D6.10 GPU event pipelining
+- [x] Findings documented in `docs/research/d75-rpc-overlap-research.md`
+
+---
+
+### D7.6 -- Vector C: rocprofv3 GPU Kernel Profiling
+
+**Type:** research
+**Blocks:** D7.7, D7.8
+**Blocked by:** D7.5
+**Status:** complete
+
+**Goal:** Get per-kernel timing breakdown from rocprofv3 to identify the #1 kernel optimization target within the 6,843 us GPU compute window.
+
+**Acceptance Criteria:**
+- [x] rocprofv3 `--kernel-trace` working (root cause of SIGABRT: `--hip-trace` flag conflict)
+- [x] Per-kernel breakdown for 4 models across Qwen/Gemma-4 MoE and dense architectures
+- [x] Key finding: MatMul 55-76% of GPU time; q6_K matmul = #1 optimization target (35.2%)
+- [x] Stall hunt (40,343 dispatches): P95 inter-kernel gap = 5 us; 99.1% gaps <10 us -- perfect micro-pipelining post-D6.10.1
+- [x] Findings: `docs/research/d76-rocprofv3-kernel-profile.md`, `docs/research/d76b-multi-model-kernel-comparison.md`
+
+---
+
+### D7.7 -- WMMA vec_dot Prototype
+
+**Type:** prototype
+**Blocks:** none
+**Blocked by:** D7.6
+**Status:** complete
+
+**Goal:** Prototype WMMA-accelerated Q4_K vec_dot for MMVQ kernel to exploit RDNA3 matrix units.
+
+**Acceptance Criteria:**
+- [x] WMMA vec_dot implemented behind `GGML_HIP_WMMA_VECDOT_EXPERIMENTAL` guard
+- [x] 2.2x TPS increase measured but numerically suspect
+- [x] Root cause: WMMA requires M >= 8 to amortize tile overhead; MMVQ is M=1 decode
+- [x] Decision: PIVOT to dp4a micro-optimizations (LDS activation caching)
+- [x] Prototype code preserved in `ggml/src/ggml-cuda/vecdotq.cuh` + mmvq.cu dispatch guard
+- [x] Findings: `docs/research/d77-wmma-prototype-findings.md`
+
+---
+
+### D7.8 -- LDS Activation Caching Prototype
+
+**Type:** prototype
+**Blocks:** none (parallel track)
+**Blocked by:** D7.7
+**Status:** complete
+
+**Goal:** Reduce redundant global memory loads in Q4_K MMVQ by cooperatively caching q8_1 activation data in `__shared__` memory.
+
+**Acceptance Criteria:**
+- [x] Inlined `vec_dot_q4_K_q8_1` computation into LDS kernel (lines 745-870 of mmvq.cu)
+- [x] Cooperatively loads 24 `block_q8_1` structures into `__shared__` once per MMVQ iteration
+- [x] 16x reduction in redundant global reads per half-warp
+- [x] Guarded behind `-DGGML_HIP_MMVQ_LDS_PROTOTYPE=ON` CMake flag
+- [x] Builds clean on HIP/gfx1100
+- [x] Smoke test (Gemma-4-12B Q4_K_M): correct tokens, 175.7/63.4 t/s pp/tg on GPU
+- [x] Bug resolved: "garbage tokens" was CMake misconfiguration (`-DGGML_HIPBLAS=ON` silently ignored; needs `-DGGML_HIP=ON` + correct HIP compiler path)
+- [x] Benchmark: baseline 174.7/65.3 vs LDS 175.7/63.4 t/s -- no significant delta (MMVQ is small fraction of decode time)
+- [x] Handoff: `docs/wayfinder/HANDOFF-D7.8-LDS-prototype.md`
+
+---
+
+## Slice 7: Layer 1-3 Kernel Optimization Tickets (ready-for-agent)
+
+### D7.9 -- Vector E: small_k Off-by-One Fix
+
+**Type:** bugfix
+**Blocks:** D7.10
+**Blocked by:** none
+**Status:** ready-for-agent
+
+**Goal:** Fix the `should_use_small_k` threshold in `ggml/src/ggml-cuda/mmvq.cu` to use `<=` instead of `<`, activating multi-row processing for K=4096 shapes.
+
+**Current code:**
+```cpp
+const bool use_small_k = nwarps > 1 && blocks_per_row_x < nwarps * blocks_per_iter_1warp;
+```
+
+**Fix:** Change `<` to `<=`.
+
+For Q4_K with K=4096: blocks_per_row_x = 16, threshold = 16. `16 < 16 = false` (current, broken), `16 <= 16 = true` (fixed). Activates `rows_per_block = nwarps = 8` for gate_proj, up_proj, q_proj, o_proj layers.
+
+**Acceptance Criteria:**
+- [ ] 1-line change in `ggml/src/ggml-cuda/mmvq.cu`
+- [ ] TG improvement measured on K=4096 model (target >= 5%)
+- [ ] No regression on non-K=4096 shapes
+- [ ] Safety check passes before each resource-intensive step
+
+**Effort:** 1 line. P0 priority.
+
+---
+
+### D7.10 -- Vector D: kernel-anvil Shape-Specific Tuning
+
+**Type:** prototype
+**Blocks:** D7.11
+**Blocked by:** D7.9
+**Status:** ready-for-agent
+
+**Goal:** Apply kernel-anvil's profile-guided optimization to find optimal (nwarps, rows_per_block) for each unique (quant, N, K) shape. Expected: 10-30% TG.
+
+**Steps:**
+1. Apply `kernel-anvil/patches/apply.sh` to llama.cpp tree
+2. Run `kernel-anvil gguf-optimize` for Gemma-4-12B Q4_K_M and Qwen3.5-9B Q4_K_M
+3. Benchmark with `SMITHY_CONFIG=... llama-bench` vs stock baseline
+4. Document per-model speedup
+
+**Acceptance Criteria:**
+- [ ] smithy patch applied to llama.cpp tree
+- [ ] `gguf-optimize` run for at least 2 models (Gemma-4-12B, Qwen3.5-9B)
+- [ ] Benchmark comparison (stock vs smithy) documented
+- [ ] TG improvement >= 10% on at least 1 model
+- [ ] No regression on untuned shapes
+- [ ] Safety check passes before each resource-intensive step
+
+**Effort:** medium. P1 priority.
+
+**Reference:** `docs/research/slice-7-kernel-anvil-integration.md`, `~/projects/kernel-anvil`
+
+---
+
+### D7.11 -- Vector F: quantize_q8_1 Fusion
+
+**Type:** prototype
+**Blocks:** D7.12
+**Blocked by:** D7.10
+**Status:** ready-for-agent
+
+**Goal:** Fuse the quantize_q8_1 kernel into the MMVQ kernel, eliminating 7.9% of GPU time (90.9M ns) and 224 kernel launches per token.
+
+**Mechanism:** Modify MMVQ kernel to accept float activations directly (like Vulkan does). On RDNA3, integer DP4A advantage over float is less clear than on NVIDIA, so the fusion may provide net benefit directly.
+
+**Acceptance Criteria:**
+- [ ] quantize_q8_1 fusion prototype implemented
+- [ ] Correctness verified (output matches stock within tolerance)
+- [ ] quantize_q8_1 time reduced by >= 50%
+- [ ] No regression on models without fusion
+- [ ] Safety check passes before each resource-intensive step
+
+**Effort:** medium. P1 priority.
+
+---
+
+### D7.12 -- Vector G: Autoforge Custom Kernels
+
+**Type:** prototype
+**Blocks:** none
+**Blocked by:** D7.11
+**Status:** ready-for-agent
+
+**Goal:** Generate purpose-built HIP kernels for the top 5 shapes dominating GPU time (q6_K 35.2%, iq4_xs 8.0%, q8_0 6.1%, q5_K 2.7%, fp32 3.5%) using kernel-anvil's `autoforge`.
+
+**Mechanism:** Hardcode N/K dimensions, optimal nwarps/rows_per_block, and unroll inner loops for each target shape.
+
+**Acceptance Criteria:**
+- [ ] autoforge run for top 5 shapes from D7.6 profiling data
+- [ ] Custom kernels benchmarked vs stock + smithy-tuned
+- [ ] TG improvement >= 15% on at least 1 shape
+- [ ] No regression on non-targeted shapes
+- [ ] Safety check passes before each resource-intensive step
+
+**Effort:** high. P2 priority (defer until D proven).
+
+**Reference:** `docs/research/d76-rocprofv3-kernel-profile.md` for shape dominance data
+
+---
+
+### D7.13 -- dp4a Micro-Optimizations (from D7.7)
+
+**Type:** prototype
+**Blocks:** none
+**Blocked by:** none (complementary to D7.10)
+**Status:** ready-for-agent
+
+**Goal:** Optimize the existing dp4a path for Q4_K/Q6_K vec_dot on RDNA3 (gfx1100). D7.7 identified 6 specific micro-optimization ideas that were never pursued. These attack the same kernels as D7.10 (kernel-anvil tuning) but at the instruction level.
+
+**Mechanism:**
+1. **Instruction scheduling**: Reorder loads/computes for gfx1100 dual-issue (scalar + vector ops). Independent `dot2` + scalar accumulators offer interleaving room around chained `sudot4`.
+2. **Scale-unpack branch**: Simplify the `j<2` divergence in wrapper (vecdotq.cuh:888-894) — may reduce VGPR pressure. NOTE: QR4_K=2 (not 8); loop is already fully unrolled, so literal loop unrolling is a non-starter.
+3. **Prefetch hints**: Activation loads (`bq8_1` per thread, not broadcast) are the real memory traffic. `__builtin_prefetch` on next k-block in outer dispatch loop (mmvq.cu:640) — only if D7.8 LDS results are negative.
+4. **Register analysis**: Q4_K uses nwarps=1 on gfx1100 (not nwarps=8 like Q4_0/Q8_0). No code comment explains why. If VGPR pressure can be cut, moving Q4_K to nwarps=8 whitelist is the biggest single win. Measure with `-RPASS,-RPASS2`.
+5. **Benchmark infrastructure**: `llama-gpipe-profiler` with `--tasks tg --n-prompt 1024 --n-gen 16 --repeat 3 --warmup 0`. Pin to single-GPU (7900XTX) for tightest dp4a signal.
+
+**Acceptance Criteria:**
+- [ ] Register analysis complete: VGPR usage measured at nwarps=1 and (forced) nwarps=8
+- [ ] Baseline benchmark captured on romulus (single-GPU 7900XTX, gemma-4-12B-Q4_K_M)
+- [ ] At least 2 of 5 micro-optimization ideas prototyped and benchmarked
+- [ ] TG improvement >= 3% on Q4_K model from dp4a optimizations alone
+- [ ] No regression on non-Q4_K shapes
+- [ ] Findings documented: `docs/research/d713-dp4a-micro-optimizations.md`
+- [ ] Safety check passes before each resource-intensive step
+
+**Effort:** medium. HIGH priority — directly feeds Slice 7 Vector D target kernels.
+
+**Reference:** `docs/research/d77-wmma-prototype-findings.md` section 7 (full checklist), `docs/research/d76-rocprofv3-kernel-profile.md` (Q4_K = 35.2% of GPU time), `docs/research/d713-dp4a-research-scope.md` (corrected analysis)
+
+---
+
+### D7.14 -- LDS Standalone Test + Root-Cause (from D7.8)
+
+**Type:** research
+**Blocks:** none
+**Blocked by:** none
+**Status:** ready-for-agent
+
+**Goal:** Root-cause the D7.8 LDS prototype's -1.9 t/s regression. The standalone test `tests/test-lds-mmvq.hip.cu` was created but never run. Without understanding the negative result, the LDS approach cannot be evaluated fairly.
+
+**Mechanism:**
+1. Compile and run `test-lds-mmvq.hip.cu` with `-DGGML_HIP_MMVQ_LDS_PROTOTYPE=ON`
+2. Use `rocprofv3 --kernel-trace` (working per D7.6) to compare LDS vs stock MMVQ kernel timing
+3. Isolate whether degradation is from: LDS bank conflicts, extra instructions, or compiler artifact
+4. If fixable, LDS + kernel-anvil is multiplicative (memory traffic vs compute utilization)
+
+**Acceptance Criteria:**
+- [ ] Standalone test compiled and executed
+- [ ] rocprofv3 kernel-level comparison (LDS vs stock) captured
+- [ ] Root cause of -1.9 t/s regression identified and documented
+- [ ] Go/no-go decision on LDS approach with rationale
+- [ ] Findings documented: `docs/research/d714-lds-root-cause-analysis.md`
+
+**Effort:** low. HIGH priority — diagnostic that unblocks or closes the LDS path.
+
+**Reference:** `docs/wayfinder/HANDOFF-D7.8-LDS-prototype.md`, `tests/test-lds-mmvq.hip.cu`
+
+---
+
+### D7.15 -- FA + Q4_K_M Combined Benchmark (from D7.3)
+
+**Type:** research
+**Blocks:** none
+**Blocked by:** none
+**Status:** ready-for-agent
+
+**Goal:** Benchmark Q4_K_M quantization on the 2-GPU Romulus config. D7.3 enabled FA on HIP (+7.5% TG) but skipped the Q4_K_M leg. Combined estimated gain was 15-25%. The 20GB Q4_K_M model already exists.
+
+**Mechanism:**
+1. Run benchmark suite with Q4_K_M model on 2-GPU Romulus (7900XTX + 3060Ti RPC)
+2. Compare against D7.3 baseline (Q6_K, FA ON) — same config, same hardware
+3. Document per-model PP/TG throughput and tensor split
+
+**Acceptance Criteria:**
+- [ ] Q4_K_M benchmarked on 2-GPU Romulus config
+- [ ] Comparison against D7.3 Q6_K baseline documented
+- [ ] TG delta captured (target: >= 10% from quantization alone)
+- [ ] Findings documented: `docs/research/d715-fa-q4km-benchmark.md`
+
+**Effort:** low. MEDIUM priority — one benchmark run, independent quick win.
+
+**Reference:** `docs/research/d73-vector-a-gpu-compute-reduction.md` (FA + Q4_K_M combined estimate)
+
+---
+
+### D7.16 -- 5:4 FAST/SLOW Pattern Analysis (from D7.2)
+
+**Type:** research
+**Blocks:** none
+**Blocked by:** none
+**Status:** ready-for-agent
+
+**Goal:** Quantify which layers and tokens cause the FAST (3,229 us) vs SLOW (12,946 us) decode step pattern observed in D7.2. Understanding this helps target L1 kernel optimizations to the right step type.
+
+**Mechanism:**
+1. Instrument decode with per-layer timing (GGML_SCHED_TRACE=2 or rocprofv3 per-kernel)
+2. Classify each decode step as FAST or SLOW
+3. Correlate SLOW steps with specific layers (MTP verification runs full model)
+4. Identify which layer types dominate SLOW step time
+
+**Acceptance Criteria:**
+- [ ] Per-layer timing captured for >= 100 decode steps
+- [ ] FAST/SLOW classification correlated with layer types
+- [ ] Findings documented: `docs/research/d716-fast-slow-pattern-analysis.md`
+
+**Effort:** low. LOW priority — informational only, helps target L1 work.
+
+**Reference:** `docs/research/d72-gpu-timeline-profile.md` (5:4 pattern observation)
+
+---
+
 ## Advanced Optimization Tickets
 
 ### R3.1 -- Adaptive Depth Analysis
@@ -813,7 +1172,17 @@ D1.1 -> D1.2 -> D1.3 -> D1.4 -> D1.5 -> D1.6 -> D1.7 -> D2.1 -> D2.2 -> D2.3
                                                                                                                        D5.1 -> D5.2 -> D5.3 -> D5.4 -> D5.5 -> D5.6 -> D5.7
                                                                                                                                                           \
                                                                                                                                                            D6.1 -> D6.2 -> D6.3 -> D6.4 -> D6.5 -> D6.6 -> D6.7
+                                                                                                                                                                              |
+                                                                                                                                                                              v (Slice 6)
+                                                                                                                                                           D7.2 -> D7.3 -> D7.4 -> D7.5 -> D7.6 -> D7.7 -> D7.8
+                                                                                                                                                          /
+                                                                                                                                                    D7.1 (parallel, closed)
                                                                                                                                                                               \
+                                                                                                                                                                               (Slice 7)
+                                                                                                                                                          D7.9 -> D7.10 -> D7.11 -> D7.12
+                                                                                                                                                          |\
+                                                                                                                                                          | D7.13 (dp4a)  D7.14 (LDS)  D7.15 (FA+Q4KM)  D7.16 (F/S pattern)
+                                                                                                                                                          \/
                                                                                                                                                                                R3.1 -> R3.2 -> R3.3 -> R3.4 -> R3.5
 ```
 

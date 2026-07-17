@@ -238,6 +238,19 @@ On success:
 **Goal:** Adaptive depth refinement + deprecation cleanup  
 **Workflow loop:** research → design → implement → test → review
 
+## Stage 12: Layer 1-3 Kernel Optimization (Slice 7)
+
+**Entry point:** `docs/research/slice-7-kernel-anvil-integration.md`  
+**Goal:** Attack single-GPU kernel performance (Layer 1 = 55.4% GPU time) via kernel-anvil methods  
+**Workflow loop:** research → prototype → implement → test → review  
+**Vectors:**
+- D7.9 (P0): small_k off-by-one fix — 1 line, activates multi-row processing for K=4096
+- D7.10 (P1): kernel-anvil shape-specific tuning — apply smithy patch, profile, benchmark
+- D7.11 (P1): quantize_q8_1 fusion — eliminate 7.9% GPU time
+- D7.12 (P2): autoforge custom kernels — purpose-built HIP kernels for top shapes
+
+**Key insight:** D7.6 rocprofv3 profiling shows MatMul is 55.4% of GPU time. kernel-anvil's shape-specific tuning directly targets this. Complementary to D7.8 LDS prototype (memory traffic reduction).
+
 ## Operational Safety (All Stages)
 
 | Rule | How |

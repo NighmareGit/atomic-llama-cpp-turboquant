@@ -145,6 +145,15 @@ if (GGML_HIP_WMMA_VECDOT_EXPERIMENTAL)
     add_compile_definitions(GGML_HIP_WMMA_VECDOT_EXPERIMENTAL)
 endif()
 
+if (GGML_HIP_MMVQ_LDS_PROTOTYPE)
+    add_compile_definitions(GGML_HIP_MMVQ_LDS_PROTOTYPE)
+endif()
+
+# PROTOTYPE: D7.13 — throwaway flag, do NOT upstream
+if (GGML_HIP_D713_NWARPS8_Q4K)
+    add_compile_definitions(GGML_HIP_D713_NWARPS8_Q4K)
+endif()
+
 if (NOT GGML_HIP_MMQ_MFMA)
     add_compile_definitions(GGML_HIP_NO_MMQ_MFMA)
 endif()

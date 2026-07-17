@@ -377,18 +377,19 @@ The copy itself (`leaf_70`, 16 bytes, CPU→ROCm) takes <1 µs. The remaining 3,
 | "Early-issue pre-copies would help" | Copies aren't the bottleneck; GPU is | **Explains A2 regression** |
 | "RPC download is the bottleneck" | RPC tensors handled via gather path, not INPUT | **Wrong path** |
 
-### 9.5 New Direction: D6.10 GPU Event Pipelining
+### 9.5 New Direction: D6.10 GPU Event Pipelining (COMPLETE)
 
-The real fix is enabling overlap between iterations. With n_copies > 1 and GPU event pipelining, the pipeline could process as:
+> **D6.10 shipped** as commit `f29a92eb1`. See `docs/wayfinder/D6.10-implementation-analysis.md` for the full implementation analysis and `docs/wayfinder/D6.10-module-design.md` for the module design.
 
-```
-Iteration N:   [Split 0][Split 1][Split 2: GPU compute 6,843 µs]
-Iteration N+1:           [Split 0][Split 1][Split 2: wait ~2,158 µs]
-```
+The original D7.5 pivot proposed enabling overlap between iterations via GPU event pipelining. This was implemented in D6.10:
 
-Split 0+1 of iteration N+1 would run concurrently with Split 2 GPU compute of iteration N, reducing the event_synchronize wait from ~3,500 µs to ~2,158 µs. Savings: ~1,300 µs per SLOW step (10% of the 12,946 µs SLOW decode).
+- **D6.10 fix:** Scan backends for one with `event_new != NULL`, create gpipe_events on it for async event pipelining. Fallback to full sync if no GPU backends.
+- **D6.10.1 fix:** Skip `event_synchronize` for host->GPU INPUT copies when `n_copies > 1` (copy-slot rotation prevents buffer conflict).
+- **Result:** `input_copy_slow`: 165,000 us -> 2,359 us (**-98.6%**). TPS: 124.4 -> 129.8 (**+4.3%**). 12/12 GPipe tests pass.
 
-**D7.5 is resolved: no H2D overlap needed. The copy_event fix stays. Move to D6.10.**
+The original D7.5 overlap concept (Split 0+1 of N+1 concurrent with Split 2 of N) was validated by the D6.10.1 result: with event pipelining active, the inter-iteration overlap works as intended. The remaining `input_copy_slow` (2,359 us) is now within noise of the GPU compute time.
+
+**D7.5 is resolved: no H2D overlap needed. The copy_event fix stays. D6.10 delivered the overlap via a different mechanism.**
 
 ### 9.6 Artifacts
 
@@ -416,10 +417,10 @@ If A1+A2 proves insufficient (e.g., the INPUT tensors are small and the bottlene
 
 ## 7. Next Steps
 
-1. **Confirm the bottleneck** — re-run profiler with GGML_SCHED_TRACE=2 to log individual tensor names/sizes in `input_copy_slow`
-2. **Prototype A1** — extend `try_async_tensor_copy` to INPUT-tagged tensors, measure TG impact
-3. **Prototype A2** — add early-issue pattern for INPUT tensor copies before event wait
-4. **Benchmark** — TG-only decode with and without the changes, measure Split 2 phase breakdown
+1. ~~**Confirm the bottleneck**~~ — **COMPLETE (D7.5).** `input_copy_slow` is GPU event sync, not H2D.
+2. ~~**Prototype A1 + A2**~~ — **SUPERSEDED by D6.10.** Event pipelining achieved the overlap without async H2D.
+3. **D6.10 follow-up** — **COMPLETE.** See `docs/wayfinder/D6.10-implementation-analysis.md`.
+4. **Layer 1 kernel optimization** — With Layers 2-3 exhausted (D6.10, D7.3), the remaining bottleneck is GPU compute. See Slice 7 vectors in `docs/research/slice-7-kernel-anvil-integration.md` and `docs/wayfinder/D7-REEXAMINATION.md`.
 
 ---
 

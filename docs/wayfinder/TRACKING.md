@@ -3,7 +3,8 @@
 **Branch:** Path-D-Gpipeline-Assembly-Line
 **Date:** 2026-07-10
 **Parent:** `docs/rpc-multi-backend-pipeline-plus/TRACKING.md`
-**Status:** SLICE 1 + SLICE 2 + SLICE 3 + SLICE 4 COMPLETE — RPC event fix, Path C stepping stone + profiler v1, deeper pipelining n_stages > 2, multi-seq Mode B (2026-07-13). SLICE 6 Phase 1-3 complete (D7.1 CLOSED, D7.2-D7.6 COMPLETE); vectors A/B/B2/C all resolved.
+**Status:** SLICE 1-6 COMPLETE — RPC event fix, Path C + profiler v1, deeper pipelining, multi-seq Mode B, pipeline depth vectors (A/B/B2/C) resolved. SLICE 7 READY — kernel-anvil research complete; vectors D/E/F/G identified (small_k fix, shape-specific tuning, quantize fusion, autoforge). Optimization landscape: `OPTIMIZATION-LANDSCAPE-L1-L3.md`.
+**Optimization overview:** `OPTIMIZATION-LANDSCAPE-L1-L3.md` — Layer 1-3 framework with accomplished/tried/open leads, bottleneck map, priority order.
 
 ---
 
@@ -21,7 +22,8 @@
 | Deeper Pipelining (D5.1-D5.7) | COMPLETE | 2026-07-11 |
 | Mode B Microbatch (D6.1-D6.7) | COMPLETE | 2026-07-13 |
 | Advanced Optimization (R3.1-R3.5) | PENDING | - |
-| Pipeline Depth + Split Overhead (D7.1-D7.6) | COMPLETE | 2026-07-16 |
+| Pipeline Depth + Split Overhead (D7.1-D7.8) | COMPLETE | 2026-07-17 (D7.1-D7.7 done; D7.8 resolved: CMake misconfiguration) |
+| Layer 1-3 Kernel Optimization (Slice 7) | READY | 2026-07-17 (kernel-anvil research complete; vectors D/E/F/G identified) |
 
 ## Blockers
 
@@ -220,6 +222,47 @@ Full analysis: `docs/wayfinder/D4.1-romulus-baseline-analysis.md`
 | D7.4 | ✅ complete | Vector B: Skip-SSM verify prototype complete. **Upper bound: +75% TG, output collapses.** 5 refinement approaches (R1-R5) + decision matrix + revisit criteria in `docs/research/d74-code-skip-ssm-verify.md`. |
 | D7.5 | ✅ resolved | Vector B2: RPC download overlap investigated. D7.6 diagnostic (GGML_SCHED_TRACE=2) revealed `input_copy_slow` (2,645 µs) is GPU event_synchronize wait, not H2D copy (97.6% is 16-byte `leaf_70`). No H2D to overlap. Redirect to D6.10. `docs/research/d75-rpc-overlap-research.md`. |
 | D7.6 | ✅ complete | Vector C: rocprofv3 kernel profiling. Fix: `--kernel-trace` without `--hip-trace` avoids HIP interception conflict. Per-kernel breakdown for 4 models across Qwen/Gemma-4 MoE and dense architectures. MatMul 55-76%, attention 3-10%, SSM 0-2.4%, MoE routing 0-4%. **Stall hunt (post-D6.10.1):** 40,343 dispatches analyzed — P95 gap 5 us, 99.1% gaps <10 us (perfect micro-pipelining). 107 gaps >1ms are all GPipe stage boundary bubbles, not sync stalls. Both Q3/Q4 compute streams idle simultaneously at 0% coverage during gaps — expected GPipe fill/drain. **Profiling magnification:** 8.8x overhead inflates 1-4 ms gaps to 10-36 ms. No new sync stalls found. `docs/research/d76-rocprofv3-kernel-profile.md` + `docs/research/d76b-multi-model-kernel-comparison.md`. |
+| D7.7 | ✅ complete | WMMA vec_dot prototype — 2.2x TPS but numerically incorrect (WMMA M=1 overhead). Pivoted to dp4a micro-optimizations (zero gain, memory-bound). Prototype preserved behind `GGML_HIP_WMMA_VECDOT_EXPERIMENTAL`. `docs/research/d77-wmma-prototype-findings.md`. |
+| D7.8 | ✅ complete | LDS activation caching for Q4_K MMVQ. Cooperatively loads 24 `block_q8_1` structs into `__shared__`, eliminating 16x redundant global reads. Inlined vec_dot for `ds_read` on AMDGPU. Built behind `-DGGML_HIP_MMVQ_LDS_PROTOTYPE=ON`. **Bug was CMake misconfiguration** (`-DGGML_HIPBLAS=ON` ignored; needs `-DGGML_HIP=ON` + proper HIP compiler path). Both baseline (174.7/65.3 t/s pp/tg) and LDS prototype (175.7/63.4 t/s) produce correct tokens. No significant throughput delta — MMVQ is small fraction of decode time. `docs/wayfinder/HANDOFF-D7.8-LDS-prototype.md` |
+
+### D7 Re-examination (2026-07-17)
+
+Re-examination of D7.0-D7.8 identified resolved items, corrected a false negative, and surfaced open leads complementary to Slice 7. Full analysis: `docs/wayfinder/D7-REEXAMINATION.md`.
+
+**Resolved items (corrected from source docs):**
+- rocprofv3: ~~BLOCKED~~ **RESOLVED (D7.6)** — `--kernel-trace` without `--hip-trace**
+- Skip-SSM +75% upper bound: **REVISED to ~5% (D7.6)** — SSM = 2.4% of GPU time
+- D6.10: **NOT missing** — lives in `docs/wayfinder/D6.10-implementation-analysis.md`, shipped as `f29a92eb1` (-98.6% input_copy_slow)
+
+**Open leads carried to Slice 7:**
+
+| Lead | Source | Priority | Connection |
+|------|--------|----------|------------|
+| dp4a micro-optimizations (6 ideas, never pursued) | D7.7 | HIGH | Same kernels as Vector D |
+| LDS standalone test (never run, -1.9 t/s root cause unknown) | D7.8 | HIGH | Multiplicative with Vector D |
+| FA + Q4_K_M benchmark (skipped in D7.3) | D7.3 | MEDIUM | Independent quick win |
+| 5:4 FAST/SLOW pattern (never quantified) | D7.2 | LOW | Targets L1 to right step type |
+
+### Slice 7 — Layer 1-3 Kernel Optimization (kernel-anvil integration)
+
+| Ticket | Status | Notes |
+|--------|--------|-------|
+| D7.9 | 📋 ready | **Vector E: small_k off-by-one fix** — Change `<` to `<=` in `should_use_small_k` threshold in `mmvq.cu`. Activates multi-row processing for K=4096 shapes (gate_proj, up_proj, q_proj, o_proj). P0 priority, 1-line change, zero risk. Expected: 5-15% TG on affected shapes. |
+| D7.10 | 📋 ready | **Vector D: kernel-anvil shape-specific tuning** — Apply smithy patch, run `gguf-optimize` for romulus models, benchmark. Targets MatMul (55.4% of GPU time). P1 priority. Expected: 10-30% TG. Research: `docs/research/slice-7-kernel-anvil-integration.md`. |
+| D7.11 | 📋 ready | **Vector F: quantize_q8_1 fusion** — Fuse input quantization into MMVQ kernel. Eliminates 7.9% GPU time + 224 launches/token. P1 priority. Expected: 5-10% TG. |
+| D7.12 | 📋 ready | **Vector G: autoforge custom kernels** — Generate purpose-built HIP kernels for top 5 shapes. P2 priority (defer until D proven). Expected: 15-25% on targeted shapes. |
+
+### Slice 7 — Re-examination Follow-up Leads (D7.13-D7.16)
+
+| Ticket | Status | Notes |
+|--------|--------|-------|
+| D7.13 | 📋 ready | **dp4a micro-optimizations** (from D7.7) — Register analysis (why Q4_K is nwarps=1, not 8), dual-issue scheduling, simplify scale-unpack branch. QR4_K=2 (not 8, corrected by research). Same Q4_K/Q6_K kernels as D7.10. HIGH priority. `docs/research/d713-dp4a-research-scope.md`. |
+| D7.14 | 📋 ready | **LDS standalone test + root-cause** (from D7.8) — Run `test-lds-mmvq.hip.cu` with rocprofv3 to isolate -1.9 t/s regression. Determines go/no-go for LDS path. HIGH priority (diagnostic). `docs/wayfinder/HANDOFF-D7.8-LDS-prototype.md`. |
+| D7.15 | 📋 ready | **FA + Q4_K_M benchmark** (from D7.3) — One benchmark run with 20GB Q4_K_M model on 2-GPU Romulus. Independent quick win. MEDIUM priority. Expected: 15-25% combined with FA. `docs/research/d73-vector-a-gpu-compute-reduction.md`. |
+| D7.16 | 📋 ready | **5:4 FAST/SLOW pattern analysis** (from D7.2) — Quantify which layers/tokens cause each step type. Informational, targets L1 work. LOW priority. `docs/research/d72-gpu-timeline-profile.md`. |
+
+**Optimization landscape:** `OPTIMIZATION-LANDSCAPE-L1-L3.md` — Layer 1-3 framework with accomplished/tried/open leads, bottleneck map, priority order.
+**Re-examination:** `docs/wayfinder/D7-REEXAMINATION.md` — full D7.0-D7.8 retrospective with resolved items and open leads.
 
 ### R3 — Advanced Optimization (pending)
 
@@ -252,16 +295,22 @@ Aborts if VRAM/RAM/disk/running-instances indicate OOM risk.
 
 ## Next Actions
 
-1. **D7.3 Vector A** — ✅ COMPLETE (2026-07-16). FA on HIP: `GGML_HIP_ROCWMMA_FATTN=ON`, rebuild, benchmarked. **+7.5% TG (133.0 -> 143.0 t/s)**. `docs/research/d73-vector-a-gpu-compute-reduction.md`.
-2. **D7.4 Vector B** — ✅ COMPLETE (2026-07-16). Skip-SSM verify: +75% upper bound established, output collapses. 5 refinement approaches + decision matrix + revisit criteria in `docs/research/d74-code-skip-ssm-verify.md`.
-3. **D7.5 Vector B2** — ✅ RESOLVED (2026-07-16). `GGML_SCHED_TRACE=2` diagnostic: `input_copy_slow` (2,645 µs) is GPU `event_synchronize` wait, not H2D copy. 97.6% is 16-byte `leaf_70`. No copy to overlap. Redirect to D6.10. `docs/research/d75-rpc-overlap-research.md`.
-4. **D7.6 Vector C** — ✅ COMPLETE (2026-07-16). rocprofv3 `--kernel-trace` works. 4-model comparison: MatMul 55-76%, attention 3-10% (dense 3x more), SSM 2% (10x cheaper than attention). Q4_K matmul 29% faster than Q6_K. MTP gives +74% TPS. `docs/research/d76-rocprofv3-kernel-profile.md` + `docs/research/d76b-multi-model-kernel-comparison.md`. Usage guide: `docs/research/rocprofv3-profiling-guide.md`.
-5. **D6.10 GPU Event Pipelining Fix** — ✅ COMPLETE (2026-07-16). D6.10 event host + copy-slot rotation already shipped (`f29a92eb1`). D6.10.1: skip `event_synchronize` for host→GPU INPUT copies with n_copies>1. Split 2 `input_copy_slow`: 165,000 µs → 2,359 µs (-98.6%). TPS: 124.4 → 129.8 (+4.3%). 12/12 GPipe tests pass. `docs/wayfinder/D6.10-implementation-analysis.md`.
-6. **D7.7 WMMA vec_dot prototype (complete)** — WMMA-accelerated Q4_K vec_dot built and benchmarked. Shows 2.2x TPS increase but numerically suspect (incorrect tile layout, 16x too much work for M=1). Architecturally wrong for single-token MMVQ — WMMA requires M >= 8 to amortize tile overhead. **Decision: PIVOT to dp4a micro-optimizations.** Prototype code preserved behind `#ifdef GGML_HIP_WMMA_VECDOT_EXPERIMENTAL` guards. `docs/research/d77-wmma-prototype-findings.md`.
-7. **Stall hunt complete** — Post-D6.10.1 rocprofv3 kernel-trace (40,343 dispatches) confirms no remaining sync stalls. P95 inter-kernel gap: 5 us. All gaps >1ms are GPipe stage boundary bubbles inflated 8.8x by profiling overhead. See `docs/research/d76-rocprofv3-kernel-profile.md#6-stall-hunt--gpu-idle-gap-analysis-d76-post-d6101`.
-6. **R3 Advanced Optimization** — Adaptive depth + deprecation cleanup (paused for Slice 6 vectors)
-7. **D4.11-D4.14 Pareto Optimizer** — Planned + ticketed, future sprint
-8. **Cluster performance benchmarks** — D5.7 deferred: global_3bk_pct, overlap_pct on 5-GPU cluster (3+ GPUs where n_stages>2 shows benefit)
+1. **D7.9 Vector E (P0)** — small_k off-by-one fix. Change `<` to `<=` in `should_use_small_k`. 1 line, zero risk. Expected: 5-15% TG on K=4096 models. `docs/research/slice-7-kernel-anvil-integration.md`.
+2. **D7.10 Vector D (P1)** — kernel-anvil shape-specific tuning. Apply smithy patch, run `gguf-optimize`, benchmark. Expected: 10-30% TG. `docs/research/slice-7-kernel-anvil-integration.md`.
+3. **D7.11 Vector F (P1)** — quantize_q8_1 fusion. Fuse input quantization into MMVQ. Expected: 5-10% TG. `docs/research/slice-7-kernel-anvil-integration.md`.
+4. **D7.12 Vector G (P2)** — autoforge custom kernels. Generate purpose-built HIP kernels for top 5 shapes. `docs/research/slice-7-kernel-anvil-integration.md`.
+5. **R3 Advanced Optimization** — Adaptive depth + deprecation cleanup (paused for Slice 7 vectors).
+6. **D4.11-D4.14 Pareto Optimizer** — Planned + ticketed, future sprint.
+7. **Cluster performance benchmarks** — D5.7 deferred: global_3bk_pct, overlap_pct on 5-GPU cluster (3+ GPUs where n_stages>2 shows benefit).
+
+---
+
+## Slice 7 Research
+
+- **kernel-anvil integration research:** `docs/research/slice-7-kernel-anvil-integration.md` — Layer 1-3 framework, 4 new vectors (D/E/F/G), prioritization.
+- **Optimization landscape:** `OPTIMIZATION-LANDSCAPE-L1-L3.md` — all Layer 1-3 leads with status.
+- **D7.0-D7.8 re-examination:** `docs/wayfinder/D7-REEXAMINATION.md` — resolved items, corrected findings, open leads complementary to Slice 7 vectors.
+- **kernel-anvil source:** `~/projects/kernel-anvil` — the optimization tool itself (2.25x decode speedup on Qwen3.5-27B).
 
 ---
 

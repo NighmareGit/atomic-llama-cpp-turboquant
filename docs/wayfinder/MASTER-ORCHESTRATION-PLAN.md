@@ -1,8 +1,8 @@
 # Master Orchestration Plan — Path D Full Workflow
 
 **Branch:** Path-D-Gpipeline-Assembly-Line  
-**Date:** 2026-07-13  
-**Status:** Slice 1 + Slice 2 + Slice 3 + Slice 4 complete — RPC event fix, dual-GPU validation, Path C stepping stone + profiler v1 + deeper pipelining + multi-seq Mode B delivered. Known limitation D6.10 tracked for GPU event pipelining fix. Slice 6 planned — pipeline depth (n_copies > 1) + split overhead mitigation (2026-07-16).
+**Date:** 2026-07-17
+**Status:** Slice 1-4 complete (RPC event fix, dual-GPU validation, Path C + profiler v1, deeper pipelining n_stages>2, multi-seq Mode B). Slice 6 complete (D7.1-D7.6: all vectors A/B/B2/C resolved; D6.10 GPU event pipelining shipped). Slice 7 ready (D7.7 WMMA closed as not viable; D7.8 LDS caching prototype complete -- CMake misconfiguration resolved; D7.9-D7.12 kernel-anvil vectors identified). Optimization framework: `OPTIMIZATION-LANDSCAPE-L1-L3.md`.
 
 ---
 
@@ -46,17 +46,21 @@ Documentation Phase (/wayfinder or manual)
 | Pareto Optimizer (D4 ext.) | 📋 planned | D4.11-D4.14 — ticketed, NOT built this sprint |
 | Deeper Pipelining (D5) | ✅ complete | D5.1-D5.7 — n_stages>2 implemented. Completed 2026-07-11. |
 | Mode B Microbatch (D6) | ✅ complete | D6.1-D6.9 — multi-seq, per-seq events, GRAPH_COMPUTE_STAGE. Completed 2026-07-13. |
-| GPU Event Pipelining Fix (D6.10) | 📋 planned | gpipe_events on GPU backend — ticketed, known limitation KL-D6.1 |
-| Pipeline Depth + Split Overhead (D7) | ✅ complete | D7.1 closed, D7.2-D7.6 complete. All vectors A/B/B2/C resolved. q6_K matmul identified as #1 optimization target (35.2% of GPU). Slice 6 at `docs/tickets/path-d-slices.md`. |
-| Advanced Optimization (R3) | ⏳ pending | R3.1-R3.5 tickets |
+| GPU Event Pipelining Fix (D6.10) | ✅ complete | gpipe_events on GPU backend — shipped `f29a92eb1` + D6.10.1 fix (2026-07-16). `input_copy_slow`: 165,000 us -> 2,359 us (-98.6%). +4.3% TPS. 12/12 GPipe tests pass. `docs/wayfinder/D6.10-implementation-analysis.md`. |
+| Pipeline Depth + Split Overhead (D7.1-D7.6) | ✅ complete | D7.1 n_copies CLOSED. D7.2-D7.6: GPU timeline, FA on HIP (+7.5%), skip-SSM (+75% bound, quality collapse), RPC overlap (resolved: no H2D bottleneck), rocprofv3 kernel profiling. MatMul 55-76% GPU identified as #1 target. All vectors resolved. |
+| Kernel Optimization (D7.7-D7.8) | ✅ complete | D7.7 WMMA vec_dot: CLOSED as not viable (2.2x speedup is artifact, dequant overhead dominates for M=1). Pivoted to dp4a micro-optimizations. `docs/research/d77-wmma-prototype-findings.md`. D7.8 LDS caching: prototype built, smoke test passed (GPU hang was CMake misconfiguration, not kernel bug). No significant throughput delta. `docs/wayfinder/HANDOFF-D7.8-LDS-prototype.md`. |
+| Layer 1-3 Optimization Framework | ✅ complete | `OPTIMIZATION-LANDSCAPE-L1-L3.md` — full three-layer breakdown with accomplished/tried/open leads, bottleneck map, priority order. |
+| Slice 7: Layer 1-3 Kernel Vectors | 📋 ready | D7.9-D7.12 — kernel-anvil vectors: small_k fix (P0), shape-specific tuning (P1), quantize fusion (P1), autoforge (P2). Research: `docs/research/slice-7-kernel-anvil-integration.md`. |
+| Slice 7 Re-examination + Follow-up Leads | 📋 ready | D7-REEXAMINATION completed 2026-07-17. D7.13-D7.16: dp4a micro-optimizations (HIGH), LDS root-cause (HIGH), FA+Q4_K_M benchmark (MEDIUM), FAST/SLOW pattern analysis (LOW). `docs/wayfinder/D7-REEXAMINATION.md`. |
+| Advanced Optimization (R3) | ⏳ pending | R3.1-R3.5 tickets (adaptive depth, deprecation cleanup). |
 
-**Hardware:** Romulus local — AMD 7900 XTX (client, ROCm) + NVIDIA 3060 Ti (RPC server, CUDA). Models at `/mnt/models`. GPU telemetry via `rocm-smi` + `nvidia-smi`. Cluster (triton 5-GPU, remus) deferred to later sessions.
+**Hardware:** Romulus local — AMD 7900 XTX (client, ROCm) + NVIDIA 3060 Ti (RPC server, CUDA). Models at `/home/hunter/models` (local btrfs). GPU telemetry via `rocm-smi` + `nvidia-smi`. Cluster (triton 5-GPU, remus) deferred to later sessions.
 
 ### Known Infrastructure Limitations
 
 | Limitation | Impact | Workaround | Ticket |
 |------------|--------|------------|--------|
-| **FUSE/NTFS mmap hard-link corruption** (KL-INFRA-1) — Model files on `/mnt/models` (fuseblk NTFS SMB share) with hard-link count > 1 return silently corrupted data via `MAP_SHARED`. Byte-identical files at different paths produce different inference results. Diagnosed 2026-07-14. | Any model loaded from SMB share without `--mlock` may produce garbage output. | `--mlock` flag (forces full read + mlock into RAM), or copy model to a fresh inode (local ext4/xfs). `--no-mmap` alone does NOT fix it. | Dx.1 |
+| **FUSE/NTFS mmap hard-link corruption** (KL-INFRA-1) — Model files on fuseblk NTFS SMB shares with hard-link count > 1 return silently corrupted data via `MAP_SHARED`. Diagnosed 2026-07-14. **Resolved for romulus:** models moved to local btrfs (`/home/hunter/models`, nlink=1). | Any model loaded from SMB share without `--mlock` may produce garbage output. | `--mlock` flag, or copy model to local ext4/xfs/btrfs. `--no-mmap` alone does NOT fix it. | Dx.1 |
 
 ---
 
@@ -103,7 +107,7 @@ Documentation Phase (/wayfinder or manual)
 
 ### Beyond Phases (D4-R3)
 
-D1-D3 and D4 (core + profiler v1) are complete. Next: D5.
+D1-D3, D4 (core + profiler v1), D5 (deeper pipelining), D6 (multi-seq Mode B + D6.10), D7.1-D7.6 (pipeline depth vectors), D7.7 (WMMA closed), and D7.8 (LDS complete) are complete. Slice 7 ready (D7.9-D7.12 kernel-anvil vectors).
 
 Each beyond-phase follows the workflow loop: research → design → spec → prototype → implement → test → review (max 3 loops).
 
@@ -112,8 +116,10 @@ Each beyond-phase follows the workflow loop: research → design → spec → pr
 | D4 Path C + Profiler v1 | D4.1-D4.10 | `D4-PATH-C-AGENT-PLAN.md` (romulus local) |
 | D4 Pareto Optimizer | D4.11-D4.14 | Stored in `docs/tickets/path-d-tickets.md` — future sprint |
 | D5 Deeper Pipelining | D5.1-D5.7 | `D5-DEEPER-PIPELINE-AGENT-PLAN.md` |
-| D6 Mode B Microbatch | D6.1-D6.7 | `D6-MODE-B-AGENT-PLAN.md` |
+| D6 Mode B Microbatch | D6.1-D6.9 + D6.10 | `D6-MODE-B-AGENT-PLAN.md` |
 | D7 Pipeline Depth + Split Overhead | D7.1-D7.6 | `D7.0-pipeline-depth-research.md` |
+| D7 Kernel Optimization | D7.7 (WMMA), D7.8 (LDS) | `docs/research/d77-wmma-prototype-findings.md`, `HANDOFF-D7.8-LDS-prototype.md` |
+| Slice 7 kernel-anvil vectors | D7.9-D7.12 | `docs/research/slice-7-kernel-anvil-integration.md` |
 | R3 Advanced Optimization | R3.1-R3.5 | `R3-ADVANCED-OPT-AGENT-PLAN.md` |
 
 ---
@@ -132,6 +138,8 @@ All plans are in `docs/wayfinder/`:
 | `D0.5-TASK-AGENT-PLAN.md` | Implementation seam plan |
 | `D1-TO-TICKETS-AGENT-PLAN.md` | Work breakdown plan |
 | `D2-IMPLEMENTATION-AGENT-PLAN.md` | Implementation loop plan |
+| `OPTIMIZATION-LANDSCAPE-L1-L3.md` | Layer 1-3 optimization framework (2026-07-17) |
+| `HANDOFF-D7.8-LDS-prototype.md` | D7.8 handoff with next steps (2026-07-17) |
 | `MASTER-ORCHESTRATION-PLAN.md` | This file |
 
 ---
@@ -142,6 +150,12 @@ All plans are in `docs/wayfinder/`:
 |----------|---------|
 | `docs/path-d-spec.md` | Master specification |
 | `docs/tickets/path-d-tickets.md` | Work breakdown with blocking edges |
+| `docs/tickets/path-d-slices.md` | Slice definitions + acceptance criteria |
+| `docs/wayfinder/OPTIMIZATION-LANDSCAPE-L1-L3.md` | Layer 1-3 optimization framework |
+| `docs/research/d76-rocprofv3-kernel-profile.md` | Per-kernel GPU timing (primary Layer 2 data) |
+| `docs/research/d76b-multi-model-kernel-comparison.md` | 4-model kernel comparison |
+| `docs/research/d77-wmma-prototype-findings.md` | D7.7 WMMA vec_dot findings (CLOSED) |
+| `docs/research/slice-7-kernel-anvil-integration.md` | kernel-anvil vectors mapped to Layer 1 |
 | `docs/adr/0002-gpipe-kv-ordering.md` | Architecture decisions |
 | `docs/wayfinder/D0.2-split-topology-map.md` | Split analysis |
 
@@ -246,29 +260,42 @@ Path C core (D4.1-D4.6) + Profiler v1 (D4.7-D4.10) delivered on romulus dual-GPU
 
 ## Next Action
 
-**Ready for Slice 6 — Pipeline Depth: n_copies > 1 + Split Overhead Mitigation.**
+**Current blocker: Garbage tokens during decode.** All builds from HEAD `19db22abb` produce garbage output during autoregressive generation. Prompt processing works correctly. This blocks all benchmarking and validation.
 
-Grab Slice 6 from `docs/tickets/path-d-slices.md`:
-
-```
-/handoff "Slice 6: Pipeline Depth — n_copies > 1 + split overhead mitigation"
-→ Read docs/tickets/path-d-slices.md Slice 6 section,
-  docs/research/split-overhead-mitigation.md,
-  docs/wayfinder/D7.0-pipeline-depth-research.md
-→ Execute D7.1 (increase n_copies 1→2):
-  1. /prototype — A/B test n_copies=1 vs 2 via llama-cli --parallel
-  2. /code-review — review prototype diff
-  3. /improve-codebase-architecture — assess default config
-  4. Test run — validate TG > 130 t/s, no OOM
-  5. /implement — bake into production config
-→ D7.2-D7.5: document deferred strategies with activation conditions
-→ On completion update path-d-slices.md completion footer and TRACKING.md D7 status
-```
-
-**After Slice 6: Slice 5 — R3 Advanced Optimization + Deprecation Cleanup.**
+### Immediate (unblock D7.8 smoke test)
 
 ```
-/handoff "Slice 5: Advanced Optimization — adaptive depth refinement + deprecation cleanup" → Read docs/tickets/path-d-slices.md Slice 5 section, docs/tickets/path-d-tickets.md R3.1-R3.5, docs/wayfinder/TRACKING.md, docs/wayfinder/D5.1-split-timing-analysis.md, docs/adr/0003-adaptive-pipeline-depth.md → Execute R3.1-R3.5 (analyze adaptive depth → ADR-006 → deprecation warnings for B+11/B+14/B+7f → refine adaptive depth → full regression test) → On completion update path-d-slices.md completion footer and TRACKING.md R3 status
+1. Find known-good baseline:
+   git checkout b145d6fce  # pre-WMMA commit (D6.10.1 skip GPU event wait)
+   cd build-hip && cmake .. -DGGML_HIPBLAS=ON -DAMDGPU_TARGETS=gfx1100 -DGGML_HIP_ROCWMMA_FATTN=ON
+   make -j$(nproc) llama-cli
+   build-hip/bin/llama-cli -m /home/hunter/models/gemma-4-12b-it-Q4_K_M.gguf -ngl 99 -p "Hello" -n 4 -t 16 --mlock
+
+2. CPU-only inference to verify model integrity:
+   build-hip/bin/llama-cli -m /home/hunter/models/gemma-4-12b-it-Q4_K_M.gguf -ngl 0 -p "Hello" -n 4 -t 16 --no-mmap
+
+3. If baseline works, re-apply D7.8 LDS prototype on known-good commit, benchmark tg128.
+```
+
+### After smoke test passes
+
+```
+/handoff "Slice 7 continued: D7.8 validation + pipeline"
+-> Read OPTIMIZATION-LANDSCAPE-L1-L3.md for full context
+-> Execute:
+  1. Benchmark D7.8 LDS prototype vs baseline (tg128)
+  2. Run pipeline: improve-codebase-architecture -> code-review -> diagnose-bugs -> implement
+  3. Evaluate q4_K_M re-quantization (Layer 3, highest ROI: +15-20% TG, no code changes)
+  4. kernel-anvil D7.9-D7.12 pending (small_k fix, shape-specific tuning, quantize fusion, autoforge)
+```
+
+**After Slice 7: Slice 5 — R3 Advanced Optimization + Deprecation Cleanup.**
+
+```
+/handoff "Slice 5: Advanced Optimization"
+-> Read docs/tickets/path-d-slices.md Slice 5 section,
+   docs/wayfinder/TRACKING.md, docs/adr/0003-adaptive-pipeline-depth.md
+-> Execute R3.1-R3.5 (adaptive depth analysis -> ADR-006 -> deprecation warnings -> refine -> regression test)
 ```
 
 ---

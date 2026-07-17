@@ -219,6 +219,8 @@ option(GGML_HIP_NO_VMM                      "ggml: do not try to use HIP VMM"   
 option(GGML_HIP_ROCWMMA_FATTN               "ggml: enable rocWMMA for FlashAttention"         OFF)
 option(GGML_HIP_MMQ_MFMA                    "ggml: enable MFMA MMA for CDNA in MMQ"           ON)
 option(GGML_HIP_WMMA_VECDOT_EXPERIMENTAL    "ggml: enable experimental WMMA vec_dot for Q4_K (D7.7 prototype)" OFF)
+option(GGML_HIP_MMVQ_LDS_PROTOTYPE         "ggml: enable LDS activation caching for Q4_K MMVQ (D7.8 prototype)" OFF)
+option(GGML_HIP_D713_NWARPS8_Q4K            "ggml: PROTOTYPE D7.13 — force nwarps=8 for Q4_K on RDNA3 (throwaway)" OFF)
 option(GGML_HIP_EXPORT_METRICS              "ggml: enable kernel perf metrics output"         OFF)
 option(GGML_MUSA_GRAPHS                     "ggml: use MUSA graph, experimental, unstable"    OFF)
 option(GGML_MUSA_MUDNN_COPY                 "ggml: enable muDNN for accelerated copy"         OFF)
