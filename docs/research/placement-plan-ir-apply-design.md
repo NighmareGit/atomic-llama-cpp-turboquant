@@ -228,7 +228,7 @@ Capacity discover (ticket 04) remains P0 dependency for generated plans; manual 
 | Full partition validate (gap/overlap) | Done |
 | `split_mode=layer` default; refuse illegal tensor on mixed local+RPC | Done |
 | Empty `overrides` / `heat.status=none` | Done |
-| Non-empty `overrides` | **Rejected** with clear error until issue 10 |
+| Non-empty `overrides` apply (issue 10) | Done - maps to `tensor_buft_overrides` |
 | Re-discover at apply; missing `backend_id` fail-loud | Done |
 | Plan wins: warn and ignore `-ts` / `--fit` / CLI `-sm` | Done |
 | Native per-layer map (not proportion `-ts` authority) | Done via `layer_devices` |

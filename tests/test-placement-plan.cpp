@@ -126,7 +126,7 @@ static void test_illegal_tensor_mixed() {
     EXPECT_TRUE(found);
 }
 
-static void test_nonempty_overrides_rejected() {
+static void test_nonempty_overrides_validate_ok() {
     const char * p = R"json({
       "schema_version": 1,
       "model": { "n_layer": 2 },
@@ -139,14 +139,78 @@ static void test_nonempty_overrides_rejected() {
     std::vector<placement_plan_error> err;
     EXPECT_TRUE(placement_plan_parse_json(p, plan, err));
     err.clear();
-    EXPECT_TRUE(!placement_plan_validate(plan, 2, false, err));
+    EXPECT_TRUE(placement_plan_validate(plan, 2, false, err));
+    EXPECT_TRUE(plan.overrides.size() == 1);
+    EXPECT_EQ_STR(plan.overrides[0].backend_id, "cpu");
+}
+
+static void test_override_bad_regex() {
+    const char * p = R"json({
+      "schema_version": 1,
+      "model": { "n_layer": 1 },
+      "assignments": [
+        { "layer_start": 0, "layer_end": 1, "backend_id": "cpu" }
+      ],
+      "overrides": [ { "match": "[invalid", "backend_id": "cpu" } ]
+    })json";
+    placement_plan plan;
+    std::vector<placement_plan_error> err;
+    EXPECT_TRUE(placement_plan_parse_json(p, plan, err));
+    err.clear();
+    EXPECT_TRUE(!placement_plan_validate(plan, 1, false, err));
+}
+
+static void test_override_missing_backend() {
+    const char * p = R"json({
+      "schema_version": 1,
+      "model": { "n_layer": 2 },
+      "assignments": [
+        { "layer_start": 0, "layer_end": 2, "backend_id": "cpu" }
+      ],
+      "overrides": [ { "match": "blk\\..*", "backend_id": "rpc://missing:1#0" } ]
+    })json";
+    placement_plan plan;
+    std::vector<placement_plan_error> err;
+    EXPECT_TRUE(placement_plan_parse_json(p, plan, err));
+    placement_inventory inv;
+    inv.topology_complete = true;
+    placement_apply_result apply;
+    err.clear();
+    EXPECT_TRUE(!placement_plan_prepare_apply(plan, 2, inv, false, apply, err));
     bool found = false;
     for (const auto & e : err) {
-        if (e.message.find("override") != std::string::npos) {
+        if (e.message.find("override") != std::string::npos ||
+            e.message.find("missing") != std::string::npos) {
             found = true;
         }
     }
     EXPECT_TRUE(found);
+}
+
+static void test_override_cpu_prepare() {
+    // All layers on "cpu" + override to cpu: no live GPU required
+    const char * p = R"json({
+      "schema_version": 1,
+      "model": { "n_layer": 2 },
+      "assignments": [
+        { "layer_start": 0, "layer_end": 2, "backend_id": "cpu" }
+      ],
+      "overrides": [ { "match": "token_embd", "backend_id": "cpu" } ]
+    })json";
+    placement_plan plan;
+    std::vector<placement_plan_error> err;
+    EXPECT_TRUE(placement_plan_parse_json(p, plan, err));
+    placement_inventory inv;
+    inv.topology_complete = true;
+    placement_apply_result apply;
+    err.clear();
+    EXPECT_TRUE(placement_plan_prepare_apply(plan, 2, inv, false, apply, err));
+    EXPECT_TRUE(apply.tensor_buft_overrides.size() >= 2); // one + null term
+    EXPECT_TRUE(apply.tensor_buft_overrides[0].pattern != nullptr);
+    EXPECT_TRUE(apply.tensor_buft_overrides.back().pattern == nullptr);
+    EXPECT_TRUE(!apply.override_notes.empty());
+    // override wins policy note present
+    EXPECT_TRUE(apply.override_notes[0].find("override wins") != std::string::npos);
 }
 
 static void test_cpu_range_ok() {
@@ -192,7 +256,10 @@ int main() {
     test_parse_and_validate_ok();
     test_gap_and_overlap();
     test_illegal_tensor_mixed();
-    test_nonempty_overrides_rejected();
+    test_nonempty_overrides_validate_ok();
+    test_override_bad_regex();
+    test_override_missing_backend();
+    test_override_cpu_prepare();
     test_cpu_range_ok();
     test_prepare_missing_backend();
 

@@ -717,6 +717,9 @@ struct common_params {
     // Filled by common_init when plan is active (storage for llama_model_params pointers)
     std::vector<ggml_backend_dev_t> placement_devices;       // null-terminated for mparams.devices
     std::vector<ggml_backend_dev_t> placement_layer_devices; // per-layer map
+    // Override pattern strings + buft list (null-terminated); replaces CLI -ot when plan active
+    std::vector<std::string> placement_override_patterns;
+    std::vector<llama_model_tensor_buft_override> placement_tensor_buft_overrides;
     bool placement_plan_active = false;
 };
 

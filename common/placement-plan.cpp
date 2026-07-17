@@ -8,6 +8,7 @@
 #include <cctype>
 #include <fstream>
 #include <map>
+#include <regex>
 #include <set>
 #include <sstream>
 
@@ -136,8 +137,23 @@ bool placement_plan_validate(
         add_err(errors, "assignments must not be empty");
     }
 
-    if (!plan.overrides.empty()) {
-        add_err(errors, "plan overrides[] not empty: tensor override apply is not implemented in this slice (issue 10); use overrides: []");
+    // overrides[] validated structurally here; backend resolve at prepare_apply
+    for (size_t oi = 0; oi < plan.overrides.size(); ++oi) {
+        const auto & o = plan.overrides[oi];
+        if (o.match.empty()) {
+            add_err(errors, "override " + std::to_string(oi) + " missing match pattern");
+        }
+        if (o.backend_id.empty()) {
+            add_err(errors, "override " + std::to_string(oi) + " missing backend_id");
+        }
+        if (!o.match.empty()) {
+            try {
+                std::regex re(o.match);
+                (void) re;
+            } catch (const std::regex_error & e) {
+                add_err(errors, "override " + std::to_string(oi) + " invalid regex: " + e.what());
+            }
+        }
     }
 
     std::string sm = plan.split_mode;
@@ -392,6 +408,11 @@ bool placement_plan_prepare_apply(
             needed.insert(id);
         }
     }
+    for (const auto & o : plan.overrides) {
+        if (!backend_id_is_cpu(o.backend_id)) {
+            needed.insert(o.backend_id);
+        }
+    }
 
     // usable lookup from live inventory
     std::map<std::string, uint64_t> usable_by_id;
@@ -485,5 +506,63 @@ bool placement_plan_prepare_apply(
     }
     out.devices = unique;
     out.debug_dump = placement_layer_map_to_string(out.layer_backend_ids);
+
+    // Tensor overrides: backend_id -> buft. Policy: override wins for matched tensors.
+    out.override_pattern_storage.clear();
+    out.tensor_buft_overrides.clear();
+    out.override_notes.clear();
+    out.override_pattern_storage.reserve(plan.overrides.size());
+    out.tensor_buft_overrides.reserve(plan.overrides.size() + 1);
+
+    for (size_t oi = 0; oi < plan.overrides.size(); ++oi) {
+        const auto & o = plan.overrides[oi];
+        ggml_backend_buffer_type_t buft = nullptr;
+        if (backend_id_is_cpu(o.backend_id)) {
+            buft = ggml_backend_cpu_buffer_type();
+        } else {
+            auto it = resolved.find(o.backend_id);
+            if (it == resolved.end() || it->second == nullptr) {
+                add_err(errors, "override " + std::to_string(oi) +
+                    " backend_id missing at apply: " + o.backend_id);
+                continue;
+            }
+            buft = ggml_backend_dev_buffer_type(it->second);
+            if (!buft) {
+                add_err(errors, "override " + std::to_string(oi) +
+                    " no buffer type for backend_id: " + o.backend_id);
+                continue;
+            }
+            if (std::find(unique.begin(), unique.end(), it->second) == unique.end()) {
+                unique.push_back(it->second);
+            }
+        }
+        out.override_pattern_storage.push_back(o.match);
+        // pointer filled after all patterns stored (vector may reallocate)
+        out.override_notes.push_back(
+            "override wins for match \"" + o.match + "\" -> " + o.backend_id +
+            " (layer assignment still applies to unmatched tensors)");
+    }
+
+    if (!errors.empty()) {
+        return false;
+    }
+
+    out.devices = unique;
+    // Build null-terminated buft override list with stable pattern c_str()
+    for (size_t i = 0; i < out.override_pattern_storage.size(); ++i) {
+        const auto & o = plan.overrides[i];
+        ggml_backend_buffer_type_t buft = nullptr;
+        if (backend_id_is_cpu(o.backend_id)) {
+            buft = ggml_backend_cpu_buffer_type();
+        } else {
+            buft = ggml_backend_dev_buffer_type(resolved[o.backend_id]);
+        }
+        out.tensor_buft_overrides.push_back({
+            out.override_pattern_storage[i].c_str(),
+            buft,
+        });
+    }
+    out.tensor_buft_overrides.push_back({nullptr, nullptr});
+
     return true;
 }

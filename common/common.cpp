@@ -1232,6 +1232,20 @@ static bool common_placement_prepare(common_params & params) {
         LOG_WRN("%s: placement plan active: plan split_mode wins over CLI -sm\n", __func__);
     }
     params.split_mode = LLAMA_SPLIT_MODE_LAYER;
+    // CLI -ot is ignored; plan.overrides is the channel
+    {
+        bool has_cli_ot = false;
+        for (const auto & o : params.tensor_buft_overrides) {
+            if (o.pattern != nullptr) {
+                has_cli_ot = true;
+                break;
+            }
+        }
+        if (has_cli_ot) {
+            LOG_WRN("%s: placement plan active: ignoring CLI -ot / --override-tensor (use plan overrides[])\n", __func__);
+            params.tensor_buft_overrides.clear();
+        }
+    }
 
     ggml_backend_load_all();
 
@@ -1297,11 +1311,35 @@ static bool common_placement_prepare(common_params & params) {
         }
     }
     params.devices.push_back(nullptr);
+
+    // Tensor overrides from plan (null-terminated). Pattern strings kept in params storage.
+    params.placement_override_patterns = std::move(apply.override_pattern_storage);
+    params.placement_tensor_buft_overrides.clear();
+    params.placement_tensor_buft_overrides.reserve(params.placement_override_patterns.size() + 1);
+    // Re-bind c_str after move into params.placement_override_patterns
+    for (size_t i = 0; i < params.placement_override_patterns.size(); ++i) {
+        // buft already resolved in apply.tensor_buft_overrides[i]
+        ggml_backend_buffer_type_t buft = nullptr;
+        if (i < apply.tensor_buft_overrides.size()) {
+            buft = apply.tensor_buft_overrides[i].buft;
+        }
+        params.placement_tensor_buft_overrides.push_back({
+            params.placement_override_patterns[i].c_str(),
+            buft,
+        });
+    }
+    params.placement_tensor_buft_overrides.push_back({nullptr, nullptr});
+    params.tensor_buft_overrides = params.placement_tensor_buft_overrides;
+
     params.placement_plan_active = true;
 
-    LOG_INF("%s: placement plan %s applied (%d layers)\n",
-        __func__, params.placement_plan_path.c_str(), n_layer);
+    LOG_INF("%s: placement plan %s applied (%d layers, %zu tensor overrides)\n",
+        __func__, params.placement_plan_path.c_str(), n_layer,
+        params.placement_override_patterns.size());
     LOG_INF("%s: layer map:\n%s", __func__, apply.debug_dump.c_str());
+    for (const auto & note : apply.override_notes) {
+        LOG_WRN("%s: %s\n", __func__, note.c_str());
+    }
 
     return true;
 }
@@ -1663,6 +1701,9 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
         mparams.tensor_split    = nullptr;
         if (!params.placement_devices.empty()) {
             mparams.devices = params.placement_devices.data();
+        }
+        if (!params.placement_tensor_buft_overrides.empty()) {
+            mparams.tensor_buft_overrides = params.placement_tensor_buft_overrides.data();
         }
     }
     mparams.use_mmap        = params.use_mmap;

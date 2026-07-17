@@ -1,12 +1,13 @@
 #pragma once
 
-// Placement plan IR parse + validate + apply preparation (P1 layer ranges).
+// Placement plan IR parse + validate + apply preparation (P1 layer ranges + overrides).
 // Design: docs/research/placement-plan-ir-apply-design.md
-// Issue 09: empty overrides only; non-empty => not implemented error.
+// Conflict: override wins for matched tensors (layer ranges still apply to unmatched).
 
 #include "placement-capacity.h"
 
 #include "ggml-backend.h"
+#include "llama.h"
 
 #include <cstdint>
 #include <string>
@@ -99,12 +100,19 @@ bool placement_plan_match_backends(
     const placement_inventory & inv,
     std::vector<std::string> & missing_ids);
 
-// Apply preparation result: devices list (null-terminated storage) + per-layer devices.
+// Apply preparation result: devices list + per-layer devices + tensor buft overrides.
 struct placement_apply_result {
     std::vector<ggml_backend_dev_t> devices;       // unique GPUs used, null-terminated later
     std::vector<ggml_backend_dev_t> layer_devices; // length n_layer; nullptr = CPU
     placement_layer_map             layer_backend_ids;
     std::string                     debug_dump;    // layer->backend assignment text
+
+    // Stable storage for override pattern C strings (must outlive tensor_buft_overrides pointers)
+    std::vector<std::string> override_pattern_storage;
+    // Null-terminated list for llama_model_params.tensor_buft_overrides
+    std::vector<llama_model_tensor_buft_override> tensor_buft_overrides;
+    // Informational: override wins over layer assignment for matched tensors
+    std::vector<std::string> override_notes;
 };
 
 // Build apply result from plan + live inventory. Fail-loud errors listed.

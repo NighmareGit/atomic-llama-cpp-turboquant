@@ -165,7 +165,7 @@ Implementation of a phase may be multiple PRs; acceptance is per phase below.
 
 **Goal:** Deterministic deploy from a versioned plan file.
 
-**Status (2026-07-17):** **Layer-range apply shipped** (issue 09). Tensor `overrides[]` apply is **issue 10**. Design: `docs/research/placement-plan-ir-apply-design.md` §12.
+**Status (2026-07-17):** **Layer-range + tensor override apply shipped** (issues 09–10). Design: `docs/research/placement-plan-ir-apply-design.md` §12.
 
 **Deliverables**
 
@@ -176,13 +176,13 @@ Implementation of a phase may be multiple PRs; acceptance is per phase below.
 - Plan-wins warnings for classic knobs.
 - Fail-loud apply re-discover; optional degrade flags stubbed or implemented behind off-default switches.
 
-**Shipped surface (issue 09)**
+**Shipped surface (issues 09–10)**
 
 | Item | Notes |
 |------|--------|
-| Code | `common/placement-plan.*`; `layer_devices` on `llama_model_params` |
+| Code | `common/placement-plan.*`; `layer_devices` + plan `tensor_buft_overrides` |
 | CLI | `--placement PATH` / `LLAMA_ARG_PLACEMENT` |
-| Overrides | Empty only; non-empty refused until issue 10 |
+| Overrides | Applied; **override wins** for matched tensors; CLI `-ot` ignored |
 | Tests | `tests/test-placement-plan.cpp` |
 
 **Acceptance**
@@ -190,7 +190,7 @@ Implementation of a phase may be multiple PRs; acceptance is per phase below.
 - [x] Same plan + same topology → same layer→device assignment (log or debug dump).
 - [x] Plan placing a minority of layers on 8 GB RPC and majority on 24 GB local loads without OOM on smoke model (romulus docker RPC + ROCm; Qwen3.5-0.8B).
 - [x] Conflicting `-ts` does not change assignment (warning only).
-- [ ] Tensor `overrides[]` (e.g. expert patterns → cpu) applied as specified. **(issue 10)**
+- [x] Tensor `overrides[]` (e.g. expert/embedding patterns → cpu) applied as specified.
 - [x] Missing `backend_id` at apply ⇒ refuse load.
 - [x] Placement off ⇒ classic path for fixed argv without `--placement`.
 
