@@ -248,7 +248,7 @@ Re-examination of D7.0-D7.8 identified resolved items, corrected a false negativ
 | Ticket | Status | Notes |
 |--------|--------|-------|
 | D7.9 | 📋 ready | **Vector E: small_k off-by-one fix** — Change `<` to `<=` in `should_use_small_k` threshold in `mmvq.cu`. Activates multi-row processing for K=4096 shapes (gate_proj, up_proj, q_proj, o_proj). P0 priority, 1-line change, zero risk. Expected: 5-15% TG on affected shapes. |
-| D7.10 | 📋 ready | **Vector D: kernel-anvil shape-specific tuning** — Apply smithy patch, run `gguf-optimize` for romulus models, benchmark. Targets MatMul (55.4% of GPU time). P1 priority. Expected: 10-30% TG. Research: `docs/research/slice-7-kernel-anvil-integration.md`. |
+| D7.10 | 📋 ready | **Vector D: kernel-anvil shape-specific tuning** — Apply smithy patch, run `gguf-optimize` for romulus models, benchmark. Targets MatMul (55.4% of GPU time). P1 priority. Expected: 10-30% TG. Research: `docs/research/slice-7-kernel-anvil-integration.md`. gfx1100 ISA: `docs/research/gfx1100-hardware-deep-dive.md`. |
 | D7.11 | 📋 ready | **Vector F: quantize_q8_1 fusion** — Fuse input quantization into MMVQ kernel. Eliminates 7.9% GPU time + 224 launches/token. P1 priority. Expected: 5-10% TG. |
 | D7.12 | 📋 ready | **Vector G: autoforge custom kernels** — Generate purpose-built HIP kernels for top 5 shapes. P2 priority (defer until D proven). Expected: 15-25% on targeted shapes. |
 
@@ -256,9 +256,9 @@ Re-examination of D7.0-D7.8 identified resolved items, corrected a false negativ
 
 | Ticket | Status | Notes |
 |--------|--------|-------|
-| D7.13 | 📋 ready | **dp4a micro-optimizations** (from D7.7) — Register analysis (why Q4_K is nwarps=1, not 8), dual-issue scheduling, simplify scale-unpack branch. QR4_K=2 (not 8, corrected by research). Same Q4_K/Q6_K kernels as D7.10. HIGH priority. `docs/research/d713-dp4a-research-scope.md`. |
-| D7.14 | 📋 ready | **LDS standalone test + root-cause** (from D7.8) — Run `test-lds-mmvq.hip.cu` with rocprofv3 to isolate -1.9 t/s regression. Determines go/no-go for LDS path. HIGH priority (diagnostic). `docs/wayfinder/HANDOFF-D7.8-LDS-prototype.md`. |
-| D7.15 | 📋 ready | **FA + Q4_K_M benchmark** (from D7.3) — One benchmark run with 20GB Q4_K_M model on 2-GPU Romulus. Independent quick win. MEDIUM priority. Expected: 15-25% combined with FA. `docs/research/d73-vector-a-gpu-compute-reduction.md`. |
+| D7.13 | 📋 ready | **dp4a micro-optimizations** (from D7.7) — ~~Ideas 1, 4, 7 CLOSED~~. **Idea 6 (IU4 WMMA) PURSUE** — Corrected: builtin A/B swap fixed. Correctness PASS. rocprofv3: 16 cycles latency, 2x throughput vs dp4a, 12 VGPRs. Ready for production. Active: Ideas 2, 5, 6. `/tmp/d713-iu4-wmma-corrected-results.md`. |
+| D7.14 | ✅ complete | **LDS standalone test** (from D7.8) — Test FAILED: 4.27% error (out-of-bounds shared-memory read). rocprofv3: 7,320 ns, 32 VGPRs, 1024 B shared memory. Root cause: shared-memory caching (100 GB/s) slower than global loads (1.2 TB/s). **Decision: NO-GO — delete LDS prototype.** `docs/research/d714-lds-root-cause-analysis.md`. |
+| D7.15 | ✅ complete | **FA + Q4_K_M benchmark** (from D7.3) — Q4_K_M = 76.7 t/s TG (vs Q6_K 143.0 = -46%). NOT kernel issue: tensor split shifts layers to slower 3060Ti. FA OFF = OOM. `docs/research/d715-fa-q4km-benchmark.md`. |
 | D7.16 | 📋 ready | **5:4 FAST/SLOW pattern analysis** (from D7.2) — Quantify which layers/tokens cause each step type. Informational, targets L1 work. LOW priority. `docs/research/d72-gpu-timeline-profile.md`. |
 
 **Optimization landscape:** `OPTIMIZATION-LANDSCAPE-L1-L3.md` — Layer 1-3 framework with accomplished/tried/open leads, bottleneck map, priority order.

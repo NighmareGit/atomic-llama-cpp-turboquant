@@ -1257,6 +1257,9 @@ struct ggml_backend_cuda_comm_context {
     // handles that call.
     try_allreduce_fn            try_allreduce = nullptr;
 
+    // Stable name for GGML_ALLREDUCE_TRACE: "nccl" | "rccl" | "internal" | "butterfly"
+    const char *                provider_name = "butterfly";
+
     ggml_cuda_ar_pipeline *     ar_pipeline = nullptr;
 
 #ifdef GGML_USE_NCCL
@@ -1434,13 +1437,15 @@ static void ggml_backend_cuda_comm_free(void * comm_ctx_v) {
 // resource; on failure it warns and recurses into the next step.
 // ---------------------------------------------------------------------------
 static void ggml_backend_cuda_comm_init_none(ggml_backend_cuda_comm_context * ret) {
-    ret->try_allreduce = ggml_backend_cuda_comm_try_allreduce_butterfly;
+    ret->try_allreduce  = ggml_backend_cuda_comm_try_allreduce_butterfly;
+    ret->provider_name  = "butterfly";
 }
 
 static void ggml_backend_cuda_comm_init_internal(ggml_backend_cuda_comm_context * ret) {
     ret->ar_pipeline = ggml_cuda_ar_pipeline_init(ret->dev_ids.data(), ret->dev_ids.size());
     if (ret->ar_pipeline) {
         ret->try_allreduce = ggml_backend_cuda_comm_try_allreduce_internal;
+        ret->provider_name = "internal";
         return;
     }
 
@@ -1458,6 +1463,11 @@ static void ggml_backend_cuda_comm_init_nccl(ggml_backend_cuda_comm_context * re
     ncclResult_t rc = ncclCommInitAll(ret->comms.data(), (int) n, ret->dev_ids.data());
     if (rc == ncclSuccess) {
         ret->try_allreduce = ggml_backend_cuda_comm_try_allreduce_nccl;
+#if defined(GGML_USE_HIP)
+        ret->provider_name = "rccl";
+#else
+        ret->provider_name = "nccl";
+#endif
         return;
     }
 
@@ -1524,7 +1534,23 @@ static bool ggml_backend_cuda_comm_allreduce_tensor(void * comm_ctx_v, struct gg
         return false;
     }
     auto * comm_ctx = static_cast<ggml_backend_cuda_comm_context *>(comm_ctx_v);
-    return comm_ctx->try_allreduce(comm_ctx, tensors);
+    const bool trace = ggml_allreduce_trace_enabled() != 0;
+    const int64_t t0 = trace ? ggml_time_us() : 0;
+    const bool ok = comm_ctx->try_allreduce(comm_ctx, tensors);
+    if (trace && ok) {
+        const int64_t duration_us = ggml_time_us() - t0;
+        const int n_gpus = (int) comm_ctx->backends.size();
+        int64_t ne = 0;
+        size_t nbytes = 0;
+        if (tensors && tensors[0]) {
+            ne = ggml_nelements(tensors[0]);
+            nbytes = ggml_nbytes(tensors[0]);
+        }
+        const char * provider = comm_ctx->provider_name ? comm_ctx->provider_name : "unknown";
+        ggml_allreduce_trace_provider_first(provider, n_gpus);
+        ggml_allreduce_trace_call(provider, "specialized", n_gpus, ne, nbytes, duration_us);
+    }
+    return ok;
 }
 
 ggml_backend_buffer_type_t ggml_backend_cuda_split_buffer_type(int main_device, const float * tensor_split) {

@@ -974,28 +974,35 @@ For Q4_K with K=4096: blocks_per_row_x = 16, threshold = 16. `16 < 16 = false` (
 **Blocks:** none
 **Blocked by:** none (complementary to D7.10)
 **Status:** ready-for-agent
+**Prototype results (2026-07-17):**
+- Idea 1 (dual-issue) — **CLOSED**. ISA analysis proves V_DOT4 is not VOPD-encodable. Cannot dual-issue.
+- Idea 4 (nwarps=8) — **CLOSED**. Q4_K at nwarps=8 regresses ~4.2% on RDNA3 (59.5 -> 57.0 t/s). Structural: 2 GPRs/wave on RDNA3.
+- Idea 6 (IU4 WMMA) — **PURSUE**. Corrected prototype: builtin parameter swap fixed (A/B swapped in builtin vs ISA). Correctness PASS. rocprofv3: WMMA latency 16 cycles (6.45 ns at 2482 MHz), single-wave 0.71 Gint4-MACs/s (0.03% efficiency due to launch overhead). 2x theoretical throughput vs dp4a, 40% lower VGPR pressure (12 vs 20+). Q4_K nibble mapping verified. Ready for production implementation. See `/tmp/d713-iu4-wmma-corrected-results.md`.
+- Idea 7 (V_DOT8_I32_IU4) — **CLOSED**. Data layout analysis: Q4_K weight format is COMPATIBLE but Q8_1 activations are 8-bit — V_DOT8 needs 4-bit on both operands. Hard blocker.
 
-**Goal:** Optimize the existing dp4a path for Q4_K/Q6_K vec_dot on RDNA3 (gfx1100). D7.7 identified 6 specific micro-optimization ideas that were never pursued. These attack the same kernels as D7.10 (kernel-anvil tuning) but at the instruction level.
+**Goal:** Optimize the Q4_K/Q6_K vec_dot path on RDNA3 (gfx1100). Original 6 ideas from D7.7 reduced to 3 active (2, 5, 6) after ISA and layout analysis closed 1, 4, and 7.
 
 **Mechanism:**
-1. **Instruction scheduling**: Reorder loads/computes for gfx1100 dual-issue (scalar + vector ops). Independent `dot2` + scalar accumulators offer interleaving room around chained `sudot4`.
-2. **Scale-unpack branch**: Simplify the `j<2` divergence in wrapper (vecdotq.cuh:888-894) — may reduce VGPR pressure. NOTE: QR4_K=2 (not 8); loop is already fully unrolled, so literal loop unrolling is a non-starter.
+1. **~~Instruction scheduling~~** — CLOSED. ISA proves dp4a (V_DOT4) uses VOP3P encoding, not VOPDXY. Cannot dual-issue via VOPD. General VALU+SALU dual-issue already exploited by compiler.
+2. **Scale-unpack branch**: Simplify the `j<2` divergence in wrapper (vecdotq.cuh:888-894) — may reduce VGPR pressure. NOTE: QR4_K=2 (not 8); loop is already fully unrolled. Check `bq8_offset` uniformity per warp first.
 3. **Prefetch hints**: Activation loads (`bq8_1` per thread, not broadcast) are the real memory traffic. `__builtin_prefetch` on next k-block in outer dispatch loop (mmvq.cu:640) — only if D7.8 LDS results are negative.
-4. **Register analysis**: Q4_K uses nwarps=1 on gfx1100 (not nwarps=8 like Q4_0/Q8_0). No code comment explains why. If VGPR pressure can be cut, moving Q4_K to nwarps=8 whitelist is the biggest single win. Measure with `-RPASS,-RPASS2`.
-5. **Benchmark infrastructure**: `llama-gpipe-profiler` with `--tasks tg --n-prompt 1024 --n-gen 16 --repeat 3 --warmup 0`. Pin to single-GPU (7900XTX) for tightest dp4a signal.
+4. **~~Register analysis (nwarps=8)~~** — CLOSED. Prototype confirmed -4.2% regression. ISA explains: RDNA3 has 2 GPRs/wave vs RDNA4's 4.
+5. **Benchmark infrastructure**: `llama-gpipe-profiler` with `--tasks tg --n-prompt 1024 --n-gen 16 --repeat 3 --warmup 0`. Pin to single-GPU (7900XTX) for tightest signal.
+6. **IU4 WMMA for MMQ** (NEW): Use `V_WMMA_I32_16X16X16_IU4` for ncols_dst>=16. Direct 4-bit path, 12 VGPRs, 1024 INT4 ops/clock/CU. Use rocWMMA library for production code.
+7. **~~V_DOT8_I32_IU4~~** — CLOSED. Layout analysis: Q4_K weights compatible but Q8_1 activations are 8-bit. V_DOT8 needs 4-bit on both operands. Hard blocker. See `docs/research/d713-v-dot8-layout-analysis.md`.
 
 **Acceptance Criteria:**
-- [ ] Register analysis complete: VGPR usage measured at nwarps=1 and (forced) nwarps=8
 - [ ] Baseline benchmark captured on romulus (single-GPU 7900XTX, gemma-4-12B-Q4_K_M)
-- [ ] At least 2 of 5 micro-optimization ideas prototyped and benchmarked
-- [ ] TG improvement >= 3% on Q4_K model from dp4a optimizations alone
+- [ ] At least 2 of 3 active ideas prototyped and benchmarked (Ideas 2, 5, 6)
+- [ ] TG improvement >= 3% on Q4_K model from optimizations
 - [ ] No regression on non-Q4_K shapes
+- [ ] IU4 WMMA prototype tested for MMQ with ncols_dst>=16
 - [ ] Findings documented: `docs/research/d713-dp4a-micro-optimizations.md`
 - [ ] Safety check passes before each resource-intensive step
 
 **Effort:** medium. HIGH priority — directly feeds Slice 7 Vector D target kernels.
 
-**Reference:** `docs/research/d77-wmma-prototype-findings.md` section 7 (full checklist), `docs/research/d76-rocprofv3-kernel-profile.md` (Q4_K = 35.2% of GPU time), `docs/research/d713-dp4a-research-scope.md` (corrected analysis)
+**Reference:** `docs/research/d77-wmma-prototype-findings.md` section 7 (original checklist), `docs/research/d76-rocprofv3-kernel-profile.md` (Q4_K = 35.2% of GPU time), `docs/research/d713-dp4a-research-scope.md` (corrected analysis), `docs/research/gfx1100-hardware-deep-dive.md` (ISA-level findings), `docs/research/d713-v-dot8-layout-analysis.md` (Idea 7 closure)
 
 ---
 
@@ -1004,9 +1011,10 @@ For Q4_K with K=4096: blocks_per_row_x = 16, threshold = 16. `16 < 16 = false` (
 **Type:** research
 **Blocks:** none
 **Blocked by:** none
-**Status:** ready-for-agent
+**Status:** complete
+**Result (2026-07-17):** Test FAILED — 4.27% error from out-of-bounds shared-memory read. LDS kernel loads 24 activation blocks but test only allocates 8. rocprofv3: LDS kernel = 7,320 ns, 32 VGPRs, 128 SGPRs, 1024 B shared memory. Root cause: shared-memory caching (100 GB/s) slower than direct global loads (1.2 TB/s) for this access pattern. **Decision: NO-GO — delete LDS prototype.**
 
-**Goal:** Root-cause the D7.8 LDS prototype's -1.9 t/s regression. The standalone test `tests/test-lds-mmvq.hip.cu` was created but never run. Without understanding the negative result, the LDS approach cannot be evaluated fairly.
+**Goal:** Root-cause the D7.8 LDS prototype's -1.9 t/s regression. The standalone test `tests/test-lds-mmvq.hip.cu` was created but never run. Without understanding the negative result, the LDS approach cannot be evaluated fairly. Result: **NO-GO** — the LDS prototype is fundamentally flawed and should be deleted.
 
 **Mechanism:**
 1. Compile and run `test-lds-mmvq.hip.cu` with `-DGGML_HIP_MMVQ_LDS_PROTOTYPE=ON`
@@ -1032,9 +1040,10 @@ For Q4_K with K=4096: blocks_per_row_x = 16, threshold = 16. `16 < 16 = false` (
 **Type:** research
 **Blocks:** none
 **Blocked by:** none
-**Status:** ready-for-agent
+**Status:** complete
+**Result (2026-07-17):** Q4_K_M + FA ON = **76.7 t/s TG** (vs Q6_K 143.0 t/s = **-46% regression**). NOT a kernel issue — tensor split shifts more layers to the slower 3060Ti. FA OFF = OOM on 3060Ti. Root cause: Q4_K_M's smaller size fits more layers on the 3060Ti, making it the straggler.
 
-**Goal:** Benchmark Q4_K_M quantization on the 2-GPU Romulus config. D7.3 enabled FA on HIP (+7.5% TG) but skipped the Q4_K_M leg. Combined estimated gain was 15-25%. The 20GB Q4_K_M model already exists.
+**Goal:** Benchmark Q4_K_M quantization on the 2-GPU Romulus config. D7.3 enabled FA on HIP (+7.5% TG) but skipped the Q4_K_M leg. Combined estimated gain was 15-25%. Result: **-46% regression** — the smaller model offloads more layers to the slower 3060Ti, making it the bottleneck.
 
 **Mechanism:**
 1. Run benchmark suite with Q4_K_M model on 2-GPU Romulus (7900XTX + 3060Ti RPC)
@@ -1042,14 +1051,14 @@ For Q4_K with K=4096: blocks_per_row_x = 16, threshold = 16. `16 < 16 = false` (
 3. Document per-model PP/TG throughput and tensor split
 
 **Acceptance Criteria:**
-- [ ] Q4_K_M benchmarked on 2-GPU Romulus config
-- [ ] Comparison against D7.3 Q6_K baseline documented
-- [ ] TG delta captured (target: >= 10% from quantization alone)
-- [ ] Findings documented: `docs/research/d715-fa-q4km-benchmark.md`
+- [x] Q4_K_M benchmarked on 2-GPU Romulus config
+- [x] Comparison against D7.3 Q6_K baseline documented
+- [x] TG delta captured — **-46% regression** (target was >= 10%)
+- [x] Findings documented: `docs/research/d715-fa-q4km-benchmark.md`
 
 **Effort:** low. MEDIUM priority — one benchmark run, independent quick win.
 
-**Reference:** `docs/research/d73-vector-a-gpu-compute-reduction.md` (FA + Q4_K_M combined estimate)
+**Reference:** `docs/research/d73-vector-a-gpu-compute-reduction.md` (FA + Q4_K_M combined estimate), `docs/research/d715-fa-q4km-benchmark.md` (actual results)
 
 ---
 

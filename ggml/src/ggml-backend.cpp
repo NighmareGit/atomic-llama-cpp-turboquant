@@ -240,6 +240,95 @@ void ggml_hotpath_trace_get_sched_ctx(int32_t * split_id, int32_t * backend_id) 
     }
 }
 
+// ---------------------------------------------------------------------------
+// AllReduce trace (GGML_ALLREDUCE_TRACE) -- shared by CUDA/HIP specialized AR
+// and meta butterfly fallback.
+// ---------------------------------------------------------------------------
+
+static int allreduce_trace_lvl() {
+    const char * e = getenv("GGML_ALLREDUCE_TRACE");
+    return e ? atoi(e) : 0;
+}
+
+int ggml_allreduce_trace_enabled(void) {
+    return allreduce_trace_lvl() != 0;
+}
+
+static FILE * allreduce_trace_file() {
+    static FILE * trace_f = nullptr;
+    static std::string last_path;
+    const char * path = getenv("GGML_ALLREDUCE_TRACE_FILE");
+    if (!path || !path[0]) {
+        return nullptr;
+    }
+    if (trace_f && last_path != path) {
+        fclose(trace_f);
+        trace_f = nullptr;
+    }
+    if (!trace_f) {
+        trace_f = fopen(path, "a");
+        last_path = path;
+    }
+    return trace_f;
+}
+
+void ggml_allreduce_trace_provider_first(const char * provider, int n_gpus) {
+    if (!allreduce_trace_lvl() || !provider) {
+        return;
+    }
+    static thread_local bool s_logged = false;
+    if (s_logged) {
+        return;
+    }
+    s_logged = true;
+
+    FILE * out = allreduce_trace_file() ? allreduce_trace_file() : stderr;
+    const int64_t ts_us = ggml_time_us();
+    const int32_t decode_id = g_pipeline_decode_id;
+    const uint64_t tid = g_trace_id;
+    if (pipeline_trace_lvl() && decode_id >= 0) {
+        fprintf(out,
+            "{\"ts_us\":%lld,\"event\":\"allreduce_provider\",\"decode_id\":%d,\"trace_id\":%llu,"
+            "\"provider\":\"%s\",\"n_gpus\":%d}\n",
+            (long long) ts_us, decode_id, (unsigned long long) tid, provider, n_gpus);
+    } else {
+        fprintf(out,
+            "{\"ts_us\":%lld,\"event\":\"allreduce_provider\",\"trace_id\":%llu,"
+            "\"provider\":\"%s\",\"n_gpus\":%d}\n",
+            (long long) ts_us, (unsigned long long) tid, provider, n_gpus);
+    }
+    fflush(out);
+    GGML_LOG_INFO("allreduce: using provider=%s n_gpus=%d (GGML_ALLREDUCE_TRACE)\n", provider, n_gpus);
+}
+
+void ggml_allreduce_trace_call(
+        const char * provider, const char * path,
+        int n_gpus, int64_t ne, size_t nbytes, int64_t duration_us) {
+    if (!allreduce_trace_lvl() || !provider || !path) {
+        return;
+    }
+    FILE * out = allreduce_trace_file() ? allreduce_trace_file() : stderr;
+    const int64_t ts_us = ggml_time_us();
+    const int32_t decode_id = g_pipeline_decode_id;
+    const uint64_t tid = g_trace_id;
+    if (pipeline_trace_lvl() && decode_id >= 0) {
+        fprintf(out,
+            "{\"ts_us\":%lld,\"event\":\"allreduce\",\"decode_id\":%d,\"trace_id\":%llu,"
+            "\"provider\":\"%s\",\"path\":\"%s\",\"n_gpus\":%d,\"ne\":%lld,\"nbytes\":%zu,"
+            "\"duration_us\":%lld}\n",
+            (long long) ts_us, decode_id, (unsigned long long) tid,
+            provider, path, n_gpus, (long long) ne, nbytes, (long long) duration_us);
+    } else {
+        fprintf(out,
+            "{\"ts_us\":%lld,\"event\":\"allreduce\",\"trace_id\":%llu,"
+            "\"provider\":\"%s\",\"path\":\"%s\",\"n_gpus\":%d,\"ne\":%lld,\"nbytes\":%zu,"
+            "\"duration_us\":%lld}\n",
+            (long long) ts_us, (unsigned long long) tid,
+            provider, path, n_gpus, (long long) ne, nbytes, (long long) duration_us);
+    }
+    fflush(out);
+}
+
 static FILE * sched_trace_file() {
     static FILE * trace_f = nullptr;
     static std::string last_path;
@@ -274,6 +363,50 @@ static void sched_trace_emit(int split_id, int backend_id, int copy_id, const ch
         fprintf(out,
             "{\"ts_us\":%lld,\"trace_id\":%llu,\"split\":%d,\"backend\":%d,\"copy\":%d,\"phase\":\"%s\",\"elapsed_us\":%lld}\n",
             (long long) ts_us, (unsigned long long) tid, split_id, backend_id, copy_id, phase, (long long) elapsed_us);
+    }
+    fflush(out);
+}
+
+// Durable split timing (wayfinder design): four host stamps + derived idle/compute.
+// Additive under GGML_SCHED_TRACE; see docs/research/allreduce-instrumentation-design.md.
+static void sched_trace_emit_split_timing(
+        int split_id, int backend_id, int copy_id,
+        int64_t t_split_start_us,
+        int64_t t_compute_start_us,
+        int64_t t_compute_end_us,
+        int64_t t_event_record_us) {
+    if (!sched_trace_lvl()) {
+        return;
+    }
+    FILE * out = sched_trace_file() ? sched_trace_file() : stderr;
+    const int64_t idle_us    = t_compute_start_us - t_split_start_us;
+    const int64_t compute_us = t_compute_end_us - t_compute_start_us;
+    const int64_t ts_us      = ggml_time_us();
+    uint64_t tid = g_trace_id;
+    if (pipeline_trace_lvl() && g_pipeline_decode_id >= 0) {
+        fprintf(out,
+            "{\"ts_us\":%lld,\"event\":\"split_timing\",\"decode_id\":%d,\"trace_id\":%llu,"
+            "\"split\":%d,\"backend\":%d,\"copy\":%d,"
+            "\"t_split_start_us\":%lld,\"t_compute_start_us\":%lld,"
+            "\"t_compute_end_us\":%lld,\"t_event_record_us\":%lld,"
+            "\"idle_us\":%lld,\"compute_us\":%lld}\n",
+            (long long) ts_us, g_pipeline_decode_id, (unsigned long long) tid,
+            split_id, backend_id, copy_id,
+            (long long) t_split_start_us, (long long) t_compute_start_us,
+            (long long) t_compute_end_us, (long long) t_event_record_us,
+            (long long) idle_us, (long long) compute_us);
+    } else {
+        fprintf(out,
+            "{\"ts_us\":%lld,\"event\":\"split_timing\",\"trace_id\":%llu,"
+            "\"split\":%d,\"backend\":%d,\"copy\":%d,"
+            "\"t_split_start_us\":%lld,\"t_compute_start_us\":%lld,"
+            "\"t_compute_end_us\":%lld,\"t_event_record_us\":%lld,"
+            "\"idle_us\":%lld,\"compute_us\":%lld}\n",
+            (long long) ts_us, (unsigned long long) tid,
+            split_id, backend_id, copy_id,
+            (long long) t_split_start_us, (long long) t_compute_start_us,
+            (long long) t_compute_end_us, (long long) t_event_record_us,
+            (long long) idle_us, (long long) compute_us);
     }
     fflush(out);
 }
@@ -2398,6 +2531,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
         }
 
         const auto split_t0 = std::chrono::steady_clock::now();
+        const int64_t t_split_start_us = sched_trace_lvl() ? ggml_time_us() : 0;
         ggml_backend_t split_backend = sched->backends[split_backend_id];
         ggml_hotpath_trace_set_sched_ctx(split_id, split_backend_id);
 
@@ -2788,6 +2922,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
             sched, split_id, split_backend_id, split_backend, split);
 
         const auto compute_t0 = std::chrono::steady_clock::now();
+        const int64_t t_compute_start_us = sched_trace_lvl() ? ggml_time_us() : 0;
         if (!sched->callback_eval) {
             if (sched_trace_lvl()) {
                 // Per-node timing for placement-grade heatmaps (issue 12).
@@ -2834,6 +2969,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
             }
         }
 
+        const int64_t t_compute_end_us = sched_trace_lvl() ? ggml_time_us() : 0;
         {
             const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - compute_t0).count();
@@ -2853,6 +2989,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 sched->barrier_slot_pending[sched->cur_copy] |= (1u << split_backend_id);
             }
         }
+        const int64_t t_event_record_us = sched_trace_lvl() ? ggml_time_us() : 0;
         // B+14/B+15/B+13c: prefetch next gather split; defer path skips RPC event drain (B+13b early issue).
         if (split_id + 1 < sched->n_splits && ggml_backend_is_rpc(split_backend)) {
             struct ggml_backend_sched_split * next_split = &splits[split_id + 1];
@@ -2886,6 +3023,9 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
             const auto split_us = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - split_t0).count();
             sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "split_total", split_us);
+            sched_trace_emit_split_timing(
+                split_id, split_backend_id, sched->cur_copy,
+                t_split_start_us, t_compute_start_us, t_compute_end_us, t_event_record_us);
         }
         ggml_hotpath_trace_set_sched_ctx(-1, -1);
     }

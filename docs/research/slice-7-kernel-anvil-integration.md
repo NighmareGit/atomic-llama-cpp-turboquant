@@ -78,7 +78,7 @@ From `docs/research/d76-rocprofv3-kernel-profile.md` (Qwen3.6-35B-A3B on 7900XTX
 - 573 us/token of quantization work
 - One round-trip through global memory (quantized activations)
 
-**Path-D relevance:** The Vulkan analysis (kernel-anvil docs) proves this works on RDNA3 -- Vulkan reads float activations directly. The ROCm path quantizes to Q8_1 first because DP4A integer dot products are faster on NVIDIA. On RDNA3, the advantage is less clear.
+**Path-D relevance:** The Vulkan analysis (kernel-anvil docs) proves this works on RDNA3 -- Vulkan reads float activations directly. The ROCm path quantizes to Q8_1 first because DP4A integer dot products are faster on NVIDIA. On RDNA3, the advantage is less clear. **gfx1100 ISA note:** RDNA3 has V_WMMA_I32_16X16X16_IU4 (direct 4-bit matrix multiply) and V_DOT8_I32_IU4 (8-element 4-bit dot product) that may outperform both dp4a and float paths. See `docs/research/gfx1100-hardware-deep-dive.md`.
 
 ### 3.4 Cell Ablation Methodology
 

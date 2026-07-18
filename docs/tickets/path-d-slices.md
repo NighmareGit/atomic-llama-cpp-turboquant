@@ -613,9 +613,9 @@ A retrospective of D7.0-D7.8 (2026-07-17) identified open leads complementary to
 
 | Lead | Source | Priority | Mechanism | Connection |
 |------|--------|----------|-----------|------------|
-| dp4a micro-optimizations | D7.7 | HIGH | 6 ideas: instruction scheduling, loop unrolling, prefetch, register analysis, dual-issue | Same Q4_K/Q6_K kernels as Vector D |
-| LDS standalone test | D7.8 | HIGH | Run `test-lds-mmvq.hip.cu` with rocprofv3 to root-cause -1.9 t/s regression | Multiplicative with Vector D |
-| FA + Q4_K_M benchmark | D7.3 | MEDIUM | One benchmark run, 20GB model exists | Independent quick win |
+| dp4a micro-optimizations (D7.13) | D7.7 | HIGH | ~~Dual-issue CLOSED~~ (ISA: dp4a not VOPD-encodable). ~~nwarps=8 CLOSED~~ (regression -4.2%). ~~V_DOT8 CLOSED~~ (Q8_1 activations 8-bit, V_DOT8 needs 4-bit). Active: scale-unpack branch, IU4 WMMA (Idea 6). See `docs/research/gfx1100-hardware-deep-dive.md`, `docs/research/d713-v-dot8-layout-analysis.md`. | Same Q4_K/Q6_K kernels as Vector D |
+| LDS standalone test (D7.14) | D7.8 | HIGH | Test FAILED: 4.27% error (out-of-bounds shared-memory read). rocprofv3: 7,320 ns, 32 VGPRs, 1024 B shared memory. Root cause: shared-memory caching (100 GB/s) slower than global loads (1.2 TB/s). **Decision: NO-GO — delete LDS prototype.** `docs/research/d714-lds-root-cause-analysis.md`. | Multiplicative with Vector D (CLOSED) |
+| FA + Q4_K_M benchmark (D7.15) | D7.3 | MEDIUM | Q4_K_M = 76.7 t/s TG (vs Q6_K 143.0 = -46%). NOT kernel issue: tensor split shifts layers to slower 3060Ti. FA OFF = OOM on 3060Ti. `docs/research/d715-fa-q4km-benchmark.md`. | Independent quick win (completed) |
 | 5:4 FAST/SLOW pattern | D7.2 | LOW | Quantify which layers/tokens cause each step type | Targets L1 to right step type |
 
 **Key insight:** D7.7 and D7.8 were abandoned prematurely. D7.7's dp4a checklist (6 specific ideas) was never pursued. D7.8's negative result was never root-caused — the standalone test exists but was never run. Both are Layer 1 kernel optimizations that directly feed Slice 7's vectors.

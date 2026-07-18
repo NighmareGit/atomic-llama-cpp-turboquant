@@ -2,7 +2,13 @@
 
 **Date:** 2026-07-17
 **Status:** research-only (no code changes)
-**Refs:** D7.7 findings (`docs/research/d77-wmma-prototype-findings.md`), ticket `docs/tickets/path-d-tickets.md:971`
+**Refs:** D7.7 findings (`docs/research/d77-wmma-prototype-findings.md`), ticket `docs/tickets/path-d-tickets.md:971`, gfx1100 hardware deep-dive (`docs/research/gfx1100-hardware-deep-dive.md`), nwarps=8 prototype results (`docs/research/d713-nwarps8-prototype-results.md`), ISA reference text (`docs/research/gfx1100-isa-reference.txt`)
+
+> **ISA-LEVEL UPDATE (2026-07-17):** The AMD RDNA 3 ISA PDF and machine-readable XML were
+> analyzed. Key findings: (1) dp4a (V_DOT4) is NOT VOPD-encodable — dual-issue is impossible.
+> (2) IU4 WMMA (V_WMMA_I32_16X16X16_IU4) exists and operates directly on 4-bit data.
+> (3) V_DOT8_I32_IU4 processes 8 nibbles in one instruction. See `docs/research/gfx1100-hardware-deep-dive.md`
+> for full ISA analysis.
 
 ## 1. Kernel Location
 
@@ -97,17 +103,19 @@ weights × signed activations, 4-byte dot product accumulated into `c`. CDNA/RDN
 
 ### Idea 1 — Instruction scheduling for gfx1100 dual-issue
 
-**Verdict: MEDIUM feasibility, worth a prototype.**
+> **CLOSED per ISA analysis — see `docs/research/gfx1100-hardware-deep-dive.md` section 2.**
 
-- gfx1100 can dual-issue scalar (SALU) + vector (VALU) ops in the same cycle.
-- Current loop has a **chained dp4a dependency**: `dot1` feeds through two `sudot4` calls
-  (result of inner used as `c` of outer). This chains the VALU dot-product pipeline.
-- Independent work exists: `dot2` (sum-of-u) is fully independent of `dot1`; the float
-  `sumf_d/sumf_m` accumulations are scalar and could be interleaved with the dp4a chain.
-- The 2-iteration `#pragma unroll` means all 4 dp4a + 4 scalar muls are visible to the
-  scheduler at once — good dual-issue opportunity **if** the compiler isn't already
-  doing it. Worth inspecting compiler output (`-RPASS,-RPASS2` / `--llvm-before`).
-- Risk: ROCm HIP compiler may already interleave; manual reorder may be no-op.
+**Verdict: CLOSED — impossible at ISA level.**
+
+- The RDNA 3 ISA PDF (Section 7.6) and machine-readable XML confirm: **V_DOT4_I32_IU8 and
+  V_DOT4_U32_U8 use VOP3P encoding, NOT VOPDXY.** They are absent from both VOPD X and Y
+  opcode tables.
+- VOPD dual-issue is restricted to 17 specific V_DUAL_* instructions (FMAC, MUL, ADD, SUB,
+  MOV, CNDMASK, MAX, MIN, DOT2ACC). dp4a is not among them.
+- The only remaining dual-issue path is the general VALU+SALU mechanism, which the HIP
+  compiler already exploits. Manual instruction reordering cannot improve on this.
+- **Previous assessment (MEDIUM feasibility) was wrong** — it assumed dp4a could participate
+  in VOPD pairing. The ISA proves this is impossible.
 
 ### Idea 2 — Loop structure (QR4_K=8)
 
@@ -176,29 +184,82 @@ llama-gpipe-profiler \
   for the tightest dp4a signal; dual-GPU for production-relevant numbers.
 - Metric: `tg` tok/s, steady-state (discard run 1). Target: >=3% improvement.
 
-## 5. Recommended Prototype Plan
+### Idea 6 — IU4 WMMA for MMQ (ncols_dst >= 16)
+
+> **NEW per ISA analysis — see `docs/research/gfx1100-hardware-deep-dive.md` section 4.**
+
+**Verdict: HIGH potential — direct 4-bit hardware path, confirmed by ISA.**
+
+- The RDNA 3 ISA defines `V_WMMA_I32_16X16X16_IU4`: 16x16 IU4 x 16x16 IU4 -> 16x16 I32.
+- Operates directly on unsigned 4-bit data — no dequantization, no FP16 conversion.
+- **VGPR cost: only 12** (2 for A_frag + 2 for B_frag + 8 for C_frag in wave32).
+- **Throughput: 1024 INT4 ops/clock/CU** — ~4x the dp4a path.
+- Data replication: lanes 0-15 replicated into lanes 16-31 (natural for read-only weights).
+- **Applicability:**
+  - MMVQ (ncols_dst=1): Poor — WMMA computes 16x16 tile, need 1 scalar.
+  - MMQ (ncols_dst=2-8): Moderate — can tile across columns.
+  - MMQ (ncols_dst>=16): Excellent — natural 16x16 tile mapping.
+- **Sign handling:** NEG[1:0] bits indicate signed/unsigned per source. Q8_1 activations
+  are signed — the NEG bits may handle this directly without sign-offset trick.
+- **rocWMMA path:** Header-only C++17 library provides CUDA-compatible API. Preferred over
+  raw intrinsics for production code.
+- **Back-to-back constraint:** Need V_NOP between dependent WMMA instructions if D overlaps
+  with A/B of next. Must account for this in tiled implementations.
+
+### Idea 7 — V_DOT8_I32_IU4 for inner loop
+
+> **NEW per ISA analysis — see `docs/research/gfx1100-hardware-deep-dive.md` section 3.**
+
+**Verdict: MEDIUM potential — 8-element 4-bit dot product, data layout TBD.**
+
+- The RDNA 3 ISA defines `V_DOT8_I32_IU4` and `V_DOT8_U32_U4`: dot product of **8 packed
+  4-bit elements** in one instruction — twice the width of V_DOT4.
+- Current Q4_K inner loop uses 2 iterations of V_DOT4 (4 nibbles each) to process 8 nibbles.
+  V_DOT8 could potentially do this in 1 instruction.
+- **Key question:** Does Q4_K's packed nibble layout match V_DOT8's input format? The ISA
+  does not specify the exact packing — needs investigation.
+- If compatible, this could halve the number of dp4a ops in the inner loop.
+- Same NEG[1:0] signed/unsigned control as V_DOT4.
+- **Risk:** Data layout mismatch may require shuffling, negating the benefit.
+
+## 5. Recommended Prototype Plan (Updated 2026-07-17)
 
 Priority order (highest ROI / lowest risk first):
 
-| Order | Idea | Effort | Expected signal |
-|-------|------|--------|-----------------|
-| 1 | **Benchmark infra + baseline** (Idea 5) | Low | Establishes the measurement; do first |
-| 2 | **Register analysis** (Idea 4) | Low | Explains nwarps=1; may unlock nwarps=8 (big win) |
-| 3 | **Simplify scale-unpack branch** (Idea 2 real target) | Low | Remove `j<2` divergence; may reduce VGPR |
-| 4 | **Dual-issue scheduling** (Idea 1) | Medium | Manual sudot4/float interleave; needs compiler-output verify |
-| 5 | **Activation prefetch** (Idea 3) | Medium | Only if D7.8 LDS results are negative |
+| Order | Idea | Effort | Expected signal | Notes |
+|-------|------|--------|-----------------|-------|
+| 1 | **Benchmark infra + baseline** (Idea 5) | Low | Establishes the measurement | Do first; needed for all A/B tests |
+| 2 | **IU4 WMMA for MMQ** (Idea 6) | Medium | **High** — direct 4-bit path, 12 VGPRs | Target ncols_dst>=16 first; use rocWMMA |
+| 3 | **V_DOT8_I32_IU4 feasibility** (Idea 7) | Low | Medium if data layout matches | Quick check of Q4_K layout vs V_DOT8 requirements |
+| 4 | **Simplify scale-unpack branch** (Idea 2 real target) | Low | Remove `j<2` divergence | Check `bq8_offset` uniformity per warp first |
+| 5 | **Register analysis** (Idea 4) | Low | Explains nwarps=1 | Use Matrix Instruction Calculator |
+
+**Closed:** Idea 1 (dual-issue) — ISA proves dp4a is not VOPD-encodable.
 
 **Skip:** literal "QR4_K=8 unroll" (Idea 2 as written) — premise is factually wrong.
 
 **Key dependency:** check D7.8 LDS prototype results (mmvq.cu:10-68) before investing in
-Idea 3/5 — if LDS activation caching already wins, the prefetch/scheduling ideas are moot.
+Idea 3 (prefetch) — if LDS activation caching already wins, prefetch is moot.
+
+**Reference:** `docs/research/gfx1100-hardware-deep-dive.md` for ISA-level details on all ideas.
 
 ## 6. Open Questions
 
-1. Why is Q4_K excluded from the RDNA3 nwarps=8 whitelist? Register pressure or measured
-   regression? No comment in `calc_nwarps` explains it.
-2. Does the HIP compiler already dual-issue across the unrolled 2-iteration loop? Need
-   compiler report before manual scheduling.
-3. What are the D7.8 LDS prototype benchmark results? They gate Ideas 3 and 5.
+1. ~~Why is Q4_K excluded from the RDNA3 nwarps=8 whitelist?~~ **Answered:** Prototype
+   confirmed -4.2% regression. ISA explains: RDNA3 has 2 GPRs/wave vs RDNA4's 4. Q4_K's
+   vec_dot is too register-hungry for 8-wave occupancy. Whitelist stands.
+2. ~~Does the HIP compiler already dual-issue?~~ **Answered:** ISA proves dp4a cannot
+   dual-issue via VOPD. General VALU+SALU dual-issue is already exploited by compiler.
+3. What are the D7.8 LDS prototype benchmark results? They gate Ideas 3 (prefetch).
 4. Is the `j<2` branch in scale-unpack actually divergent in practice (iqs patterns), or
    does it converge per warp?
+5. ~~Does Q4_K's packed nibble layout match V_DOT8's format?~~ **Answered: Requires repacking.**
+   Q4_K nibble positions match V_DOT8 format, but current code uses 2 ints (v[0], v[1])
+   for 8 nibbles. V_DOT8 needs 1 int with 8 nibbles. Requires weight + activation repacking.
+   See `docs/research/d713-vdot8-feasibility.md`.
+6. Can the NEG bits on `V_WMMA_I32_16X16X16_IU4` handle signed Q8_1 activations directly
+   without sign-offset arithmetic? (Idea 6)
+7. What is the exact VGPR count of the current dp4a path? Use Matrix Instruction Calculator.
+8. ~~Is the `j<2` branch divergent?~~ **Answered: NO (compiler predicates it).** ISA analysis
+   shows the branch is converted to `v_cndmask_b32` — both paths execute, result is selected
+   per-lane. No divergence penalty. See `docs/research/d713-scale-unpack-isa-findings.md`.

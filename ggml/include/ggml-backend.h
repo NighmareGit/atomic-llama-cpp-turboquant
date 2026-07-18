@@ -387,6 +387,14 @@ extern "C" {
     GGML_API void                 ggml_hotpath_trace_set_sched_ctx(int32_t split_id, int32_t backend_id);
     GGML_API void                 ggml_hotpath_trace_get_sched_ctx(int32_t * split_id, int32_t * backend_id);
 
+    // AllReduce timing (GGML_ALLREDUCE_TRACE / GGML_ALLREDUCE_TRACE_FILE). Host wall us.
+    // See docs/research/allreduce-instrumentation-design.md.
+    GGML_API int                  ggml_allreduce_trace_enabled(void);
+    GGML_API void                 ggml_allreduce_trace_provider_first(const char * provider, int n_gpus);
+    GGML_API void                 ggml_allreduce_trace_call(
+                                      const char * provider, const char * path,
+                                      int n_gpus, int64_t ne, size_t nbytes, int64_t duration_us);
+
     // Reset all assignments and allocators - must be called before changing the node backends or allocating a new graph.
     // This in effect deallocates all tensors that were previously allocated and leaves them with dangling pointers.
     // The correct way to use this API is to discard the deallocated tensors and create new ones.

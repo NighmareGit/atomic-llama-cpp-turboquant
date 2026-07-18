@@ -2194,8 +2194,8 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
 
         if (n_backends > 1 && i < backend_ctx->n_subgraphs - 1) {
             bool backend_allreduce_success = false;
+            std::vector<ggml_tensor *> nodes;
             if (backend_ctx->comm_ctx) {
-                std::vector<ggml_tensor *> nodes;
                 nodes.reserve(n_backends);
                 for (size_t j = 0; j < n_backends; j++) {
                     auto & bcj = backend_ctx->backend_configs[j];
@@ -2206,7 +2206,31 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
             }
 
             if (!backend_allreduce_success) {
+                const bool ar_trace = ggml_allreduce_trace_enabled() != 0;
+                const int64_t ar_t0 = ar_trace ? ggml_time_us() : 0;
                 const ggml_status status = allreduce_fallback(i);
+                if (ar_trace) {
+                    const int64_t duration_us = ggml_time_us() - ar_t0;
+                    int64_t ne = 0;
+                    size_t nbytes = 0;
+                    if (nodes.empty()) {
+                        auto & bc0 = backend_ctx->backend_configs[0];
+                        ggml_cgraph * cg0 = bc0.cgraphs[i].cgraph_main;
+                        if (cg0 && cg0->n_nodes > 0) {
+                            ggml_tensor * t = cg0->nodes[cg0->n_nodes - 1];
+                            if (t) {
+                                ne = ggml_nelements(t);
+                                nbytes = ggml_nbytes(t);
+                            }
+                        }
+                    } else if (nodes[0]) {
+                        ne = ggml_nelements(nodes[0]);
+                        nbytes = ggml_nbytes(nodes[0]);
+                    }
+                    ggml_allreduce_trace_provider_first("butterfly", (int) n_backends);
+                    ggml_allreduce_trace_call(
+                        "butterfly", "fallback", (int) n_backends, ne, nbytes, duration_us);
+                }
                 if (status != GGML_STATUS_SUCCESS) {
                     return status;
                 }

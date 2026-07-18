@@ -41,7 +41,7 @@ These leads were identified in D7.0-D7.8 but never fully pursued. They are compl
 
 | Lead | Source | Mechanism | Connection to Slice 7 |
 |------|--------|-----------|----------------------|
-| **dp4a micro-optimizations** | D7.7 | Instruction scheduling for gfx1100 dual-issue, loop unrolling (QR4_K=8), prefetch hints for scale tables, register analysis (64 vs 256 regs) | Same kernels as Vector D (kernel-anvil tuning). D7.7 has a 6-item checklist — none attempted. |
+| **dp4a micro-optimizations (D7.13)** | D7.7 | ~~Dual-issue CLOSED~~ (ISA: dp4a not VOPD-encodable). ~~nwarps=8 CLOSED~~ (regression -4.2%). **Active: IU4 WMMA (Idea 6), V_DOT8_I32_IU4 (Idea 7), scale-unpack branch (Idea 2).** See `docs/research/gfx1100-hardware-deep-dive.md`. | Same kernels as Vector D (kernel-anvil tuning). ISA analysis revealed new hardware paths. |
 | **LDS negative result debug** | D7.8 | Run standalone `test-lds-mmvq.hip.cu` with rocprofv3 to isolate -1.9 t/s regression root cause | LDS + kernel-anvil is multiplicative (D7.8 attacks memory traffic, Vector D attacks compute utilization). |
 
 ### 3.2 MEDIUM Priority — Quick Wins or Strategic Options
@@ -106,7 +106,7 @@ Combined effect is multiplicative, not additive.
 
 ### D7.7 — WMMA Prototype
 - WMMA for M=1: **CLOSED** (correctly dismissed)
-- dp4a micro-optimizations: **NEVER PURSUED** (carried to Slice 7)
+- dp4a micro-optimizations: **PARTIALLY PURSUED** — ISA analysis closed Ideas 1 (dual-issue) and 4 (nwarps=8). New Ideas 6 (IU4 WMMA) and 7 (V_DOT8) discovered from ISA. See `docs/research/gfx1100-hardware-deep-dive.md`.
 - Dead code behind `#ifdef GGML_HIP_WMMA_VECDOT_EXPERIMENTAL`: preserved
 
 ### D7.8 — LDS Prototype

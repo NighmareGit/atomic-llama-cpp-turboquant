@@ -330,7 +330,9 @@ Homogeneous equal-VRAM multi-GPU inside one RPC process, advertised as **one** l
 | F3 | ready-for-agent | After models on triton |
 | F4 | blocked by F2 | |
 | P2 | blocked by P1 | |
-| P3 | blocked by P2 (+ P4) | |
+| P3 | **complete** (2026-07-18) | Heat-aware plan generate |
+| F6 | blocked by F3 + human go | |
+| P3 | complete | Heat-aware plan generate (issue 13) |
 | F6 | blocked by F3 + human go | |
 | P5 | blocked by designs + P2 | |
 

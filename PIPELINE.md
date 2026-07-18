@@ -318,6 +318,31 @@ Schema (`ggml-backend.cpp`):
 {"ts_us":1234567890,"split":1,"backend":2,"copy":0,"phase":"split_total","elapsed_us":9623}
 ```
 
+Durable split timing (additive, same env): one `event=split_timing` line per split with host `ggml_time_us` stamps for idle vs compute:
+
+```json
+{"ts_us":...,"event":"split_timing","split":1,"backend":2,"copy":0,
+ "t_split_start_us":...,"t_compute_start_us":...,"t_compute_end_us":...,"t_event_record_us":...,
+ "idle_us":...,"compute_us":...}
+```
+
+See `docs/research/allreduce-instrumentation-design.md`.
+
+### Layer B — AllReduce (`GGML_ALLREDUCE_TRACE`)
+
+| Var | Effect |
+|-----|--------|
+| `GGML_ALLREDUCE_TRACE=1` | Per-call AllReduce NDJSON + first-call provider line |
+| `GGML_ALLREDUCE_TRACE_FILE=/path` | Append to file instead of stderr |
+
+```json
+{"event":"allreduce_provider","provider":"nccl","n_gpus":2}
+{"event":"allreduce","provider":"nccl","path":"specialized","n_gpus":2,"ne":...,"nbytes":...,"duration_us":...}
+{"event":"allreduce","provider":"butterfly","path":"fallback",...}
+```
+
+Independent of `GGML_SCHED_TRACE`. Force provider: `GGML_CUDA_ALLREDUCE=nccl|internal|none`.
+
 Phases include `input_wait_copy`, `graph_compute_async`, `event_record`, `split_total`.
 
 ### Layer B — RPC client (`GGML_RPC_TRACE`)
