@@ -578,6 +578,13 @@ extern "C" {
     LLAMA_API int32_t llama_model_n_head_kv  (const struct llama_model * model);
     LLAMA_API int32_t llama_model_n_swa      (const struct llama_model * model);
 
+    // Number of MTP/NextN decoder blocks (extra layers beyond the main trunk stack)
+    LLAMA_API int32_t llama_model_n_layer_nextn(const struct llama_model * model);
+
+    // Returns true when the given layer is a recurrent (SSM) layer in hybrid attention-SSM models.
+    // Always returns false for conventional dense-attention models and for MTP/NextN layers.
+    LLAMA_API bool llama_model_layer_is_recurrent(const struct llama_model * model, int32_t layer_idx);
+
     // Get the model's RoPE frequency scaling factor
     LLAMA_API float llama_model_rope_freq_scale_train(const struct llama_model * model);
 

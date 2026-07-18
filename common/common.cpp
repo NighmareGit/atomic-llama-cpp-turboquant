@@ -1215,6 +1215,7 @@ static bool common_placement_generate(common_params & params) {
     }
 
     int32_t n_layer = 0;
+    std::vector<bool> is_layer_recurrent;
     if (!params.model.path.empty()) {
         // fit.cpp pattern: no_alloc + no mmap for metadata without full weight load
         auto meta_mp = common_model_params_to_llama(params);
@@ -1233,6 +1234,13 @@ static bool common_placement_generate(common_params & params) {
         n_layer = llama_model_n_layer_all(meta);
         if (n_layer <= 0) {
             n_layer = llama_model_n_layer(meta);
+        }
+        // Extract per-layer recurrent flags for attention-local packing
+        if (n_layer > 0) {
+            is_layer_recurrent.resize((size_t) n_layer, false);
+            for (int32_t i = 0; i < n_layer; ++i) {
+                is_layer_recurrent[(size_t) i] = llama_model_layer_is_recurrent(meta, i);
+            }
         }
         llama_model_free(meta);
     }
@@ -1293,10 +1301,10 @@ static bool common_placement_generate(common_params & params) {
         return true;
     }
 
-    // Capacity-only generation (original path)
+    // Capacity-only generation (uses attention-local packer when recurrent info available)
     placement_plan plan;
     std::vector<placement_plan_error> errors;
-    if (!placement_plan_pack_capacity(inv, n_layer, params.model.path, plan, errors)) {
+    if (!placement_plan_pack_capacity_attn_local(inv, n_layer, params.model.path, is_layer_recurrent, plan, errors)) {
         for (const auto & e : errors) {
             LOG_ERR("%s: %s\n", __func__, e.message.c_str());
         }

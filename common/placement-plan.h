@@ -154,6 +154,29 @@ bool placement_plan_pack_capacity(
     placement_plan & out,
     std::vector<placement_plan_error> & errors);
 
+// --- attention-local packer (attn + MTP on local client GPU) ---
+
+// Like pack_capacity, but aware of per-layer recurrent (SSM) vs attention architecture.
+// Attention layers and all MTP/NextN layers are preferentially placed on the local
+// client-attached GPU backend for best stability and inference speed. SSM/recurrent
+// layers are placed on remote RPC backends.
+//
+// is_layer_recurrent: per-layer recurrent flag for layers 0..n_layer-1.
+//   When empty or all-false (no SSM model), falls back to pack_capacity.
+//   When no local GPU backend is found, falls back to pack_capacity.
+//
+// The algorithm produces contiguous assignment ranges per backend, potentially
+// interleaved (multiple ranges per backend) to respect layer-type affinity.
+// heat.status = none; empty overrides; split_mode = layer.
+// Returns false if n_layer <= 0 or no usable backends.
+bool placement_plan_pack_capacity_attn_local(
+    const placement_inventory & inv,
+    int32_t n_layer,
+    const std::string & model_path,
+    const std::vector<bool> & is_layer_recurrent,
+    placement_plan & out,
+    std::vector<placement_plan_error> & errors);
+
 // --- heat-aware packer (issue 13 / P3) ---
 
 // Parse heatmap JSON file (from llama-gpipe-profiler) and extract per-layer TG rollup.

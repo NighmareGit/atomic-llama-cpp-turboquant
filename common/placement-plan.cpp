@@ -742,6 +742,278 @@ bool placement_plan_pack_capacity(
 }
 
 // ---------------------------------------------------------------------------
+// Attention-local packer (attn + MTP on local client GPU)
+// ---------------------------------------------------------------------------
+
+bool placement_plan_pack_capacity_attn_local(
+        const placement_inventory & inv,
+        int32_t n_layer,
+        const std::string & model_path,
+        const std::vector<bool> & is_layer_recurrent,
+        placement_plan & out,
+        std::vector<placement_plan_error> & errors) {
+    out = placement_plan{};
+    if (n_layer <= 0) {
+        add_err(errors, "pack_attn_local: n_layer must be positive");
+        return false;
+    }
+
+    // Fallback: no recurrent info means conventional dense model
+    if (is_layer_recurrent.empty()) {
+        return placement_plan_pack_capacity(inv, n_layer, model_path, out, errors);
+    }
+    bool any_recurrent = false;
+    for (auto v : is_layer_recurrent) {
+        if (v) { any_recurrent = true; break; }
+    }
+    if (!any_recurrent) {
+        return placement_plan_pack_capacity(inv, n_layer, model_path, out, errors);
+    }
+
+    struct cand {
+        std::string backend_id;
+        uint64_t    usable = 0;
+        uint64_t    free_mib = 0;
+        uint64_t    total_mib = 0;
+        int         speed_tier = 0; // 2=local GPU, 1=RPC, 0=CPU
+    };
+    std::vector<cand> cands;
+    for (const auto & r : inv.records) {
+        uint64_t u = r.usable_weight_mib;
+        if (u == 0) {
+            u = r.free_mib;
+        }
+        if (u == 0) {
+            continue;
+        }
+        int st = 0;
+        if (r.kind == PLACEMENT_KIND_LOCAL_GPU) {
+            st = 2;
+        } else if (r.kind == PLACEMENT_KIND_RPC_DEVICE) {
+            st = 1;
+        }
+        cands.push_back({r.backend_id, u, r.free_mib, r.total_mib, st});
+    }
+
+    if (cands.empty()) {
+        add_err(errors, "pack_attn_local: no backends with positive usable/free capacity");
+        return false;
+    }
+
+    // Sort: local GPU first, then RPC, then CPU; within same kind by usable desc
+    std::sort(cands.begin(), cands.end(), [](const cand & a, const cand & b) {
+        if (a.speed_tier != b.speed_tier) {
+            return a.speed_tier > b.speed_tier;
+        }
+        if (a.usable != b.usable) {
+            return a.usable > b.usable;
+        }
+        return a.backend_id < b.backend_id;
+    });
+
+    // Find local backend index
+    int local_idx = -1;
+    for (size_t i = 0; i < cands.size(); ++i) {
+        if (cands[i].speed_tier == 2) {
+            local_idx = (int) i;
+            break;
+        }
+    }
+
+    // Fallback: no local GPU backend
+    if (local_idx < 0) {
+        return placement_plan_pack_capacity(inv, n_layer, model_path, out, errors);
+    }
+
+    // Cap number of backends to n_layer
+    if ((int32_t) cands.size() > n_layer) {
+        cands.resize((size_t) n_layer);
+    }
+
+    const size_t n_backends = cands.size();
+
+    // Compute proportional layer counts (same as capacity packer)
+    uint64_t sum_u = 0;
+    for (const auto & c : cands) {
+        sum_u += c.usable;
+    }
+    if (sum_u == 0) {
+        add_err(errors, "pack_attn_local: total usable is zero");
+        return false;
+    }
+
+    std::vector<int32_t> counts(n_backends, 0);
+    int32_t assigned = 0;
+    for (size_t i = 0; i < n_backends; ++i) {
+        int32_t n = (int32_t) ((cands[i].usable * (uint64_t) n_layer) / sum_u);
+        if (n < 1) {
+            n = 1;
+        }
+        counts[i] = n;
+        assigned += n;
+    }
+    while (assigned > n_layer) {
+        bool trimmed = false;
+        for (size_t i = 0; i < n_backends && assigned > n_layer; ++i) {
+            if (counts[i] > 1) {
+                counts[i]--;
+                assigned--;
+                trimmed = true;
+            }
+        }
+        if (!trimmed) break;
+    }
+    if (assigned < n_layer) {
+        counts[0] += (n_layer - assigned);
+    }
+
+    // Build remaining capacity tracker (how many layers each backend can still take)
+    std::vector<int32_t> remaining = counts;
+
+    // Per-layer assignment: attention (non-recurrent) -> local, SSM (recurrent) -> remote
+    // For remote backends, prefer faster (smaller index) ones first
+    std::vector<int32_t> backend_assignments(n_layer, -1);
+
+    for (int32_t il = 0; il < n_layer; ++il) {
+        bool is_attn = !is_layer_recurrent[(size_t) il];
+
+        if (is_attn && remaining[local_idx] > 0) {
+            // Attention goes to local if space
+            backend_assignments[il] = local_idx;
+            remaining[local_idx]--;
+        } else if (!is_attn) {
+            // SSM: assign to a remote backend (prefer fastest = smallest index)
+            bool placed = false;
+            for (size_t bi = 0; bi < n_backends; ++bi) {
+                if ((int) bi == local_idx) continue; // skip local for SSM
+                if (remaining[bi] > 0) {
+                    backend_assignments[il] = (int32_t) bi;
+                    remaining[bi]--;
+                    placed = true;
+                    break;
+                }
+            }
+            if (!placed) {
+                // Spill SSM to local if no remote has space
+                if (remaining[local_idx] > 0) {
+                    backend_assignments[il] = local_idx;
+                    remaining[local_idx]--;
+                    placed = true;
+                }
+            }
+            if (!placed) {
+                // Shouldn't happen if counts sum to n_layer, but be safe: any backend
+                for (size_t bi = 0; bi < n_backends; ++bi) {
+                    if (remaining[bi] > 0) {
+                        backend_assignments[il] = (int32_t) bi;
+                        remaining[bi]--;
+                        placed = true;
+                        break;
+                    }
+                }
+            }
+        } else {
+            // Attention but local is full: spill to remote
+            bool placed = false;
+            for (size_t bi = 0; bi < n_backends; ++bi) {
+                if ((int) bi == local_idx) continue;
+                if (remaining[bi] > 0) {
+                    backend_assignments[il] = (int32_t) bi;
+                    remaining[bi]--;
+                    placed = true;
+                    break;
+                }
+            }
+            if (!placed && remaining[local_idx] > 0) {
+                backend_assignments[il] = local_idx;
+                remaining[local_idx]--;
+            }
+        }
+    }
+
+    // Verify all layers assigned
+    for (int32_t i = 0; i < n_layer; ++i) {
+        if (backend_assignments[i] < 0) {
+            add_err(errors, "pack_attn_local: layer " + std::to_string(i) + " not assigned");
+            return false;
+        }
+    }
+
+    // Collect per-backend layer lists
+    std::vector<std::vector<int32_t>> backend_layer_lists(n_backends);
+    for (int32_t i = 0; i < n_layer; ++i) {
+        int32_t bi = backend_assignments[i];
+        backend_layer_lists[bi].push_back(i);
+    }
+
+    // Sort each backend's layer list by index for contiguous ranges
+    for (auto & lst : backend_layer_lists) {
+        std::sort(lst.begin(), lst.end());
+    }
+
+    // Build output plan (same schema as heat packer)
+    out.schema_version = 1;
+    out.created_at = placement_now_iso8601();
+    out.model_path = model_path;
+    out.n_layer = n_layer;
+    out.split_mode = "layer";
+    out.capacity_snapshot_at = inv.records.empty() ? out.created_at : inv.records[0].reported_at;
+    out.reserve_mode = inv.reserve_mode.empty() ? "table" : inv.reserve_mode;
+    out.reserve_model_version = inv.reserve_model_version.empty()
+        ? PLACEMENT_RESERVE_MODEL_TABLE_V1 : inv.reserve_model_version;
+    out.heat.status = "none";
+    out.heat.task = "";
+    out.heat.schema_version = 1;
+    out.overrides.clear();
+
+    // Emit contiguous sub-ranges per backend
+    for (size_t i = 0; i < n_backends; ++i) {
+        const auto & lst = backend_layer_lists[i];
+        if (lst.empty()) continue;
+
+        int32_t range_start = lst[0];
+        int32_t range_end = lst[0] + 1;
+        for (size_t j = 1; j < lst.size(); ++j) {
+            if (lst[j] == range_end) {
+                range_end = lst[j] + 1;
+            } else {
+                placement_plan_assignment a;
+                a.layer_start = range_start;
+                a.layer_end = range_end;
+                a.backend_id = cands[i].backend_id;
+                out.assignments.push_back(a);
+
+                range_start = lst[j];
+                range_end = lst[j] + 1;
+            }
+        }
+        placement_plan_assignment a;
+        a.layer_start = range_start;
+        a.layer_end = range_end;
+        a.backend_id = cands[i].backend_id;
+        out.assignments.push_back(a);
+
+        // One backend snapshot per backend (not per sub-range)
+        placement_plan::backend_snapshot bs;
+        bs.backend_id = cands[i].backend_id;
+        bs.usable_weight_mib = cands[i].usable;
+        bs.free_mib = cands[i].free_mib;
+        bs.total_mib = cands[i].total_mib;
+        out.backends.push_back(bs);
+    }
+
+    // Self-validate
+    std::vector<placement_plan_error> verr;
+    if (!placement_plan_validate(out, n_layer, /*mixed*/ true, verr)) {
+        for (const auto & e : verr) {
+            errors.push_back(e);
+        }
+        return false;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Heat-aware packer (issue 13 / P3)
 // ---------------------------------------------------------------------------
 

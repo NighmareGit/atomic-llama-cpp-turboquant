@@ -2350,6 +2350,14 @@ int32_t llama_model_n_layer_all(const llama_model * model) {
     return (int32_t) model->hparams.n_layer_all;
 }
 
+int32_t llama_model_n_layer_nextn(const llama_model * model) {
+    return (int32_t) model->hparams.n_layer_nextn;
+}
+
+bool llama_model_layer_is_recurrent(const llama_model * model, int32_t layer_idx) {
+    return model->hparams.is_recr((uint32_t) layer_idx);
+}
+
 int32_t llama_model_n_head(const llama_model * model) {
     return model->hparams.n_head();
 }
