@@ -278,6 +278,68 @@ static void sched_trace_emit(int split_id, int backend_id, int copy_id, const ch
     fflush(out);
 }
 
+// --- per-node timing for placement-grade heatmaps (issue 12) ---
+// When GGML_SCHED_TRACE is on, splits are computed one node at a time so each
+// node's wall time can be recorded. Diagnostic only; production path unchanged.
+
+struct sched_node_timing {
+    std::string name;
+    uint64_t    us = 0;
+};
+
+// Compute a split one node at a time, recording per-node microseconds.
+// Returns total elapsed us for the split. Nodes are topologically ordered
+// within a split, so computing in sequence is correct.
+static uint64_t compute_split_per_node(
+        ggml_backend_t backend, const ggml_cgraph & graph,
+        std::vector<sched_node_timing> & out) {
+    out.clear();
+    out.reserve(graph.n_nodes);
+    const auto t0 = std::chrono::steady_clock::now();
+    ggml_cgraph * graph_ptr = const_cast<ggml_cgraph *>(&graph);
+    for (int j = 0; j < graph.n_nodes; ++j) {
+        struct ggml_cgraph gv = ggml_graph_view(graph_ptr, j, j + 1);
+        const auto n0 = std::chrono::steady_clock::now();
+        enum ggml_status ec = ggml_backend_graph_compute_async(backend, &gv);
+        ggml_backend_synchronize(backend);
+        const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - n0).count();
+        if (ec != GGML_STATUS_SUCCESS) {
+            continue;
+        }
+        sched_node_timing nt;
+        nt.name = graph.nodes[j]->name;
+        nt.us = (uint64_t) us;
+        out.push_back(nt);
+    }
+    return (uint64_t) std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+}
+
+// Emit a graph_compute_async event augmented with a node_timings array.
+static void sched_trace_emit_node_timings(
+        int split_id, int backend_id, int copy_id, int64_t elapsed_us,
+        const std::vector<sched_node_timing> & nodes) {
+    if (!sched_trace_lvl()) {
+        return;
+    }
+    FILE * out = sched_trace_file() ? sched_trace_file() : stderr;
+    const auto ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    uint64_t tid = g_trace_id;
+    fprintf(out,
+        "{\"ts_us\":%lld,\"trace_id\":%llu,\"split\":%d,\"backend\":%d,\"copy\":%d,"
+        "\"phase\":\"graph_compute_async\",\"node_timings\":[",
+        (long long) ts_us, (unsigned long long) tid, split_id, backend_id, copy_id);
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        if (i > 0) fprintf(out, ",");
+        fprintf(out, "{\"name\":\"%s\",\"us\":%llu}",
+            nodes[i].name.c_str(), (unsigned long long) nodes[i].us);
+    }
+    fprintf(out, "],\"elapsed_us\":%lld}\n", (long long) elapsed_us);
+    fflush(out);
+}
+
 static thread_local const char * g_sched_copy_reject = "unknown";
 static thread_local uint32_t      g_rpc_producer_ready_mask = 0;
 
@@ -2727,9 +2789,16 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
 
         const auto compute_t0 = std::chrono::steady_clock::now();
         if (!sched->callback_eval) {
-            enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &split->graph);
-            if (ec != GGML_STATUS_SUCCESS) {
-                return ec;
+            if (sched_trace_lvl()) {
+                // Per-node timing for placement-grade heatmaps (issue 12).
+                std::vector<sched_node_timing> node_timings;
+                uint64_t split_us = compute_split_per_node(split_backend, split->graph, node_timings);
+                sched_trace_emit_node_timings(split_id, split_backend_id, sched->cur_copy, split_us, node_timings);
+            } else {
+                enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &split->graph);
+                if (ec != GGML_STATUS_SUCCESS) {
+                    return ec;
+                }
             }
         } else {
             // similar to ggml_backend_compare_graph_backend
@@ -2768,7 +2837,11 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
         {
             const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - compute_t0).count();
-            sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "graph_compute_async", us);
+            // Per-node timing already emitted a graph_compute_async event with
+            // node_timings above; only the plain emit is skipped to avoid dupes.
+            if (!sched_trace_lvl()) {
+                sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "graph_compute_async", us);
+            }
             sched->per_backend_compute_us[split_backend_id] += us;
         }
 

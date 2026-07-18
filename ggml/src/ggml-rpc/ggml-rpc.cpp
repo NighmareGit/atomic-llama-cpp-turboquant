@@ -2321,6 +2321,65 @@ static void rpc_write_server_telemetry_jsonl(const rpc_msg_server_telemetry & te
     fclose(f);
 }
 
+// issue 12: per-node timing for placement-grade heatmaps.
+// Computes a graph one node at a time, recording per-node microseconds.
+// Same ops + order as whole-graph compute; just slower (per-node sync).
+struct rpc_node_timing {
+    std::string name;
+    uint64_t    us = 0;
+};
+
+static uint64_t compute_graph_per_node(
+        ggml_backend_t backend, struct ggml_cgraph * graph,
+        std::vector<rpc_node_timing> & out) {
+    out.clear();
+    if (!graph || graph->n_nodes == 0) return 0;
+    out.reserve(graph->n_nodes);
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int j = 0; j < graph->n_nodes; ++j) {
+        struct ggml_cgraph gv = ggml_graph_view(graph, j, j + 1);
+        const auto n0 = std::chrono::steady_clock::now();
+        enum ggml_status ec = ggml_backend_graph_compute_async(backend, &gv);
+        ggml_backend_synchronize(backend);
+        const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - n0).count();
+        if (ec != GGML_STATUS_SUCCESS) continue;
+        rpc_node_timing nt;
+        nt.name = graph->nodes[j]->name;
+        nt.us = (uint64_t) us;
+        out.push_back(nt);
+    }
+    return (uint64_t) std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+}
+
+// issue 12: write a node_timings jsonl record to server-telemetry.jsonl.
+static void rpc_write_node_timings_jsonl(const std::vector<rpc_node_timing> & nodes) {
+    static std::mutex jsonl_mutex;
+    std::lock_guard<std::mutex> lock(jsonl_mutex);
+
+    const auto ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    uint64_t trace_id = ggml_pipeline_trace_get_trace_id();
+
+    const char * tel_path = getenv("GGML_RPC_SERVER_TELEMETRY_FILE");
+    if (!tel_path || !tel_path[0]) {
+        tel_path = "server-telemetry.jsonl";
+    }
+    FILE * f = fopen(tel_path, "a");
+    if (!f) return;
+
+    fprintf(f, "{\"event\":\"node_timings\",\"ts_us\":%lld,\"trace_id\":%llu,\"entries\":[",
+        (long long) ts_us, (unsigned long long) trace_id);
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        if (i) fprintf(f, ",");
+        fprintf(f, "{\"name\":\"%s\",\"us\":%llu}",
+            nodes[i].name.c_str(), (unsigned long long) nodes[i].us);
+    }
+    fprintf(f, "]}\n");
+    fclose(f);
+}
+
 // D4.5: weighted weight placement for multi-device endpoints.
 // Client assigns SET_TENSOR layers proportional to GPU speed ratio.
 // For 3090 vs 3070 (1.75x ratio, 60 total layers):
@@ -2721,6 +2780,8 @@ private:
     rpc_msg_server_telemetry  last_telemetry;
     mutable std::mutex        telemetry_mtx;
     std::atomic<uint64_t>     telemetry_decode_count{0};
+    // issue 12: sampled per-node timing (node_timings events). Bounded overhead.
+    std::atomic<uint64_t>     telemetry_node_sample_count{0};
 };
 
 void rpc_server::hello(rpc_msg_hello_rsp & response) {
@@ -3217,6 +3278,10 @@ ggml_tensor * rpc_server::create_node(uint64_t id,
     return result;
 }
 
+// issue 12: sample every Nth decode for per-node timing (more expensive than
+// device-level telemetry). Bounds overhead of per-node sync on the RPC server.
+static constexpr int RPC_NODE_SAMPLE_INTERVAL = 16;
+
 bool rpc_server::graph_compute(const std::vector<uint8_t> & input) {
     // serialization format:
     // | device (4 bytes) | n_nodes (4 bytes) | nodes (n_nodes * sizeof(uint64_t) | n_tensors (4 bytes) | tensors (n_tensors * sizeof(rpc_tensor)) |
@@ -3281,17 +3346,34 @@ bool rpc_server::graph_compute(const std::vector<uint8_t> & input) {
             return false;
         }
     }
+    // issue 12: on sampled decodes, compute per-node for placement-grade heatmaps.
+    // Sampled to bound overhead; produces correct output (same ops + order).
+    uint64_t us = 0;
+    const uint64_t sample_id = telemetry_node_sample_count.fetch_add(1, std::memory_order_relaxed);
+    const bool sample_nodes = telemetry_enabled && (sample_id % RPC_NODE_SAMPLE_INTERVAL) == 0;
+    std::vector<rpc_node_timing> node_timings;
+
     const auto t0 = std::chrono::steady_clock::now();
-    ggml_status status = ggml_backend_graph_compute(backends[device], graph);
+    ggml_status status;
+    if (sample_nodes) {
+        us = compute_graph_per_node(backends[device], graph, node_timings);
+        status = GGML_STATUS_SUCCESS;
+    } else {
+        status = ggml_backend_graph_compute(backends[device], graph);
+        us = (uint64_t) std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - t0).count();
+    }
     GGML_ASSERT(status == GGML_STATUS_SUCCESS && "Unsuccessful graph computations are not supported with RPC");
-    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
-        std::chrono::steady_clock::now() - t0).count();
     rpc_trace_emit("rpc_server::graph_compute", "server_compute", RPC_CMD_GRAPH_COMPUTE, input.size(), true, us);
     stored_graphs[device].graph = graph;
+    // issue 12: emit per-node timings for this sampled decode.
+    if (sample_nodes && !node_timings.empty()) {
+        rpc_write_node_timings_jsonl(node_timings);
+    }
     // D4.10: collect telemetry for single-device compute when enabled
     if (telemetry_enabled) {
         uint32_t dev = device;
-        int64_t per_device_us = us;
+        int64_t per_device_us = (int64_t) us;
         collect_telemetry(&dev, 1, &per_device_us);
     }
     return true;

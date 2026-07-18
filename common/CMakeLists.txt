@@ -75,6 +75,8 @@ add_library(${TARGET}
     download.h
     fit.cpp
     fit.h
+    heatmap-rollup.cpp
+    heatmap-rollup.h
     hf-cache.cpp
     hf-cache.h
     http.h

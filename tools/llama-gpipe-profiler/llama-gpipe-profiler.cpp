@@ -9,6 +9,7 @@
 #include "build-info.h"
 #include "common.h"
 #include "ggml.h"
+#include "heatmap-rollup.h"
 #include "llama.h"
 #include "sampling.h"
 #include "speculative.h"
@@ -654,6 +655,12 @@ struct telemetry_data {
     // Client-side GPU data (enumerated from ggml devices + sched-trace)
     std::vector<gpu_device_meta> client_devices;
     std::vector<client_backend_timing> client_timings;
+    // Per-layer heat from node_timings (placement-grade).
+    std::vector<heatmap_node_timing> node_timings;
+    std::vector<heatmap_layer_rollup> layer_rollup;
+    std::vector<heatmap_op_category>  op_categories;
+    bool node_timings_valid = false;
+    std::string heat_status; // full | partial | none | estimated
 };
 
 // Parse one device_meta object from a substring like:
@@ -921,10 +928,21 @@ static void write_heatmap_json(const fs::path & path, const heatmap_data & hm) {
             f << "      \"draft_accept_pct\": " << accept_pct << ",\n";
         }
 
-        // Per-layer timing from server telemetry.
+        // Per-layer heat from node_timings rollup (placement-grade).
         f << "      \"layers\": [";
-        // Use layer_assignments + device_timings if available.
+        if (hm.telemetry.node_timings_valid) {
+            for (size_t i = 0; i < hm.telemetry.layer_rollup.size(); ++i) {
+                if (i > 0) f << ", ";
+                const auto & lr = hm.telemetry.layer_rollup[i];
+                f << "\n        { \"idx\": " << lr.idx << ", \"ms\": " << lr.ms << " }";
+            }
+            if (!hm.telemetry.layer_rollup.empty()) f << "\n      ";
+        }
+        f << "]";
+
+        // Device-level timings (additive; never mislabeled as per-layer heat).
         if (hm.has_telemetry && !hm.telemetry.layer_assignments.empty()) {
+            f << ",\n      \"device_timings\": [";
             for (size_t i = 0; i < hm.telemetry.layer_assignments.size(); ++i) {
                 if (i > 0) f << ", ";
                 int gpu_id = hm.telemetry.layer_assignments[i];
@@ -934,9 +952,13 @@ static void write_heatmap_json(const fs::path & path, const heatmap_data & hm) {
                 }
                 f << "\n        { \"idx\": " << i << ", \"ms\": " << ms << ", \"gpu_id\": " << gpu_id << " }";
             }
-            f << "\n      ";
+            f << "\n      ]";
         }
-        f << "]";
+
+        // Honest heat status for this task.
+        if (hm.has_telemetry) {
+            f << ",\n      \"heat_status\": \"" << hm.telemetry.heat_status << "\"";
+        }
 
         // KV cache timing if available.
         if (hm.has_telemetry && !hm.telemetry.kv_read_times_us.empty()) {
@@ -948,6 +970,40 @@ static void write_heatmap_json(const fs::path & path, const heatmap_data & hm) {
               << ", \"write_ms\": " << total_write_ms << ", \"evict_count\": 0 }";
         } else if (!hm.has_telemetry) {
             f << ",\n      \"kv_source\": \"estimated\"";
+        }
+
+        // Per-layer rollup (one entry per transformer layer with heat).
+        if (hm.telemetry.node_timings_valid && !hm.telemetry.layer_rollup.empty()) {
+            f << ",\n      \"layer_rollup\": [";
+            for (size_t i = 0; i < hm.telemetry.layer_rollup.size(); ++i) {
+                if (i > 0) f << ", ";
+                const auto & lr = hm.telemetry.layer_rollup[i];
+                f << "\n        { \"idx\": " << lr.idx << ", \"ms\": " << lr.ms
+                  << ", \"us\": " << lr.us << ", \"n_nodes\": " << lr.n_nodes << ", \"nodes\": [";
+                for (size_t k = 0; k < lr.nodes.size(); ++k) {
+                    if (k > 0) f << ", ";
+                    f << "\"" << escape_json_string(lr.nodes[k]) << "\"";
+                }
+                f << "] }";
+            }
+            f << "\n      ]";
+        }
+
+        // Cross-layer op categories (attn/ffn/norm/other).
+        if (hm.telemetry.node_timings_valid && !hm.telemetry.op_categories.empty()) {
+            f << ",\n      \"op_categories\": [";
+            for (size_t i = 0; i < hm.telemetry.op_categories.size(); ++i) {
+                if (i > 0) f << ", ";
+                const auto & oc = hm.telemetry.op_categories[i];
+                f << "\n        { \"category\": \"" << oc.category << "\", \"ms\": " << oc.ms
+                  << ", \"us\": " << oc.us << ", \"n_nodes\": " << oc.n_nodes << ", \"ops\": [";
+                for (size_t k = 0; k < oc.ops.size(); ++k) {
+                    if (k > 0) f << ", ";
+                    f << "\"" << escape_json_string(oc.ops[k]) << "\"";
+                }
+                f << "] }";
+            }
+            f << "\n      ]";
         }
 
         f << "\n    }";
@@ -1326,6 +1382,24 @@ int llama_gpipe_profiler(int argc, char ** argv) {
         }
         // Also parse sched-trace for client-side per-backend compute timing.
         hm.telemetry.client_timings = parse_sched_trace_for_client_timing(cfg.trace_dir);
+
+        // Per-layer heat: parse node_timings from both sources, merge, rollup.
+        auto nt_local = heatmap_parse_node_timings_sched_trace(
+            (fs::path(cfg.trace_dir) / "sched-trace.jsonl").string());
+        auto nt_rpc = heatmap_parse_node_timings_server_telemetry(
+            (fs::path(cfg.trace_dir) / "server-telemetry.jsonl").string());
+        hm.telemetry.node_timings = heatmap_merge_node_timings(nt_local, nt_rpc);
+        hm.telemetry.node_timings_valid = !hm.telemetry.node_timings.empty();
+        if (hm.telemetry.node_timings_valid) {
+            heatmap_compute_layer_rollup(
+                hm.telemetry.node_timings, hm.n_layers,
+                hm.telemetry.layer_rollup, hm.telemetry.op_categories);
+        }
+        // Honest heat status: device-level telemetry counts as "estimated" baseline.
+        bool has_device_tel = hm.telemetry.valid &&
+            (!hm.telemetry.device_timings_us.empty() || !hm.telemetry.client_timings.empty());
+        hm.telemetry.heat_status = heatmap_heat_status(
+            hm.telemetry.layer_rollup.size(), hm.n_layers, has_device_tel);
     }
 
     // Write heatmap.

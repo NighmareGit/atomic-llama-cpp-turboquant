@@ -228,6 +228,83 @@ Layer index is extracted from `l_out-N.*` or `blk.N.*` tensor name patterns.
 
 ---
 
+## Producing a full per-layer heatmap
+
+A "full" heatmap (`heat_status: "full"`) has one `layers[]` entry per transformer
+layer (`layers.length == n_layer`), synthesized from per-node timings. This requires
+both emission (runtime) and consumption (profiler) sides.
+
+### Runtime flags
+
+| Flag | Side | Effect |
+|------|------|--------|
+| `GGML_SCHED_TRACE=1` | local GPUs (client) | Emits `graph_compute_async` events with a `node_timings` array into `sched-trace.jsonl`. Each node is computed individually so its wall time is recorded (diagnostic: slower than batched). |
+| `--telemetry` / `-T` | RPC server | Enables server telemetry. |
+| `--server-telemetry` | RPC server (via profiler) | Requests server telemetry frames. |
+| `GGML_RPC_SERVER_TELEMETRY_FILE=path` | RPC server | Override `server-telemetry.jsonl` path. |
+
+On the RPC server, per-node timing is emitted on a sampled subset of decodes
+(`RPC_NODE_SAMPLE_INTERVAL`) to bound overhead; sampled decodes compute one node at a
+time (same result, slower). Non-sampled decodes use normal batched compute.
+
+### Profiler invocation
+
+```sh
+llama-gpipe-profiler \
+  -m model.gguf \
+  --rpc 192.168.1.10:50051 \
+  --tasks tg,pp \
+  --trace --server-telemetry \
+  --out-dir profiler-out/run1
+```
+
+With `GGML_SCHED_TRACE=1` set in the environment, the client writes
+`sched-trace.jsonl` (local layers) and the server writes `server-telemetry.jsonl`
+(RPC layers, including sampled `node_timings` events). The profiler merges both.
+
+### Output schema
+
+Each task (`tasks.tg`, `tasks.pp`) in `heatmap.json` now carries:
+
+```json
+{
+  "layers": [{"idx": 0, "ms": 12.3}, ...],
+  "layer_rollup": [{"idx": 0, "ms": 12.3, "us": 12300, "n_nodes": 7, "nodes": [...]}],
+  "op_categories": [{"category": "attn", "ms": 5.1, "us": 5100, "n_nodes": 5, "ops": [...]}],
+  "heat_status": "full",
+  "device_timings": [{"idx": 0, "ms": 3.4, "gpu_id": 0}]
+}
+```
+
+- `layers[]`: one entry per transformer layer (length `n_layer` when `heat_status=full`).
+- `layer_rollup[]`: per-layer sum of node timings with member node names.
+- `op_categories[]`: cross-layer aggregation by op type (`attn`/`ffn`/`norm`/`other`).
+- `heat_status`: `full` (all layers), `partial` (some), `none` (no node timings), `estimated` (device-level only).
+- `device_timings[]`: per-device timings moved here so they are never mislabeled as per-layer heat.
+
+### Honest heat
+
+`heat_status` reflects actual data availability — never fabricated:
+
+| Status | Meaning |
+|--------|---------|
+| `full` | `layers.length == n_layer`; reliable per-layer ranking |
+| `partial` | some layers present; ranking is incomplete |
+| `none` | no `node_timings` collected; check flags |
+| `estimated` | only device-level timings; no per-layer signal |
+
+If `heat_status != "full"`, do not use `layers[]` for hot-layer placement decisions.
+
+### Romulus-style local + RPC
+
+On a Romulus-style node (local ROCm + CUDA RPC), local layers arrive via
+`sched-trace.jsonl` and RPC layers via `server-telemetry.jsonl`. The profiler merges both
+by tensor name, so a single `layers[]` spans the whole model. Empty `layers[]` with
+`heat_status: "none"` is the expected result when `GGML_SCHED_TRACE` is unset or telemetry
+is off — not a bug.
+
+---
+
 ## Related docs
 
 - [CURRENT-STATE-pipeline-flow.md](CURRENT-STATE-pipeline-flow.md) -- pipeline trace formats
