@@ -176,14 +176,15 @@ Implementation of a phase may be multiple PRs; acceptance is per phase below.
 - Plan-wins warnings for classic knobs.
 - Fail-loud apply re-discover; optional degrade flags stubbed or implemented behind off-default switches.
 
-**Shipped surface (issues 09–10)**
+**Shipped surface (issues 09–11)**
 
 | Item | Notes |
 |------|--------|
 | Code | `common/placement-plan.*`; `layer_devices` + plan `tensor_buft_overrides` |
-| CLI | `--placement PATH` / `LLAMA_ARG_PLACEMENT` |
+| CLI | `--placement PATH`; `--placement-generate PATH` [+ `--placement-generate-only`] |
+| Packer | Proportional by `usable_weight_mib`; min 1 layer on small cards; `heat.status=none` |
 | Overrides | Applied; **override wins** for matched tensors; CLI `-ot` ignored |
-| Tests | `tests/test-placement-plan.cpp` |
+| Tests | `tests/test-placement-plan.cpp`, `tests/test-placement-pack.cpp` |
 
 **Acceptance**
 

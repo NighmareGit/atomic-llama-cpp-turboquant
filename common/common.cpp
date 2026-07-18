@@ -1189,9 +1189,95 @@ struct common_init_result::impl {
     std::vector<llama_sampler_seq_config> samplers_seq_config;
 };
 
+// Capacity packer: discover + pack + write plan. Optionally exit (generate-only).
+// On success with load path, sets params.placement_plan_path if empty.
+static bool common_placement_generate(common_params & params) {
+    if (params.placement_generate_path.empty()) {
+        return true;
+    }
+
+    ggml_backend_load_all();
+    placement_reserve_params rp;
+    rp.n_ctx = params.n_ctx;
+    rp.n_parallel = params.n_parallel;
+    rp.flash_attn = (params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_ENABLED);
+    placement_inventory inv = placement_discover_live(params.rpc_endpoints, rp);
+    if (!inv.topology_complete && !params.rpc_endpoints.empty()) {
+        for (const auto & e : inv.discover_errors) {
+            LOG_WRN("%s: discover: %s: %s\n", __func__, e.target.c_str(), e.message.c_str());
+        }
+    }
+    if (inv.records.empty()) {
+        LOG_ERR("%s: no capacity records to pack\n", __func__);
+        return false;
+    }
+
+    int32_t n_layer = 0;
+    if (!params.model.path.empty()) {
+        // fit.cpp pattern: no_alloc + no mmap for metadata without full weight load
+        auto meta_mp = common_model_params_to_llama(params);
+        meta_mp.no_alloc = true;
+        meta_mp.use_mmap = false;
+        meta_mp.layer_devices = nullptr;
+        meta_mp.n_layer_devices = 0;
+        meta_mp.devices = nullptr;
+        meta_mp.n_gpu_layers = 0;
+        llama_model * meta = llama_model_load_from_file(params.model.path.c_str(), meta_mp);
+        if (!meta) {
+            LOG_ERR("%s: failed to load model metadata for n_layer\n", __func__);
+            return false;
+        }
+        // load_tensors / placement maps use n_layer_all (includes nextn blocks)
+        n_layer = llama_model_n_layer_all(meta);
+        if (n_layer <= 0) {
+            n_layer = llama_model_n_layer(meta);
+        }
+        llama_model_free(meta);
+    }
+    if (n_layer <= 0) {
+        LOG_ERR("%s: n_layer unknown (provide --model)\n", __func__);
+        return false;
+    }
+
+    placement_plan plan;
+    std::vector<placement_plan_error> errors;
+    if (!placement_plan_pack_capacity(inv, n_layer, params.model.path, plan, errors)) {
+        for (const auto & e : errors) {
+            LOG_ERR("%s: %s\n", __func__, e.message.c_str());
+        }
+        return false;
+    }
+
+    if (!placement_plan_write_file(plan, params.placement_generate_path)) {
+        LOG_ERR("%s: failed to write plan to %s\n", __func__, params.placement_generate_path.c_str());
+        return false;
+    }
+    LOG_INF("%s: wrote capacity plan (%d layers, %zu assignments) to %s\n",
+        __func__, n_layer, plan.assignments.size(), params.placement_generate_path.c_str());
+    for (const auto & a : plan.assignments) {
+        LOG_INF("%s:   layers [%d, %d) -> %s\n", __func__,
+            a.layer_start, a.layer_end, a.backend_id.c_str());
+    }
+
+    if (params.placement_generate_only) {
+        // Immediate exit: avoid atexit/static dtors (console spinner may still be live)
+        fflush(stdout);
+        fflush(stderr);
+        _Exit(0);
+    }
+    if (params.placement_plan_path.empty()) {
+        params.placement_plan_path = params.placement_generate_path;
+    }
+    return true;
+}
+
 // Apply placement plan: re-discover, validate, fill params.placement_* storage.
 // Returns false on hard failure (caller should abort load).
 static bool common_placement_prepare(common_params & params) {
+    if (!common_placement_generate(params)) {
+        return false;
+    }
+
     if (params.placement_plan_path.empty()) {
         params.placement_plan_active = false;
         return true;
@@ -1264,17 +1350,22 @@ static bool common_placement_prepare(common_params & params) {
 
     int32_t n_layer = plan.n_layer;
     if (n_layer <= 0) {
-        // Metadata-only load to learn n_layer
         auto meta_mp = common_model_params_to_llama(params);
         meta_mp.no_alloc = true;
+        meta_mp.use_mmap = false;
         meta_mp.layer_devices = nullptr;
         meta_mp.n_layer_devices = 0;
+        meta_mp.devices = nullptr;
+        meta_mp.n_gpu_layers = 0;
         llama_model * meta = llama_model_load_from_file(params.model.path.c_str(), meta_mp);
         if (!meta) {
             LOG_ERR("%s: failed to load model metadata for n_layer (set model.n_layer in plan)\n", __func__);
             return false;
         }
-        n_layer = llama_model_n_layer(meta);
+        n_layer = llama_model_n_layer_all(meta);
+        if (n_layer <= 0) {
+            n_layer = llama_model_n_layer(meta);
+        }
         llama_model_free(meta);
         LOG_INF("%s: plan n_layer from model metadata: %d\n", __func__, n_layer);
     }

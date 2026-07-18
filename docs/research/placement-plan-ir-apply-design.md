@@ -249,6 +249,26 @@ Logs: `using explicit layer_devices map`, `layer N assigned to device X (plan)`.
 
 Smoke (2026-07-17): Qwen3.5-0.8B (25 layers) — layers 0-2 on `rpc://127.0.0.1:50051#0` (romulus docker 8 GB), 3-24 on `local:pci:…` ROCm; also CPU+local plan. Triton dual-RPC load hit legacy server crash (unrelated proto/image); local RPC path OK.
 
+### Issue 11 — capacity packer
+
+| Item | Behavior |
+|------|----------|
+| CLI | `--placement-generate PATH` (+ env); optional `--placement-generate-only` (write + exit) |
+| Input | Live discover inventory + `llama_model_n_layer_all` from `--model` |
+| Pack | Proportional layers by `usable_weight_mib` (deterministic: usable desc, then `backend_id`); each usable backend gets ≥1 layer when `n_layer` allows |
+| Output | Plan JSON with full partition, `heat.status=none`, empty `overrides`, backends snapshot |
+| Load | Same process sets `--placement` to generated path unless generate-only |
+
+```bash
+# write plan only
+./build/bin/llama-cli -m model.gguf --rpc host:port \
+  --placement-generate /tmp/plan.json --placement-generate-only
+
+# generate + load in one command
+./build/bin/llama-cli -m model.gguf --rpc host:port \
+  --placement-generate /tmp/plan.json -c 256 -n 8 -p "Hi" --single-turn --no-warmup
+```
+
 ### Issue 10 — tensor overrides
 
 | Item | Behavior |

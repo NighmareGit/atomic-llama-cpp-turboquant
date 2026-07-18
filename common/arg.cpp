@@ -2333,6 +2333,21 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_env("LLAMA_ARG_PLACEMENT"));
     add_opt(common_arg(
+        {"--placement-generate"}, "PATH",
+        "opt-in: discover capacity, pack layers by usable_weight, write plan JSON to PATH\n"
+        "(then load with that plan unless --placement-generate-only)",
+        [](common_params & params, const std::string & value) {
+            params.placement_generate_path = value;
+        }
+    ).set_env("LLAMA_ARG_PLACEMENT_GENERATE"));
+    add_opt(common_arg(
+        {"--placement-generate-only"},
+        "with --placement-generate: write plan and exit (no model load)",
+        [](common_params & params) {
+            params.placement_generate_only = true;
+        }
+    ).set_env("LLAMA_ARG_PLACEMENT_GENERATE_ONLY"));
+    add_opt(common_arg(
         {"--mlock"},
         "force system to keep model in RAM rather than swapping or compressing",
         [](common_params & params) {

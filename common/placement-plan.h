@@ -127,3 +127,24 @@ bool placement_plan_prepare_apply(
 
 // Dump layer map as multi-line string for logs / determinism checks.
 std::string placement_layer_map_to_string(const placement_layer_map & layers);
+
+// --- capacity packer (issue 11) ---
+
+// Pack layers onto inventory backends by usable_weight_mib (proportional).
+// Deterministic: backends ordered by usable desc, then backend_id asc.
+// Small cards with usable > 0 get at least 1 layer when n_layer >= n_usable_backends.
+// Backends with usable_weight_mib == 0 and free_mib == 0 are skipped.
+// heat.status = none; empty overrides; split_mode = layer.
+// Returns false if n_layer <= 0 or no usable backends.
+bool placement_plan_pack_capacity(
+    const placement_inventory & inv,
+    int32_t n_layer,
+    const std::string & model_path,
+    placement_plan & out,
+    std::vector<placement_plan_error> & errors);
+
+// Serialize plan to JSON string (schema v1).
+std::string placement_plan_to_json(const placement_plan & plan, int indent = 2);
+
+// Write plan JSON to path.
+bool placement_plan_write_file(const placement_plan & plan, const std::string & path);

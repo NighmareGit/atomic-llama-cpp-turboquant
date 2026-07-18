@@ -566,3 +566,233 @@ bool placement_plan_prepare_apply(
 
     return true;
 }
+
+// ---------------------------------------------------------------------------
+// Capacity packer (issue 11)
+// ---------------------------------------------------------------------------
+
+bool placement_plan_pack_capacity(
+        const placement_inventory & inv,
+        int32_t n_layer,
+        const std::string & model_path,
+        placement_plan & out,
+        std::vector<placement_plan_error> & errors) {
+    out = placement_plan{};
+    if (n_layer <= 0) {
+        add_err(errors, "pack: n_layer must be positive");
+        return false;
+    }
+
+    struct cand {
+        std::string backend_id;
+        uint64_t    usable = 0;
+        uint64_t    free_mib = 0;
+        uint64_t    total_mib = 0;
+    };
+    std::vector<cand> cands;
+    for (const auto & r : inv.records) {
+        // Prefer usable; fall back to free if usable is 0 but free remains
+        uint64_t u = r.usable_weight_mib;
+        if (u == 0) {
+            u = r.free_mib;
+        }
+        if (u == 0 && r.total_mib == 0) {
+            continue;
+        }
+        if (u == 0) {
+            continue; // no budget
+        }
+        cands.push_back({r.backend_id, u, r.free_mib, r.total_mib});
+    }
+
+    if (cands.empty()) {
+        add_err(errors, "pack: no backends with positive usable/free capacity");
+        return false;
+    }
+
+    // Deterministic order: usable desc, then backend_id asc
+    std::sort(cands.begin(), cands.end(), [](const cand & a, const cand & b) {
+        if (a.usable != b.usable) {
+            return a.usable > b.usable;
+        }
+        return a.backend_id < b.backend_id;
+    });
+
+    // Cap number of backends to n_layer (at most one layer each)
+    if ((int32_t) cands.size() > n_layer) {
+        cands.resize((size_t) n_layer);
+    }
+
+    const size_t nb = cands.size();
+    uint64_t sum_u = 0;
+    for (const auto & c : cands) {
+        sum_u += c.usable;
+    }
+    if (sum_u == 0) {
+        add_err(errors, "pack: total usable is zero");
+        return false;
+    }
+
+    // Proportional layer counts; guarantee min 1 for each cand when possible
+    std::vector<int32_t> counts(nb, 0);
+    int32_t assigned = 0;
+    for (size_t i = 0; i < nb; ++i) {
+        // floor; min 1
+        int32_t n = (int32_t) ((cands[i].usable * (uint64_t) n_layer) / sum_u);
+        if (n < 1) {
+            n = 1;
+        }
+        counts[i] = n;
+        assigned += n;
+    }
+    // If over-allocated (min-1 push), trim from largest first
+    while (assigned > n_layer) {
+        bool trimmed = false;
+        for (size_t i = 0; i < nb && assigned > n_layer; ++i) {
+            if (counts[i] > 1) {
+                counts[i]--;
+                assigned--;
+                trimmed = true;
+            }
+        }
+        if (!trimmed) {
+            break;
+        }
+    }
+    // Remainder to largest usable (index 0)
+    if (assigned < n_layer) {
+        counts[0] += (n_layer - assigned);
+        assigned = n_layer;
+    }
+    // If still short (pathological), dump rest on first
+    if (assigned < n_layer) {
+        counts[0] += (n_layer - assigned);
+    }
+
+    // Contiguous ranges: order by pack sort (large first = early layers).
+    // Small cards as cold fillers still get a trailing or mid share via proportion;
+    // with large-first ordering they land later when remainder is small — actually
+    // large first means early layers on big GPUs (common for PP). Small get later
+    // contiguous blocks if we emit in sort order... Wait: counts[0] is largest,
+    // so layers 0..c0-1 on largest, then next, etc. Small cards get late layers.
+    // AC: "smaller card gets fewer layers" — satisfied by proportion + min 1.
+    // "cold filler" — late layers on small is OK for TG-ish; fine for capacity pack.
+
+    out.schema_version = 1;
+    out.created_at = placement_now_iso8601();
+    out.model_path = model_path;
+    out.n_layer = n_layer;
+    out.split_mode = "layer";
+    out.capacity_snapshot_at = inv.records.empty() ? out.created_at : inv.records[0].reported_at;
+    out.reserve_mode = inv.reserve_mode.empty() ? "table" : inv.reserve_mode;
+    out.reserve_model_version = inv.reserve_model_version.empty()
+        ? PLACEMENT_RESERVE_MODEL_TABLE_V1 : inv.reserve_model_version;
+    out.heat.status = "none";
+    out.heat.task = "";
+    out.heat.schema_version = 1;
+    out.overrides.clear();
+
+    int32_t cursor = 0;
+    for (size_t i = 0; i < nb; ++i) {
+        if (counts[i] <= 0) {
+            continue;
+        }
+        placement_plan_assignment a;
+        a.layer_start = cursor;
+        a.layer_end = cursor + counts[i];
+        a.backend_id = cands[i].backend_id;
+        out.assignments.push_back(a);
+        cursor = a.layer_end;
+
+        placement_plan::backend_snapshot bs;
+        bs.backend_id = cands[i].backend_id;
+        bs.usable_weight_mib = cands[i].usable;
+        bs.free_mib = cands[i].free_mib;
+        bs.total_mib = cands[i].total_mib;
+        out.backends.push_back(bs);
+    }
+
+    if (cursor != n_layer) {
+        add_err(errors, "pack: internal layer sum " + std::to_string(cursor) +
+            " != n_layer " + std::to_string(n_layer));
+        return false;
+    }
+
+    // Self-validate
+    std::vector<placement_plan_error> verr;
+    if (!placement_plan_validate(out, n_layer, /*mixed*/ true, verr)) {
+        for (const auto & e : verr) {
+            errors.push_back(e);
+        }
+        return false;
+    }
+    return true;
+}
+
+std::string placement_plan_to_json(const placement_plan & plan, int indent) {
+    json j;
+    j["schema_version"] = plan.schema_version;
+    if (!plan.created_at.empty()) {
+        j["created_at"] = plan.created_at;
+    }
+    j["split_mode"] = plan.split_mode.empty() ? "layer" : plan.split_mode;
+    {
+        json m;
+        if (!plan.model_path.empty()) {
+            m["path"] = plan.model_path;
+        }
+        m["n_layer"] = plan.n_layer;
+        j["model"] = m;
+    }
+    if (!plan.capacity_snapshot_at.empty()) {
+        j["capacity_snapshot_at"] = plan.capacity_snapshot_at;
+    }
+    j["reserve_mode"] = plan.reserve_mode;
+    j["reserve_model_version"] = plan.reserve_model_version;
+
+    j["backends"] = json::array();
+    for (const auto & b : plan.backends) {
+        j["backends"].push_back(json{
+            {"backend_id", b.backend_id},
+            {"usable_weight_mib", b.usable_weight_mib},
+            {"free_mib", b.free_mib},
+            {"total_mib", b.total_mib},
+        });
+    }
+
+    j["assignments"] = json::array();
+    for (const auto & a : plan.assignments) {
+        j["assignments"].push_back(json{
+            {"layer_start", a.layer_start},
+            {"layer_end", a.layer_end},
+            {"backend_id", a.backend_id},
+        });
+    }
+
+    j["overrides"] = json::array();
+    for (const auto & o : plan.overrides) {
+        j["overrides"].push_back(json{
+            {"match", o.match},
+            {"backend_id", o.backend_id},
+        });
+    }
+
+    j["heat"] = json{
+        {"status", plan.heat.status.empty() ? "none" : plan.heat.status},
+        {"task", plan.heat.task},
+        {"schema_version", plan.heat.schema_version},
+        {"layers", json::array()},
+    };
+
+    return j.dump(indent);
+}
+
+bool placement_plan_write_file(const placement_plan & plan, const std::string & path) {
+    std::ofstream ofs(path);
+    if (!ofs) {
+        return false;
+    }
+    ofs << placement_plan_to_json(plan, 2);
+    ofs << "\n";
+    return (bool) ofs;
+}

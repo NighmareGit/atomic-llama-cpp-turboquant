@@ -714,6 +714,11 @@ struct common_params {
 
     // Placement plan apply (P1): --placement PATH / LLAMA_ARG_PLACEMENT
     std::string placement_plan_path;
+    // Capacity packer (issue 11): discover + pack by usable_weight → write plan JSON
+    // If set, generates plan then uses it as placement_plan_path when that is empty.
+    // With --placement-generate-only, write plan and exit (no model load).
+    std::string placement_generate_path;
+    bool        placement_generate_only = false;
     // Filled by common_init when plan is active (storage for llama_model_params pointers)
     std::vector<ggml_backend_dev_t> placement_devices;       // null-terminated for mparams.devices
     std::vector<ggml_backend_dev_t> placement_layer_devices; // per-layer map
