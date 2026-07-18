@@ -2348,6 +2348,25 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_env("LLAMA_ARG_PLACEMENT_GENERATE_ONLY"));
     add_opt(common_arg(
+        {"--placement-generate-heat"}, "PATH",
+        "opt-in: discover capacity, pack layers by heat scores, write plan JSON to PATH\n"
+        "(requires --placement-heatmap; then load with that plan unless --placement-generate-only)\n"
+        "Probe baseline recommendation: run capacity plan (--placement-generate) first to\n"
+        "verify topology, then produce heatmap via llama-gpipe-profiler, then re-probe with\n"
+        "--placement-generate-heat for hot-on-fast placement",
+        [](common_params & params, const std::string & value) {
+            params.placement_generate_heat_path = value;
+        }
+    ).set_env("LLAMA_ARG_PLACEMENT_GENERATE_HEAT"));
+    add_opt(common_arg(
+        {"--placement-heatmap"}, "PATH",
+        "heatmap JSON file with per-layer TG scores for heat-aware plan generation\n"
+        "(produced by llama-gpipe-profiler; uses tasks.tg.layer_rollup or tasks.tg.layers)",
+        [](common_params & params, const std::string & value) {
+            params.placement_heatmap_path = value;
+        }
+    ).set_env("LLAMA_ARG_PLACEMENT_HEATMAP"));
+    add_opt(common_arg(
         {"--mlock"},
         "force system to keep model in RAM rather than swapping or compressing",
         [](common_params & params) {

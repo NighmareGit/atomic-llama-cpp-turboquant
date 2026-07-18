@@ -301,4 +301,17 @@ Example:
 6. Artifact: versioned JSON + `--placement PATH`  
 7. Coverage: full partition of layers (no implicit gaps)  
 8. `split_mode` in plan; default layer; refuse illegal tensor  
-9. **overrides[]** with **v1 full apply required**  
+9. **overrides[]** with **v1 full apply required**
+
+---
+
+## 13. Heat-aware probe baseline recommendation
+
+When deploying heat-aware placement (P3 generator):
+
+1. **First:** Run a capacity-only plan (`--placement-generate`) to verify topology and backends. This gives a safe fallback plan with `heat.status=none`.
+2. **Second:** Run `llama-gpipe-profiler` to produce a heatmap JSON with per-layer TG scores (node_timings rollup from sched-trace + server-telemetry).
+3. **Third:** Generate a heat-aware plan (`--placement-generate-heat --placement-heatmap PATH`) that places hot layers on fast backends and cold layers on slow/high-VRAM fillers.
+4. **Re-probe triggers:** Model change, topology change (add/remove RPC), quantization change, or significant workload shift.
+
+Each step works independently: capacity plans always load without heat; heat-aware plans load offline without the live profiler. The same capacity inventory snapshot is used for both, so backends IDs are consistent across steps.

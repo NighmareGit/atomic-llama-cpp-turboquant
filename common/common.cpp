@@ -8,6 +8,7 @@
 #include "llama.h"
 #include "placement-capacity.h"
 #include "placement-plan.h"
+#include "heatmap-rollup.h"
 #include "sampling.h"
 #include "speculative.h"
 #include "unicode.h"
@@ -1191,8 +1192,9 @@ struct common_init_result::impl {
 
 // Capacity packer: discover + pack + write plan. Optionally exit (generate-only).
 // On success with load path, sets params.placement_plan_path if empty.
+// Also handles heat-aware generation when placement_generate_heat_path is set.
 static bool common_placement_generate(common_params & params) {
-    if (params.placement_generate_path.empty()) {
+    if (params.placement_generate_path.empty() && params.placement_generate_heat_path.empty()) {
         return true;
     }
 
@@ -1239,6 +1241,59 @@ static bool common_placement_generate(common_params & params) {
         return false;
     }
 
+    // Heat-aware generation path
+    if (!params.placement_generate_heat_path.empty()) {
+        if (params.placement_heatmap_path.empty()) {
+            LOG_ERR("%s: --placement-heatmap required with --placement-generate-heat\n", __func__);
+            return false;
+        }
+
+        std::vector<heatmap_layer_rollup> rollup;
+        std::vector<placement_plan_error> errors;
+        if (!placement_plan_parse_heatmap_file(params.placement_heatmap_path, rollup, errors)) {
+            for (const auto & e : errors) {
+                LOG_ERR("%s: %s\n", __func__, e.message.c_str());
+            }
+            return false;
+        }
+
+        LOG_INF("%s: parsed %zu layer heat records from %s\n",
+            __func__, rollup.size(), params.placement_heatmap_path.c_str());
+
+        placement_plan plan;
+        errors.clear();
+        if (!placement_plan_pack_heat(inv, n_layer, params.model.path, rollup, plan, errors)) {
+            for (const auto & e : errors) {
+                LOG_ERR("%s: %s\n", __func__, e.message.c_str());
+            }
+            return false;
+        }
+
+        if (!placement_plan_write_file(plan, params.placement_generate_heat_path)) {
+            LOG_ERR("%s: failed to write heat plan to %s\n", __func__,
+                params.placement_generate_heat_path.c_str());
+            return false;
+        }
+        LOG_INF("%s: wrote heat-aware plan (%d layers, %zu assignments, heat=%s) to %s\n",
+            __func__, n_layer, plan.assignments.size(), plan.heat.status.c_str(),
+            params.placement_generate_heat_path.c_str());
+        for (const auto & a : plan.assignments) {
+            LOG_INF("%s:   layers [%d, %d) -> %s\n", __func__,
+                a.layer_start, a.layer_end, a.backend_id.c_str());
+        }
+
+        if (params.placement_generate_only) {
+            fflush(stdout);
+            fflush(stderr);
+            _Exit(0);
+        }
+        if (params.placement_plan_path.empty()) {
+            params.placement_plan_path = params.placement_generate_heat_path;
+        }
+        return true;
+    }
+
+    // Capacity-only generation (original path)
     placement_plan plan;
     std::vector<placement_plan_error> errors;
     if (!placement_plan_pack_capacity(inv, n_layer, params.model.path, plan, errors)) {

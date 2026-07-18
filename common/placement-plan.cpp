@@ -1,5 +1,6 @@
 #include "placement-plan.h"
 
+#include "heatmap-rollup.h"
 #include "log.h"
 
 #include <nlohmann/json.hpp>
@@ -89,6 +90,17 @@ bool placement_plan_parse_json(
         out.heat.status = j["heat"].value("status", "none");
         out.heat.task = j["heat"].value("task", "");
         out.heat.schema_version = j["heat"].value("schema_version", 1);
+        if (j["heat"].contains("layers") && j["heat"]["layers"].is_array()) {
+            for (const auto & l : j["heat"]["layers"]) {
+                placement_plan_heat_layer hl;
+                hl.idx = l.value("idx", -1);
+                hl.ms = l.value("ms", 0.0);
+                hl.us = l.value("us", 0ull);
+                hl.rank = l.value("rank", -1);
+                hl.n_nodes = l.value("n_nodes", 0);
+                out.heat.layers.push_back(hl);
+            }
+        }
     }
 
     if (j.contains("backends") && j["backends"].is_array()) {
@@ -729,6 +741,377 @@ bool placement_plan_pack_capacity(
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Heat-aware packer (issue 13 / P3)
+// ---------------------------------------------------------------------------
+
+bool placement_plan_parse_heatmap_file(
+        const std::string & path,
+        std::vector<heatmap_layer_rollup> & rollup,
+        std::vector<placement_plan_error> & errors) {
+    rollup.clear();
+
+    std::ifstream ifs(path);
+    if (!ifs) {
+        add_err(errors, "failed to open heatmap file: " + path);
+        return false;
+    }
+    std::ostringstream ss;
+    ss << ifs.rdbuf();
+    const std::string text = ss.str();
+
+    json j;
+    try {
+        j = json::parse(text);
+    } catch (const std::exception & e) {
+        add_err(errors, "heatmap JSON parse failed: " + std::string(e.what()));
+        return false;
+    }
+
+    // Navigate: tasks.tg.layer_rollup (preferred) or tasks.tg.layers
+    auto extract_layer_array = [&](const json & arr) -> bool {
+        for (const auto & item : arr) {
+            if (!item.is_object()) continue;
+            heatmap_layer_rollup lr;
+            lr.idx = item.value("idx", -1);
+            lr.ms = item.value("ms", 0.0);
+            lr.us = item.value("us", (uint64_t) 0);
+            lr.n_nodes = item.value("n_nodes", 0);
+            if (item.contains("nodes") && item["nodes"].is_array()) {
+                for (const auto & n : item["nodes"]) {
+                    lr.nodes.push_back(n.get<std::string>());
+                }
+            }
+            if (lr.idx >= 0) {
+                rollup.push_back(lr);
+            }
+        }
+        return !rollup.empty();
+    };
+
+    try {
+        // Try tasks.tg.layer_rollup (full detail) first
+        if (j.contains("tasks") && j["tasks"].is_object() &&
+            j["tasks"].contains("tg") && j["tasks"]["tg"].is_object()) {
+            const auto & tg = j["tasks"]["tg"];
+            if (tg.contains("layer_rollup") && tg["layer_rollup"].is_array()) {
+                if (extract_layer_array(tg["layer_rollup"])) {
+                    return true;
+                }
+            }
+            if (tg.contains("layers") && tg["layers"].is_array()) {
+                if (extract_layer_array(tg["layers"])) {
+                    return true;
+                }
+            }
+        }
+        // Fallback: check for a top-level "layer_rollup" or "layers" array
+        if (j.contains("layer_rollup") && j["layer_rollup"].is_array()) {
+            if (extract_layer_array(j["layer_rollup"])) {
+                return true;
+            }
+        }
+        if (j.contains("layers") && j["layers"].is_array()) {
+            if (extract_layer_array(j["layers"])) {
+                return true;
+            }
+        }
+    } catch (const std::exception & e) {
+        add_err(errors, "heatmap extraction failed: " + std::string(e.what()));
+        return false;
+    }
+
+    add_err(errors, "no per-layer heat data found in heatmap file (expected tasks.tg.layer_rollup or tasks.tg.layers)");
+    return false;
+}
+
+bool placement_plan_pack_heat(
+        const placement_inventory & inv,
+        int32_t n_layer,
+        const std::string & model_path,
+        const std::vector<heatmap_layer_rollup> & rollup,
+        placement_plan & out,
+        std::vector<placement_plan_error> & errors) {
+    out = placement_plan{};
+    if (n_layer <= 0) {
+        add_err(errors, "pack_heat: n_layer must be positive");
+        return false;
+    }
+
+    // If no heat data, fall back to capacity-only packing
+    if (rollup.empty()) {
+        return placement_plan_pack_capacity(inv, n_layer, model_path, out, errors);
+    }
+
+    // Build candidate backends sorted by usable_weight desc (proxy for speed)
+    struct cand {
+        std::string backend_id;
+        uint64_t    usable = 0;
+        uint64_t    free_mib = 0;
+        uint64_t    total_mib = 0;
+        int         speed_tier = 0; // 2=local GPU, 1=RPC, 0=CPU
+    };
+    std::vector<cand> cands;
+    for (const auto & r : inv.records) {
+        uint64_t u = r.usable_weight_mib;
+        if (u == 0) {
+            u = r.free_mib;
+        }
+        if (u == 0) {
+            continue;
+        }
+        int st = 0;
+        if (r.kind == PLACEMENT_KIND_LOCAL_GPU) {
+            st = 2;
+        } else if (r.kind == PLACEMENT_KIND_RPC_DEVICE) {
+            st = 1;
+        }
+        cands.push_back({r.backend_id, u, r.free_mib, r.total_mib, st});
+    }
+
+    if (cands.empty()) {
+        add_err(errors, "pack_heat: no backends with positive usable/free capacity");
+        return false;
+    }
+
+    // Sort: speed_tier desc (local GPU > RPC > CPU), then usable desc, then backend_id asc
+    std::sort(cands.begin(), cands.end(), [](const cand & a, const cand & b) {
+        if (a.speed_tier != b.speed_tier) {
+            return a.speed_tier > b.speed_tier;
+        }
+        if (a.usable != b.usable) {
+            return a.usable > b.usable;
+        }
+        return a.backend_id < b.backend_id;
+    });
+
+    // Cap number of backends to n_layer
+    if ((int32_t) cands.size() > n_layer) {
+        cands.resize((size_t) n_layer);
+    }
+
+    const size_t n_backends = cands.size();
+
+    // -----------------------------------------------------------------------
+    // Hot-on-fast / cold-on-slow: sort hottest layers first, then assign
+    // hottest to fastest backends by capacity proportion.
+    // -----------------------------------------------------------------------
+
+    std::vector<int32_t> layer_order(n_layer);
+    for (int32_t i = 0; i < n_layer; ++i) {
+        layer_order[i] = i;
+    }
+
+    // Heat lookup by layer index
+    std::map<int, const heatmap_layer_rollup *> heat_by_idx;
+    for (const auto & hl : rollup) {
+        heat_by_idx[hl.idx] = &hl;
+    }
+
+    // Hot layers first (ms desc); layers without heat score go last
+    std::sort(layer_order.begin(), layer_order.end(), [&](int32_t a, int32_t b) {
+        auto ha = heat_by_idx.find(a);
+        auto hb = heat_by_idx.find(b);
+        double ma = (ha != heat_by_idx.end()) ? ha->second->ms : 0.0;
+        double mb = (hb != heat_by_idx.end()) ? hb->second->ms : 0.0;
+        if (ma != mb) {
+            return ma > mb;
+        }
+        return a < b; // stable by layer index
+    });
+
+    // Compute total usable for proportional distribution
+    uint64_t sum_u = 0;
+    for (const auto & c : cands) {
+        sum_u += c.usable;
+    }
+    if (sum_u == 0) {
+        add_err(errors, "pack_heat: total usable is zero");
+        return false;
+    }
+
+    // Proportional layer counts (floor); guarantee min 1 for each backend when possible
+    std::vector<int32_t> counts(n_backends, 0);
+    int32_t assigned = 0;
+    for (size_t i = 0; i < n_backends; ++i) {
+        int32_t n = (int32_t) ((cands[i].usable * (uint64_t) n_layer) / sum_u);
+        if (n < 1) {
+            n = 1;
+        }
+        counts[i] = n;
+        assigned += n;
+    }
+
+    // Trim over-allocation from largest first
+    while (assigned > n_layer) {
+        bool trimmed = false;
+        for (size_t i = 0; i < n_backends && assigned > n_layer; ++i) {
+            if (counts[i] > 1) {
+                counts[i]--;
+                assigned--;
+                trimmed = true;
+            }
+        }
+        if (!trimmed) break;
+    }
+    // Remainder to first (largest/fastest)
+    if (assigned < n_layer) {
+        counts[0] += (n_layer - assigned);
+    }
+
+    // -----------------------------------------------------------------------
+    // Assign hottest to fastest backends: backend[0] gets first counts[0] hot layers
+    // -----------------------------------------------------------------------
+
+    // We partition layers among backends in order: backend[0] gets first counts[0] of
+    // the hottest layers, backend[1] gets next counts[1], etc.
+    std::vector<int32_t> backend_assignments(n_layer, -1);
+    size_t bi = 0;
+    int32_t placed_in_current = 0;
+    for (int32_t pos = 0; pos < n_layer; ++pos) {
+        int32_t li = layer_order[pos];
+        // Advance to next backend with remaining capacity
+        while (bi < n_backends && placed_in_current >= counts[bi]) {
+            placed_in_current = 0;
+            bi++;
+        }
+        if (bi >= n_backends) {
+            // Shouldn't happen if counts sum to n_layer, but be safe
+            break;
+        }
+        backend_assignments[li] = (int32_t) bi;
+        placed_in_current++;
+    }
+
+    // Verify all layers assigned
+    for (int32_t i = 0; i < n_layer; ++i) {
+        if (backend_assignments[i] < 0) {
+            add_err(errors, "pack_heat: layer " + std::to_string(i) + " not assigned");
+            return false;
+        }
+    }
+
+    // Build contiguous ranges per backend (sort by layer index)
+    std::vector<std::vector<int32_t>> backend_layer_lists(n_backends);
+    for (int32_t i = 0; i < n_layer; ++i) {
+        int32_t bi = backend_assignments[i];
+        backend_layer_lists[bi].push_back(i);
+    }
+
+    // Sort each backend's layer list by layer index for contiguous ranges
+    for (auto & lst : backend_layer_lists) {
+        std::sort(lst.begin(), lst.end());
+    }
+
+    // Build snapshot header
+    out.schema_version = 1;
+    out.created_at = placement_now_iso8601();
+    out.model_path = model_path;
+    out.n_layer = n_layer;
+    out.split_mode = "layer";
+    out.capacity_snapshot_at = inv.records.empty() ? out.created_at : inv.records[0].reported_at;
+    out.reserve_mode = inv.reserve_mode.empty() ? "table" : inv.reserve_mode;
+    out.reserve_model_version = inv.reserve_model_version.empty()
+        ? PLACEMENT_RESERVE_MODEL_TABLE_V1 : inv.reserve_model_version;
+    out.overrides.clear();
+
+    // Assignments: contiguous ranges per backend
+    for (size_t i = 0; i < n_backends; ++i) {
+        const auto & lst = backend_layer_lists[i];
+        if (lst.empty()) continue;
+
+        // Emit contiguous sub-ranges; split layers by ascending index within each backend
+        int32_t range_start = lst[0];
+        int32_t range_end = lst[0] + 1;
+        for (size_t j = 1; j < lst.size(); ++j) {
+            if (lst[j] == range_end) {
+                range_end = lst[j] + 1;
+            } else {
+                placement_plan_assignment a;
+                a.layer_start = range_start;
+                a.layer_end = range_end;
+                a.backend_id = cands[i].backend_id;
+                out.assignments.push_back(a);
+
+                range_start = lst[j];
+                range_end = lst[j] + 1;
+            }
+        }
+        placement_plan_assignment a;
+        a.layer_start = range_start;
+        a.layer_end = range_end;
+        a.backend_id = cands[i].backend_id;
+        out.assignments.push_back(a);
+
+        // One backend snapshot per backend (not per sub-range)
+        placement_plan::backend_snapshot bs;
+        bs.backend_id = cands[i].backend_id;
+        bs.usable_weight_mib = cands[i].usable;
+        bs.free_mib = cands[i].free_mib;
+        bs.total_mib = cands[i].total_mib;
+        out.backends.push_back(bs);
+    }
+
+    // -----------------------------------------------------------------------
+    // Determine heat status. Full: rollup covers all n_layers with unique indices.
+    // Refuse full on stub/device-count input (too few entries or missing indices).
+    // -----------------------------------------------------------------------
+    bool full_heat = (rollup.size() == (size_t) n_layer);
+    // Verify all layer indices 0..n_layer-1 present (rejects device-count stubs
+    // that happen to match n_layer in count but not in index range)
+    if (full_heat) {
+        std::set<int> seen;
+        for (const auto & hl : rollup) {
+            if (hl.idx < 0 || hl.idx >= n_layer) {
+                full_heat = false;
+                break;
+            }
+            seen.insert(hl.idx);
+        }
+        if ((int) seen.size() != n_layer) {
+            full_heat = false;
+        }
+    }
+
+    out.heat.status = full_heat ? "full" : (rollup.empty() ? "none" : "partial");
+    out.heat.task = "tg";
+    out.heat.schema_version = 1;
+    out.heat.layers.clear();
+
+    // Build ranked list of layers by heat (hot to cold)
+    std::vector<std::pair<int, double>> ranked;
+    for (const auto & hl : rollup) {
+        ranked.push_back({hl.idx, hl.ms});
+    }
+    std::sort(ranked.begin(), ranked.end(), [](const auto & a, const auto & b) {
+        if (a.second != b.second) return a.second > b.second;
+        return a.first < b.first;
+    });
+    for (size_t ri = 0; ri < ranked.size(); ++ri) {
+        int idx = ranked[ri].first;
+        auto hit = heat_by_idx.find(idx);
+        if (hit == heat_by_idx.end()) continue;
+        placement_plan_heat_layer hl;
+        hl.idx = idx;
+        hl.ms = hit->second->ms;
+        hl.us = hit->second->us;
+        hl.rank = (int) ri;
+        hl.n_nodes = hit->second->n_nodes;
+        out.heat.layers.push_back(hl);
+    }
+
+    // Self-validate
+    std::vector<placement_plan_error> verr;
+    if (!placement_plan_validate(out, n_layer, true, verr)) {
+        for (const auto & e : verr) {
+            errors.push_back(e);
+        }
+        return false;
+    }
+
+    return true;
+}
+
 std::string placement_plan_to_json(const placement_plan & plan, int indent) {
     json j;
     j["schema_version"] = plan.schema_version;
@@ -777,11 +1160,21 @@ std::string placement_plan_to_json(const placement_plan & plan, int indent) {
         });
     }
 
+    json heat_layers = json::array();
+    for (const auto & hl : plan.heat.layers) {
+        heat_layers.push_back(json{
+            {"idx", hl.idx},
+            {"ms", hl.ms},
+            {"us", hl.us},
+            {"rank", hl.rank},
+            {"n_nodes", hl.n_nodes},
+        });
+    }
     j["heat"] = json{
         {"status", plan.heat.status.empty() ? "none" : plan.heat.status},
         {"task", plan.heat.task},
         {"schema_version", plan.heat.schema_version},
-        {"layers", json::array()},
+        {"layers", heat_layers},
     };
 
     return j.dump(indent);

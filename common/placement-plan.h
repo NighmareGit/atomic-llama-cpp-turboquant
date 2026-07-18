@@ -13,6 +13,8 @@
 #include <string>
 #include <vector>
 
+struct heatmap_layer_rollup; // forward decl for pack_heat
+
 struct placement_plan_assignment {
     int32_t     layer_start = 0; // inclusive
     int32_t     layer_end   = 0; // exclusive
@@ -24,10 +26,19 @@ struct placement_plan_override {
     std::string backend_id;
 };
 
+struct placement_plan_heat_layer {
+    int32_t     idx = 0;
+    double      ms = 0;
+    uint64_t    us = 0;
+    int         rank = -1; // heat rank (0 = hottest)
+    int32_t     n_nodes = 0;
+};
+
 struct placement_plan_heat {
     std::string status = "none"; // full | partial | none
     std::string task;            // tg | pp | empty
     int         schema_version = 1;
+    std::vector<placement_plan_heat_layer> layers;
 };
 
 struct placement_plan {
@@ -140,6 +151,30 @@ bool placement_plan_pack_capacity(
     const placement_inventory & inv,
     int32_t n_layer,
     const std::string & model_path,
+    placement_plan & out,
+    std::vector<placement_plan_error> & errors);
+
+// --- heat-aware packer (issue 13 / P3) ---
+
+// Parse heatmap JSON file (from llama-gpipe-profiler) and extract per-layer TG rollup.
+// Supports tasks.tg.layer_rollup[] and tasks.tg.layers[] formats.
+// Returns false on parse failure (missing file, invalid JSON, no layer data).
+bool placement_plan_parse_heatmap_file(
+    const std::string & path,
+    std::vector<heatmap_layer_rollup> & rollup,
+    std::vector<placement_plan_error> & errors);
+
+// Pack layers onto inventory backends using per-layer heat scores.
+// Hot layers prefer faster backends (sorted by usable_weight desc, then backend_id).
+// Falls back to capacity-only packing when heat vector is empty.
+// Sets heat.status = "full" only when rollup covers all n_layers.
+// Refuses to set heat.status = "full" on stub/device-count input (too few entries).
+// Deterministic: same inputs => same plan.
+bool placement_plan_pack_heat(
+    const placement_inventory & inv,
+    int32_t n_layer,
+    const std::string & model_path,
+    const std::vector<heatmap_layer_rollup> & rollup,
     placement_plan & out,
     std::vector<placement_plan_error> & errors);
 

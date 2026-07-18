@@ -719,6 +719,10 @@ struct common_params {
     // With --placement-generate-only, write plan and exit (no model load).
     std::string placement_generate_path;
     bool        placement_generate_only = false;
+    // Heat-aware packer (P3 / issue 13): discover + heatmap -> write plan with inline heat
+    // Requires --placement-heatmap PATH for the heat input.
+    std::string placement_generate_heat_path;
+    std::string placement_heatmap_path;   // heatmap JSON file (layer_rollup or layers from profiler)
     // Filled by common_init when plan is active (storage for llama_model_params pointers)
     std::vector<ggml_backend_dev_t> placement_devices;       // null-terminated for mparams.devices
     std::vector<ggml_backend_dev_t> placement_layer_devices; // per-layer map
