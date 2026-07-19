@@ -1,8 +1,8 @@
 # Fix multi-GPU target-context KV garble under GGML_PIPELINE_PLUS
 
 Type: bugfix
-Status: open
-Triage: ready-for-agent
+Status: resolved
+Triage: resolved in `f68e17b9b`
 Blocked by:
 
 ## Parent / forensic pack
@@ -388,4 +388,43 @@ bash rpc-patch/patch/loop-check-garble.sh 8080 'What is the capital of France?' 
 
 ## Answer
 
-<!-- Filled when resolved: root cause, fix summary, commit SHA, loop command -->
+**Commit**: `f68e17b9b` (2026-07-19)
+**Root cause**: During graph reuse (the token-generation hot path),
+`ggml_backend_sched_pipeline_barrier` (`ggml/src/ggml-backend.cpp:3484-3486`)
+rotated copy slots (`cur_copy`/`next_copy`) but `alloc_graph` was skipped
+(`is_alloc=true`), so the graph's tensor pointers remained frozen at the
+alloc-time slot. `compute_splits` then copied split inputs to the rotated slot
+while the graph read from the frozen slot, garbling every cross-backend input.
+
+**Fix**: The barrier now waits on `cur_copy` events (not `next_copy`) and does
+not rotate. Copy-slot rotation happens only in `alloc_graph`, which also calls
+`split_graph` to update `node->src` to match.
+
+**First-bad commit**: `87357519e` (introduced B+16 rotation + partial barrier).
+The MTP-only fix `470798451` worked around the symptom for draft contexts.
+
+**Verification command** (triton, RTX 3090+3070):
+
+```bash
+bash scripts/triton-pplus-garble-loop.sh --plus 1 \
+  --model /mnt/980pro/models/Qwen3.5-27B-Q5_K_M.gguf \
+  --port 8096 --tokens 64 --expect "Paris" --label "post-fix-27B"
+# verdict=CLEAN exit_code=0
+```
+
+**Evidence** (pre-fix RED / post-fix GREEN):
+
+| Model | Plus | Pre-fix | Post-fix |
+|-------|------|---------|----------|
+| 1.5B  | 1    | GARBLED ("capital capital capital...") | CLEAN ("The capital of France is Paris.") |
+| 27B   | 1    | GARBLED ("Thinking Process Process...") | CLEAN (coherent thinking-process output) |
+| 1.5B  | 0    | CLEAN | CLEAN (no regression) |
+
+Full 5-case falsification matrix (Plus=0 control, Plus=1 baseline, Plus=1 +
+BARRIER_PARTIAL=0, Plus=1 + PIPELINE_DEPTH=2, Plus=1 + MULTI_BACKEND_SEQ=1):
+all CLEAN post-fix. Logs in `benches/pplus-garble/matrix-*.log` on triton.
+
+**Trade-off**: copy-slot pipelining disabled during generation (same slot per
+decode). Async compute overlap preserved via events. Matches existing design
+intent at `ggml-backend.cpp:3377` ("same copy is used every time during
+generation").

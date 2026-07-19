@@ -82,13 +82,30 @@ PLUS the simpler native dual-CUDA layer-split path described in README.
          backend may not be waited on. Falsification: GGML_PIPELINE_BARRIER_PARTIAL=0.
 - [x] 4. Agent A3: write scripts/triton-pplus-garble-loop.sh
       -> subagent 019f7a67-...165 DONE. bash -n OK. GPU-gated.
-- [ ] 5. Commit tooling (selective add: detector, loop script, diag dir, index)
-- [ ] 6. Push to gitea + github; pull on triton
+- [x] 5. Commit tooling + push (1c048ff5b, fd160fe88)
+- [x] 6. Push mirrors + pull on triton - DONE
 - [x] 7. triton Phase 1 RED/GREEN loop with patched detector (1.5B model, 5s repro)
 - [x] 8. triton Phase 3 falsification matrix (env toggles, NO rebuild) - DONE
-- [ ] 9. Synthesize source fix from surviving evidence
-- [ ] 10. Commit fix; push; pull on triton; rebuild; verify loop GREEN
-- [ ] 11. Phase 6: README.md + ISSUE.md Answer; final commit
+- [x] 9. Root cause + source fix (f68e17b9b) - DONE
+- [x] 10. Rebuild triton (31s), verify GREEN on 1.5B + 27B + full matrix - DONE
+- [ ] 11. Phase 6 close-out: README + ISSUE + diagnostics index + final commit
+
+## FIX VERIFICATION (2026-07-19 15:28 UTC, triton, post-fix f68e17b9b)
+
+### Post-fix matrix (1.5B model, 5 cases) - ALL CLEAN
+
+| Case | Toggle | Before fix | After fix |
+|------|--------|-----------|-----------|
+| 1 | Plus=0 (control) | CLEAN | CLEAN (no regression) |
+| 2 | Plus=1 (baseline) | GARBLED | CLEAN |
+| 3 | Plus=1 + BARRIER_PARTIAL=0 | GARBLED | CLEAN |
+| 4 | Plus=1 + PIPELINE_DEPTH=2 | GARBLED | CLEAN |
+| 5 | Plus=1 + MULTI_BACKEND_SEQ=1 | CLEAN (Plus off) | CLEAN |
+
+### Post-fix canonical 27B test (Plus=1)
+
+Output: "Thinking Process: 1. Identify the core question... The capital of France is Paris."
+Verdict: CLEAN, tokens=64. Previously garbled.
 
 ## FALSIFICATION MATRIX RESULTS (2026-07-19 15:01 UTC, triton, 1.5B model)
 

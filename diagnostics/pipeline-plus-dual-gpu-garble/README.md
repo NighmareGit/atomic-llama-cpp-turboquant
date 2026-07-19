@@ -239,15 +239,37 @@ is not model-size dependent.
 | Handover / Commit | Issue | Fix |
 |-------------------|-------|-----|
 | 2026-07-13 handover, commit `87357519e` | MTP draft context garbling under PPLUS | Disable `pipeline_parallel` for `LLAMA_CONTEXT_TYPE_MTP` |
-| This diagnostic (2026-07-19) | Target context garbling under PPLUS on multi-GPU | **OPEN** — workaround: `GGML_PIPELINE_PLUS=0` |
+| 2026-07-19, commit `f68e17b9b` | Target context garbling under PPLUS on multi-GPU | **FIXED**: stop copy-slot rotation in `pipeline_barrier` during graph reuse; rotation only in `alloc_graph` where graph pointers update |
 
 The 2026-07-13 fix was necessary but insufficient. The target context still
-runs pipeline parallelism, and on multi-GPU this produces garbling for all
-model types (dense, MoE, thinking, non-thinking).
+runs pipeline parallelism, and on multi-GPU this produced garbling for all
+model types until `f68e17b9b` fixed the barrier/graph copy-slot mismatch.
 
 ---
 
 ## Open Items
+
+**Status: FIXED in `f68e17b9b`** (2026-07-19).
+
+**Root cause**: During graph reuse (the token-generation hot path),
+`ggml_backend_sched_pipeline_barrier` rotated copy slots (`cur_copy` /
+`next_copy`) but the graph's tensor pointers were frozen at the alloc-time
+slot. `compute_splits` then copied split inputs to the rotated slot while the
+graph read from the frozen slot, garbling every cross-backend input on
+multi-GPU.
+
+**Fix**: The barrier now waits on the current slot's events (`cur_copy`, not
+`next_copy`) and does not rotate. Copy-slot rotation happens only in
+`ggml_backend_sched_alloc_graph`, which also calls `split_graph` to update
+`node->src` to match. This matches the existing design intent ("same copy is
+used every time during generation").
+
+**Verification** (triton, RTX 3090+3070, post-fix):
+- 1.5B model: full 5-case falsification matrix ALL CLEAN (was 3/4 GARBLED)
+- 27B model: Plus=1 CLEAN with coherent output (was garbled)
+- Plus=0: CLEAN (no regression)
+
+### Original investigation items (resolved or noted)
 
 1. **Reproduce on romulus**: Confirm the bug exists on the primary dev node.
 2. **Bisect**: Identify the exact commit where target-context PPLUS garbling
