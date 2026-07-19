@@ -21,9 +21,17 @@ enum placement_reserve_mode {
 };
 
 enum placement_backend_kind {
-    PLACEMENT_KIND_LOCAL_GPU  = 0,
-    PLACEMENT_KIND_RPC_DEVICE = 1,
+    PLACEMENT_KIND_LOCAL_GPU   = 0,
+    PLACEMENT_KIND_RPC_DEVICE  = 1,
+    PLACEMENT_KIND_RPC_TP_UNIT = 2, // Shape A logical dual-GPU RPC unit
 };
+
+// Equal-VRAM tolerance for Shape A (absolute MiB). Mixed 24+8 fails this.
+#define PLACEMENT_TP_VRAM_TOLERANCE_MIB 512ull
+// Default workspace/AR scratch pad subtracted from sum(member usable).
+#define PLACEMENT_TP_WORKSPACE_PAD_MIB  512ull
+// First Shape A generation: dual-GPU only.
+#define PLACEMENT_TP_UNIT_N_DEVICES     2
 
 struct placement_static_pads {
     uint64_t fragmentation_mib    = 0;
@@ -46,6 +54,15 @@ struct placement_reserve_params {
     int     kv_type_k_bytes = 2;
     int     kv_type_v_bytes = 2;
     placement_reserve_mode mode = PLACEMENT_RESERVE_MODE_TABLE;
+};
+
+// Physical member of an rpc_tp_unit (debug / heat / double-count guard).
+struct placement_tp_member {
+    std::string backend_id;
+    int32_t     device_index = -1;
+    uint64_t    total_mib = 0;
+    uint64_t    free_mib  = 0;
+    uint64_t    usable_weight_mib = 0;
 };
 
 struct placement_capacity_record {
@@ -73,6 +90,12 @@ struct placement_capacity_record {
     std::string reserve_model_version;
 
     std::vector<std::string> warnings;
+
+    // Shape A: physical members when kind == rpc_tp_unit
+    std::vector<placement_tp_member> members;
+    // On physical rpc_device multi-GPU endpoints: true when gates pass (even if not collapsed)
+    bool tp_unit_eligible = false;
+    std::string tp_unit_ineligible_reason;
 };
 
 struct placement_discover_error {
@@ -169,3 +192,62 @@ bool placement_rpc_query_endpoint_legacy(
     const std::string & endpoint,
     std::vector<placement_raw_device> & out_devices,
     std::string & err_msg);
+
+// --- Shape A (RPC TP-unit) pure helpers ---
+
+// Logical backend_id: rpc-tp://host:port
+std::string placement_make_rpc_tp_backend_id(const std::string & endpoint);
+
+// True if totals are equal within PLACEMENT_TP_VRAM_TOLERANCE_MIB.
+bool placement_tp_vram_equal(const std::vector<uint64_t> & total_mib, uint64_t tol_mib = PLACEMENT_TP_VRAM_TOLERANCE_MIB);
+
+// Evaluate strict Shape A gates. Returns eligible + reason (empty when ok).
+struct placement_tp_unit_gate_input {
+    int n_devices = 0;
+    std::vector<uint64_t> total_mib;     // per member
+    std::vector<std::string> families;   // per member (must match when non-empty)
+    bool specialized_ar_ok = false;      // NCCL / internal AR; butterfly-only => false
+    bool opt_in = false;
+};
+
+struct placement_tp_unit_gate_result {
+    bool eligible = false;
+    std::string reason; // empty if eligible
+};
+
+placement_tp_unit_gate_result placement_tp_unit_eval_gates(const placement_tp_unit_gate_input & in);
+
+// Options for collapsing eligible multi-device endpoints into one logical record.
+struct placement_tp_unit_options {
+    bool     opt_in = false;
+    // Per-endpoint specialized AR probe result. Missing key => false (refuse A).
+    std::map<std::string, bool> specialized_ar_ok_by_endpoint;
+    // Global fallback when map has no entry (tests / LLAMA_PLACEMENT_TP_AR_OK).
+    bool     specialized_ar_ok_default = false;
+    uint64_t tp_workspace_pad_mib = PLACEMENT_TP_WORKSPACE_PAD_MIB;
+    // When true and opt_in false: only annotate tp_unit_eligible on physical records.
+    bool     annotate_only = true;
+};
+
+// Annotate and optionally collapse inventory into Shape A logical units.
+// Default (opt_in false): Shape B records remain; eligible endpoints get
+// tp_unit_eligible=true + reason when not. When opt_in true and gates pass:
+// replace N rpc_device with one rpc_tp_unit (members[] kept); refuse double-count
+// by removing physical ids from the active inventory view.
+// Logs human-readable lines into out_logs (may be null).
+void placement_inventory_apply_tp_units(
+    placement_inventory & inv,
+    const placement_tp_unit_options & opts,
+    std::vector<std::string> * out_logs = nullptr);
+
+// Plan must not assign layers to both logical and physical ids for same GPUs.
+// Collects plan backend_ids; errors if both rpc-tp://ep and rpc://ep#* appear.
+bool placement_plan_ids_tp_double_count(
+    const std::vector<std::string> & plan_backend_ids,
+    std::vector<std::string> & error_messages);
+
+// True if id is rpc-tp:// form.
+bool placement_backend_id_is_tp_unit(const std::string & backend_id);
+
+// Extract endpoint from rpc-tp://host:port or rpc://host:port#i (empty if neither).
+std::string placement_endpoint_from_backend_id(const std::string & backend_id);

@@ -711,6 +711,10 @@ struct common_params {
     bool        placement_discover = false; // --placement-discover / LLAMA_ARG_PLACEMENT_DISCOVER
     std::string placement_inventory_path;   // write inventory JSON; empty => stdout when discover
     std::vector<std::string> rpc_endpoints; // configured --rpc host:port list (for topology checks)
+    // Shape A: collapse eligible equal-VRAM N=2 RPC endpoints into rpc_tp_unit (default off = Shape B)
+    bool        placement_tp_unit = false;  // --placement-tp-unit / LLAMA_ARG_PLACEMENT_TP_UNIT
+    // Assert specialized AR is available (required for Shape A collapse). Probe not yet automatic.
+    bool        placement_tp_ar_ok = false; // --placement-tp-ar-ok / LLAMA_PLACEMENT_TP_AR_OK
 
     // Placement plan apply (P1): --placement PATH / LLAMA_ARG_PLACEMENT
     std::string placement_plan_path;

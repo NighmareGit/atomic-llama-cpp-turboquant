@@ -20,8 +20,9 @@ using json = nlohmann::ordered_json;
 
 std::string placement_kind_str(placement_backend_kind kind) {
     switch (kind) {
-        case PLACEMENT_KIND_LOCAL_GPU:  return "local_gpu";
-        case PLACEMENT_KIND_RPC_DEVICE: return "rpc_device";
+        case PLACEMENT_KIND_LOCAL_GPU:   return "local_gpu";
+        case PLACEMENT_KIND_RPC_DEVICE:  return "rpc_device";
+        case PLACEMENT_KIND_RPC_TP_UNIT: return "rpc_tp_unit";
     }
     return "unknown";
 }
@@ -35,6 +36,254 @@ std::string placement_make_local_backend_id(const std::string & dev_name, const 
 
 std::string placement_make_rpc_backend_id(const std::string & endpoint, int32_t device_index) {
     return "rpc://" + endpoint + "#" + std::to_string(device_index);
+}
+
+std::string placement_make_rpc_tp_backend_id(const std::string & endpoint) {
+    return "rpc-tp://" + endpoint;
+}
+
+bool placement_backend_id_is_tp_unit(const std::string & backend_id) {
+    return backend_id.rfind("rpc-tp://", 0) == 0;
+}
+
+std::string placement_endpoint_from_backend_id(const std::string & backend_id) {
+    if (backend_id.rfind("rpc-tp://", 0) == 0) {
+        return backend_id.substr(9);
+    }
+    if (backend_id.rfind("rpc://", 0) == 0) {
+        const size_t hash = backend_id.rfind('#');
+        if (hash == std::string::npos) {
+            return backend_id.substr(6);
+        }
+        return backend_id.substr(6, hash - 6);
+    }
+    return {};
+}
+
+bool placement_tp_vram_equal(const std::vector<uint64_t> & total_mib, uint64_t tol_mib) {
+    if (total_mib.empty()) {
+        return false;
+    }
+    uint64_t lo = total_mib[0];
+    uint64_t hi = total_mib[0];
+    for (uint64_t t : total_mib) {
+        if (t < lo) {
+            lo = t;
+        }
+        if (t > hi) {
+            hi = t;
+        }
+    }
+    return (hi - lo) <= tol_mib;
+}
+
+placement_tp_unit_gate_result placement_tp_unit_eval_gates(const placement_tp_unit_gate_input & in) {
+    placement_tp_unit_gate_result r;
+    if (!in.opt_in) {
+        r.eligible = false;
+        r.reason = "opt-in required (default Shape B)";
+        return r;
+    }
+    if (in.n_devices != PLACEMENT_TP_UNIT_N_DEVICES) {
+        r.eligible = false;
+        r.reason = "N=" + std::to_string(in.n_devices) + " not supported (Shape A requires N=2)";
+        return r;
+    }
+    if ((int) in.total_mib.size() != in.n_devices) {
+        r.eligible = false;
+        r.reason = "total_mib size mismatch vs n_devices";
+        return r;
+    }
+    if (!placement_tp_vram_equal(in.total_mib)) {
+        r.eligible = false;
+        r.reason = "mixed VRAM (totals not equal within tolerance)";
+        return r;
+    }
+    if (!in.families.empty()) {
+        if ((int) in.families.size() != in.n_devices) {
+            r.eligible = false;
+            r.reason = "families size mismatch vs n_devices";
+            return r;
+        }
+        const std::string & fam0 = in.families[0];
+        for (int i = 1; i < in.n_devices; ++i) {
+            // empty family is unknown; require match when both non-empty
+            if (!fam0.empty() && !in.families[i].empty() && fam0 != in.families[i]) {
+                r.eligible = false;
+                r.reason = "heterogeneous backend family";
+                return r;
+            }
+        }
+    }
+    if (!in.specialized_ar_ok) {
+        r.eligible = false;
+        r.reason = "specialized AllReduce not available (butterfly-only or AR disabled)";
+        return r;
+    }
+    r.eligible = true;
+    r.reason.clear();
+    return r;
+}
+
+bool placement_plan_ids_tp_double_count(
+        const std::vector<std::string> & plan_backend_ids,
+        std::vector<std::string> & error_messages) {
+    std::map<std::string, bool> has_tp;
+    std::map<std::string, bool> has_phys;
+    for (const auto & id : plan_backend_ids) {
+        if (placement_backend_id_is_tp_unit(id)) {
+            has_tp[placement_endpoint_from_backend_id(id)] = true;
+        } else if (id.rfind("rpc://", 0) == 0) {
+            has_phys[placement_endpoint_from_backend_id(id)] = true;
+        }
+    }
+    bool ok = true;
+    for (const auto & kv : has_tp) {
+        if (has_phys[kv.first]) {
+            error_messages.push_back(
+                "TP-unit double-count: plan uses both rpc-tp://" + kv.first +
+                " and physical rpc://" + kv.first + "#* for the same endpoint");
+            ok = false;
+        }
+    }
+    return ok;
+}
+
+void placement_inventory_apply_tp_units(
+        placement_inventory & inv,
+        const placement_tp_unit_options & opts,
+        std::vector<std::string> * out_logs) {
+    auto log = [&](const std::string & line) {
+        if (out_logs) {
+            out_logs->push_back(line);
+        }
+    };
+
+    std::vector<placement_capacity_record> non_rpc;
+    std::map<std::string, std::vector<placement_capacity_record>> by_ep;
+    for (const auto & r : inv.records) {
+        if (r.kind == PLACEMENT_KIND_RPC_DEVICE && !r.endpoint.empty()) {
+            by_ep[r.endpoint].push_back(r);
+        } else {
+            non_rpc.push_back(r);
+        }
+    }
+
+    std::vector<placement_capacity_record> out = std::move(non_rpc);
+
+    for (auto & kv : by_ep) {
+        const std::string & ep = kv.first;
+        auto & members = kv.second;
+        std::sort(members.begin(), members.end(),
+            [](const placement_capacity_record & a, const placement_capacity_record & b) {
+                return a.device_index < b.device_index;
+            });
+
+        if (members.size() < 2) {
+            for (auto & m : members) {
+                m.tp_unit_eligible = false;
+                m.tp_unit_ineligible_reason = "single-device endpoint";
+                out.push_back(m);
+            }
+            continue;
+        }
+
+        placement_tp_unit_gate_input gin;
+        gin.n_devices = (int) members.size();
+        gin.opt_in = opts.opt_in;
+        for (const auto & m : members) {
+            gin.total_mib.push_back(m.total_mib);
+            gin.families.push_back(m.backend_family);
+        }
+        auto ar_it = opts.specialized_ar_ok_by_endpoint.find(ep);
+        gin.specialized_ar_ok = (ar_it != opts.specialized_ar_ok_by_endpoint.end())
+            ? ar_it->second
+            : opts.specialized_ar_ok_default;
+
+        // Structural gates (N, VRAM, family) without opt-in/AR
+        placement_tp_unit_gate_input g_struct = gin;
+        g_struct.opt_in = true;
+        g_struct.specialized_ar_ok = true;
+        const auto structural = placement_tp_unit_eval_gates(g_struct);
+
+        // Hardware-ready: structural + specialized AR (opt-in still required to collapse)
+        placement_tp_unit_gate_input g_hw = gin;
+        g_hw.opt_in = true;
+        const auto hw_ready = placement_tp_unit_eval_gates(g_hw);
+
+        const auto full = placement_tp_unit_eval_gates(gin);
+
+        if (full.eligible) {
+            placement_capacity_record unit;
+            unit.schema_version = 1;
+            unit.kind = PLACEMENT_KIND_RPC_TP_UNIT;
+            unit.backend_id = placement_make_rpc_tp_backend_id(ep);
+            unit.endpoint = ep;
+            unit.device_index = -1;
+            unit.backend_family = members[0].backend_family;
+            unit.reported_at = members[0].reported_at;
+            unit.reserve_mode = members[0].reserve_mode;
+            unit.reserve_model_version = members[0].reserve_model_version;
+            unit.caps.multi_device = true;
+            unit.caps.telemetry = members[0].caps.telemetry;
+            unit.caps.legacy_memory_only = members[0].caps.legacy_memory_only;
+            unit.display_name = "tp-unit " + ep;
+            unit.tp_unit_eligible = true;
+
+            uint64_t sum_usable = 0;
+            uint64_t sum_free = 0;
+            uint64_t sum_total = 0;
+            for (const auto & m : members) {
+                placement_tp_member tm;
+                tm.backend_id = m.backend_id;
+                tm.device_index = m.device_index;
+                tm.total_mib = m.total_mib;
+                tm.free_mib = m.free_mib;
+                tm.usable_weight_mib = m.usable_weight_mib;
+                unit.members.push_back(tm);
+                sum_usable += m.usable_weight_mib;
+                sum_free += m.free_mib;
+                sum_total += m.total_mib;
+            }
+            unit.total_mib = sum_total;
+            unit.free_mib = sum_free;
+            const uint64_t pad = opts.tp_workspace_pad_mib;
+            unit.usable_weight_mib = (sum_usable > pad) ? (sum_usable - pad) : 0;
+            unit.static_pads.process_reserve_mib = pad;
+            unit.warnings.push_back(
+                "usable_weight_mib = sum(member usable) - tp_workspace_pad (" +
+                std::to_string(pad) + " MiB); KV/activations do not scale with N");
+
+            out.push_back(unit);
+            log("endpoint " + ep + ": Shape A logical " + unit.backend_id +
+                " usable_weight_mib=" + std::to_string(unit.usable_weight_mib));
+            continue;
+        }
+
+        // Shape B path: keep physical devices, annotate eligibility
+        for (auto & m : members) {
+            // tp_unit_eligible means "can collapse now" (all gates including opt-in).
+            m.tp_unit_eligible = false;
+            if (!opts.opt_in) {
+                if (hw_ready.eligible) {
+                    m.tp_unit_ineligible_reason = "opt-in required (default Shape B)";
+                    m.warnings.push_back(
+                        "tp_unit available: pass --placement-tp-unit to enable Shape A");
+                } else if (!structural.eligible) {
+                    m.tp_unit_ineligible_reason = structural.reason;
+                } else {
+                    m.tp_unit_ineligible_reason = hw_ready.reason;
+                }
+            } else {
+                m.tp_unit_ineligible_reason = full.reason;
+                m.warnings.push_back("Shape A refused: " + full.reason);
+            }
+            out.push_back(m);
+        }
+        log("endpoint " + ep + ": Shape B (" + full.reason + ")");
+    }
+
+    inv.records = std::move(out);
 }
 
 uint64_t placement_static_pads_sum_mib(const placement_static_pads & pads) {
@@ -301,6 +550,24 @@ static json record_to_json(const placement_capacity_record & r) {
     }
     if (!r.warnings.empty()) {
         j["warnings"] = r.warnings;
+    }
+    if (r.kind == PLACEMENT_KIND_RPC_TP_UNIT || r.tp_unit_eligible || !r.tp_unit_ineligible_reason.empty()) {
+        j["tp_unit_eligible"] = r.tp_unit_eligible;
+        if (!r.tp_unit_ineligible_reason.empty()) {
+            j["tp_unit_ineligible_reason"] = r.tp_unit_ineligible_reason;
+        }
+    }
+    if (!r.members.empty()) {
+        j["members"] = json::array();
+        for (const auto & m : r.members) {
+            j["members"].push_back(json{
+                {"backend_id", m.backend_id},
+                {"device_index", m.device_index},
+                {"total_mib", m.total_mib},
+                {"free_mib", m.free_mib},
+                {"usable_weight_mib", m.usable_weight_mib},
+            });
+        }
     }
     return j;
 }

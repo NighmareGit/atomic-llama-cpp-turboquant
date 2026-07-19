@@ -667,6 +667,22 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
             rp.n_parallel = params.n_parallel;
             rp.flash_attn = (params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_ENABLED);
             placement_inventory inv = placement_discover_live(params.rpc_endpoints, rp);
+            {
+                placement_tp_unit_options tpo;
+                tpo.opt_in = params.placement_tp_unit;
+                tpo.specialized_ar_ok_default = params.placement_tp_ar_ok;
+                // env override for AR probe (no automatic specialized-AR detection yet)
+                const char * env_ar = std::getenv("LLAMA_PLACEMENT_TP_AR_OK");
+                if (env_ar && env_ar[0] && env_ar[0] != '0' && env_ar[0] != 'f' && env_ar[0] != 'F') {
+                    tpo.specialized_ar_ok_default = true;
+                    params.placement_tp_ar_ok = true;
+                }
+                std::vector<std::string> tlogs;
+                placement_inventory_apply_tp_units(inv, tpo, &tlogs);
+                for (const auto & line : tlogs) {
+                    LOG_INF("placement tp-unit: %s\n", line.c_str());
+                }
+            }
             if (!params.placement_inventory_path.empty()) {
                 if (!placement_inventory_write_file(inv, params.placement_inventory_path)) {
                     throw std::runtime_error(string_format(
@@ -2366,6 +2382,24 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.placement_heatmap_path = value;
         }
     ).set_env("LLAMA_ARG_PLACEMENT_HEATMAP"));
+    add_opt(common_arg(
+        {"--placement-tp-unit"},
+        "opt-in Shape A: collapse eligible equal-VRAM N=2 RPC endpoints into one\n"
+        "logical backend (kind=rpc_tp_unit, id rpc-tp://host:port).\n"
+        "Requires specialized AllReduce (--placement-tp-ar-ok or LLAMA_PLACEMENT_TP_AR_OK).\n"
+        "Default remains Shape B (N x rpc_device). Mixed VRAM cannot enable A.",
+        [](common_params & params) {
+            params.placement_tp_unit = true;
+        }
+    ).set_env("LLAMA_ARG_PLACEMENT_TP_UNIT"));
+    add_opt(common_arg(
+        {"--placement-tp-ar-ok"},
+        "assert specialized AllReduce is available on multi-GPU RPC endpoints\n"
+        "(required for Shape A collapse; butterfly-only must not set this)",
+        [](common_params & params) {
+            params.placement_tp_ar_ok = true;
+        }
+    ).set_env("LLAMA_PLACEMENT_TP_AR_OK"));
     add_opt(common_arg(
         {"--mlock"},
         "force system to keep model in RAM rather than swapping or compressing",

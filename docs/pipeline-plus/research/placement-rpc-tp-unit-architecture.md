@@ -176,3 +176,29 @@ Sequencing (B first, A target) is **reversible** enough that a formal ADR is opt
 4. B remains for non-eligible and as opt-out  
 5. Usable ≈ sum(member usable) − tp pad, with caveats  
 6. Specialized AR required to enable A  
+
+---
+
+## Implementation notes (issue 14, 2026-07-19)
+
+**Module seam (client control plane):**
+
+| Symbol | Role |
+|--------|------|
+| `placement_tp_unit_eval_gates` | Pure gates: N=2, equal VRAM (+/-512 MiB), same family, specialized AR, opt-in |
+| `placement_inventory_apply_tp_units` | Annotate or collapse inventory; default Shape B |
+| `placement_make_rpc_tp_backend_id` | `rpc-tp://host:port` |
+| `placement_plan_ids_tp_double_count` | Refuse plan using both logical + physical ids for same endpoint |
+
+**CLI (opt-in add-on):**
+
+- `--placement-tp-unit` / `LLAMA_ARG_PLACEMENT_TP_UNIT` - request Shape A collapse
+- `--placement-tp-ar-ok` / `LLAMA_PLACEMENT_TP_AR_OK` - operator asserts specialized AR is available (no automatic NCCL probe yet; butterfly-only must not set this)
+
+**Usable weight:** `sum(member usable_weight_mib) - PLACEMENT_TP_WORKSPACE_PAD_MIB` (default 512). Documented on the logical record `warnings[]`.
+
+**Apply:** `rpc-tp://host:port` resolves to the first registered RPC device for that endpoint (device 0). Outer plan stays **layer** rail (local HIP + logical unit). Client does not open a meta tensor world across RPC.
+
+**Runtime honesty:** Full internal tensor-split + specialized AR packaging inside `rpc-server` remains server-side work; the control plane refuses A without AR assertion and never enables A on mixed VRAM. Path C multi-device on the endpoint remains the B accelerator when A is off.
+
+**AR gate interpretation:** AC "specialized AR init OK" is implemented as a required operator assertion flag until automatic AR capability probe exists. Without the flag, Shape A collapse is refused with a clear reason.

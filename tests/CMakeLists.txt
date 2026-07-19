@@ -240,6 +240,7 @@ llama_build_and_test(test-placement-plan.cpp)
 llama_build_and_test(test-placement-pack.cpp)
 llama_build_and_test(test-heatmap-rollup.cpp)
 llama_build_and_test(test-placement-heat-pack.cpp)
+llama_build_and_test(test-placement-tp-unit.cpp)
 
 if (NOT LLAMA_SANITIZE_ADDRESS AND NOT GGML_SCHED_NO_REALLOC)
   # TODO: repair known memory leaks

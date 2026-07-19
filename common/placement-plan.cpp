@@ -211,6 +211,28 @@ bool placement_plan_validate(
         }
     }
 
+    // Shape A double-count: refuse plan that uses both logical TP-unit and
+    // physical rpc:// members for the same endpoint.
+    {
+        std::vector<std::string> ids;
+        for (const auto & a : plan.assignments) {
+            if (!a.backend_id.empty()) {
+                ids.push_back(a.backend_id);
+            }
+        }
+        for (const auto & o : plan.overrides) {
+            if (!o.backend_id.empty()) {
+                ids.push_back(o.backend_id);
+            }
+        }
+        std::vector<std::string> dc_errs;
+        if (!placement_plan_ids_tp_double_count(ids, dc_errs)) {
+            for (const auto & e : dc_errs) {
+                add_err(errors, e);
+            }
+        }
+    }
+
     return errors.size() == n_err0;
 }
 
@@ -333,6 +355,27 @@ std::string placement_layer_map_to_string(const placement_layer_map & layers) {
 // Live resolve: map backend_id from inventory + registered devices
 static ggml_backend_dev_t find_dev_for_backend_id(const std::string & backend_id) {
     if (backend_id_is_cpu(backend_id)) {
+        return nullptr;
+    }
+    // Shape A logical unit: bind to device 0 of the multi-device endpoint.
+    // Server multi-device / specialized AR runs inside that process; client
+    // layer-rails the logical unit as one fat backend among others.
+    if (placement_backend_id_is_tp_unit(backend_id)) {
+        const std::string ep = placement_endpoint_from_backend_id(backend_id);
+        if (ep.empty()) {
+            return nullptr;
+        }
+        for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+            ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+            const char * name = ggml_backend_dev_name(dev);
+            if (!name || std::string(name).rfind("RPC", 0) != 0) {
+                continue;
+            }
+            const char * desc = ggml_backend_dev_description(dev);
+            if (desc && ep == desc) {
+                return dev; // first registered device for endpoint (index 0)
+            }
+        }
         return nullptr;
     }
     // RPC form rpc://host:port#idx
@@ -789,7 +832,7 @@ bool placement_plan_pack_capacity_attn_local(
         int st = 0;
         if (r.kind == PLACEMENT_KIND_LOCAL_GPU) {
             st = 2;
-        } else if (r.kind == PLACEMENT_KIND_RPC_DEVICE) {
+        } else if (r.kind == PLACEMENT_KIND_RPC_DEVICE || r.kind == PLACEMENT_KIND_RPC_TP_UNIT) {
             st = 1;
         }
         cands.push_back({r.backend_id, u, r.free_mib, r.total_mib, st});
@@ -1014,6 +1057,8 @@ bool placement_plan_pack_capacity_attn_local(
 }
 
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // Heat-aware packer (issue 13 / P3)
 // ---------------------------------------------------------------------------
 
@@ -1135,7 +1180,7 @@ bool placement_plan_pack_heat(
         int st = 0;
         if (r.kind == PLACEMENT_KIND_LOCAL_GPU) {
             st = 2;
-        } else if (r.kind == PLACEMENT_KIND_RPC_DEVICE) {
+        } else if (r.kind == PLACEMENT_KIND_RPC_DEVICE || r.kind == PLACEMENT_KIND_RPC_TP_UNIT) {
             st = 1;
         }
         cands.push_back({r.backend_id, u, r.free_mib, r.total_mib, st});

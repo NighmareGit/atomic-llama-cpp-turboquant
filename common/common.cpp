@@ -1192,7 +1192,7 @@ struct common_init_result::impl {
 
 // Capacity packer: discover + pack + write plan. Optionally exit (generate-only).
 // On success with load path, sets params.placement_plan_path if empty.
-// Also handles heat-aware generation when placement_generate_heat_path is set.
+// Also handles heat-aware generation when placement_generate_heat_path is set
 static bool common_placement_generate(common_params & params) {
     if (params.placement_generate_path.empty() && params.placement_generate_heat_path.empty()) {
         return true;
@@ -1207,6 +1207,16 @@ static bool common_placement_generate(common_params & params) {
     if (!inv.topology_complete && !params.rpc_endpoints.empty()) {
         for (const auto & e : inv.discover_errors) {
             LOG_WRN("%s: discover: %s: %s\n", __func__, e.target.c_str(), e.message.c_str());
+        }
+    }
+    {
+        placement_tp_unit_options tpo;
+        tpo.opt_in = params.placement_tp_unit;
+        tpo.specialized_ar_ok_default = params.placement_tp_ar_ok;
+        std::vector<std::string> tlogs;
+        placement_inventory_apply_tp_units(inv, tpo, &tlogs);
+        for (const auto & line : tlogs) {
+            LOG_INF("%s: tp-unit: %s\n", __func__, line.c_str());
         }
     }
     if (inv.records.empty()) {
@@ -1300,6 +1310,8 @@ static bool common_placement_generate(common_params & params) {
         }
         return true;
     }
+
+    // Min-hop generation path
 
     // Capacity-only generation (uses attention-local packer when recurrent info available)
     placement_plan plan;
@@ -1410,6 +1422,16 @@ static bool common_placement_prepare(common_params & params) {
         // still allow if plan only needs reachable backends; prepare_apply will fail missing ids
         LOG_WRN("%s: discover topology_complete=false; continuing if plan backends resolve\n", __func__);
     }
+    {
+        placement_tp_unit_options tpo;
+        tpo.opt_in = params.placement_tp_unit;
+        tpo.specialized_ar_ok_default = params.placement_tp_ar_ok;
+        std::vector<std::string> tlogs;
+        placement_inventory_apply_tp_units(inv, tpo, &tlogs);
+        for (const auto & line : tlogs) {
+            LOG_INF("%s: tp-unit: %s\n", __func__, line.c_str());
+        }
+    }
 
     int32_t n_layer = plan.n_layer;
     if (n_layer <= 0) {
@@ -1439,7 +1461,7 @@ static bool common_placement_prepare(common_params & params) {
         if (r.kind == PLACEMENT_KIND_LOCAL_GPU) {
             has_local = true;
         }
-        if (r.kind == PLACEMENT_KIND_RPC_DEVICE) {
+        if (r.kind == PLACEMENT_KIND_RPC_DEVICE || r.kind == PLACEMENT_KIND_RPC_TP_UNIT) {
             has_rpc = true;
         }
     }
