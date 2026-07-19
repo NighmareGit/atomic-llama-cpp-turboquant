@@ -1333,17 +1333,17 @@ static rpc_tensor serialize_tensor(const ggml_tensor * tensor) {
 
     result.id = reinterpret_cast<uint64_t>(tensor);
     result.type = tensor->type;
-    if (tensor->buffer && ggml_backend_buffer_is_rpc(tensor->buffer)) {
+    // NOTE: Use direct iface comparison instead of ggml_backend_buffer_is_rpc()
+    // because the weak stub in libggml-base.so overrides the strong definition
+    // in libggml-rpc.so at dynamic link time, returning false for all buffers.
+    // Comparing iface.free_buffer directly in this translation unit avoids the
+    // PLT/GOT resolution path that triggers the weak symbol resolution bug.
+    if (tensor->buffer && tensor->buffer->iface.free_buffer == ggml_backend_rpc_buffer_free_buffer) {
         ggml_backend_buffer_t buffer = tensor->buffer;
         ggml_backend_rpc_buffer_context * ctx = (ggml_backend_rpc_buffer_context *)buffer->context;
         result.buffer = ctx != nullptr ? ctx->remote_ptr : 0;
         result.data = reinterpret_cast<uint64_t>(tensor->data);
     } else {
-        if (tensor->buffer && !ggml_backend_buffer_is_rpc(tensor->buffer)) {
-            // non-RPC buffer (e.g. ROCm compute buffer on the client).
-            // This is expected for tensors from other GPipe stages that are
-            // included in the full serialized graph but filtered server-side.
-        }
         result.buffer = 0;
         result.data   = 0;
     }
@@ -2220,33 +2220,6 @@ static void serialize_graph(uint32_t device, const ggml_cgraph * cgraph, std::ve
     memcpy(out_tensors, tensors.data(), n_tensors * sizeof(rpc_tensor));
 }
 
-// D4.5: shared tensor serialization helper
-// Writes n_nodes + node_ids + n_tensors + tensor_data into dest
-// Returns the number of bytes written
-static size_t serialize_graph_tensors(ggml_cgraph * cgraph, uint8_t * dest) {
-    uint32_t n_nodes = cgraph->n_nodes;
-    std::vector<rpc_tensor> tensors;
-    std::unordered_set<ggml_tensor*> visited;
-    for (uint32_t i = 0; i < n_nodes; i++) {
-        add_tensor(cgraph->nodes[i], tensors, visited);
-    }
-    uint32_t n_tensors = tensors.size();
-
-    uint8_t * start = dest;
-    memcpy(dest, &n_nodes, sizeof(n_nodes));
-    dest += sizeof(n_nodes);
-    for (uint32_t i = 0; i < n_nodes; i++) {
-        uint64_t id = (uint64_t)(uintptr_t)cgraph->nodes[i];
-        memcpy(dest, &id, sizeof(id));
-        dest += sizeof(id);
-    }
-    memcpy(dest, &n_tensors, sizeof(n_tensors));
-    dest += sizeof(n_tensors);
-    memcpy(dest, tensors.data(), n_tensors * sizeof(rpc_tensor));
-    dest += n_tensors * sizeof(rpc_tensor);
-    return dest - start;
-}
-
 // D4.5: serialize graph for multi-device dispatch (GRAPH_COMPUTE_ALL)
 // Format: | n_devices(4) | device_ids(n_devices*4) | n_nodes(4) | nodes(n_nodes*8) | n_tensors(4) | tensors(n_tensors*sizeof(rpc_tensor)) |
 static void serialize_graph_for_all(
@@ -2508,6 +2481,7 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
             std::chrono::steady_clock::now() - t0).count();
         rpc_trace_emit(__func__, "graph_compute_stage",
                        RPC_CMD_GRAPH_COMPUTE_STAGE, input.size(), false, us);
+
         return GGML_STATUS_SUCCESS;
     }
 
