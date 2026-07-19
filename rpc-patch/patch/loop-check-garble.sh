@@ -1,12 +1,15 @@
 #!/bin/bash
 # Phase 1 feedback loop: detect KV-cache garble under GGML_PIPELINE_PLUS=1
 # PASS (exit 0) = clean output, FAIL (exit 1) = garbled output
+# usage: loop-check-garble.sh [PORT PROMPT TOKENS SEED EXPECT_SUBSTR]
+#   EXPECT_SUBSTR (optional): case-insensitive substring; GREEN requires it
 set -euo pipefail
 
 PORT="${1:-8095}"
 PROMPT="${2:-What is 2+2?}"
 TOKENS="${3:-64}"
 SEED="${4:-42}"
+EXPECT_SUBSTR="${5:-}"
 
 PAYLOAD=$(python3 -c "
 import json
@@ -29,8 +32,8 @@ if [ -z "$RESP" ]; then
     exit 1
 fi
 
-python3 -c "
-import sys, json, re
+EXPECT_SUBSTR="${EXPECT_SUBSTR}" python3 -c "
+import sys, json, re, os
 
 raw = sys.stdin.read()
 try:
@@ -43,9 +46,19 @@ if 'error' in data:
     print(f'FAIL: server error: {data[\"error\"]}')
     sys.exit(1)
 
-content = data['choices'][0]['message']['content']
+msg = data['choices'][0]['message']
+content = msg.get('content') or ''
+reasoning = msg.get('reasoning_content') or ''
 n_tokens = data['usage']['completion_tokens']
-text = content.replace('\n', ' ')
+
+# prefer content; fall back to reasoning_content when content blank
+if content.strip():
+    display = content
+    text = content + (' ' + reasoning if reasoning.strip() else '')
+else:
+    display = reasoning
+    text = reasoning
+text = text.replace('\n', ' ')
 
 # Heuristic 1: substring repetition (len>=3, repeated >=4 times)
 reps_found = False
@@ -64,11 +77,11 @@ for l in range(3, min(9, len(text)//4 + 1)):
         break
 
 # Heuristic 2: very low non-whitespace content
-nw_chars = sum(1 for c in content if not c.isspace())
-ratio = nw_chars / max(len(content), 1)
+nw_chars = sum(1 for c in text if not c.isspace())
+ratio = nw_chars / max(len(text), 1)
 
 # Heuristic 3: look for actual English word-like tokens
-words = re.findall(r'[a-zA-Z]{2,}', content.lower())
+words = re.findall(r'[a-zA-Z]{2,}', text.lower())
 word_count = len(words)
 unique_words = len(set(words))
 
@@ -88,12 +101,18 @@ if n_tokens >= 32 and unique_words <= 2 and word_count >= 8:
     garbled = True
     reasons.append(f'word-repetition(uniq={unique_words})')
 
+# Semantic assert: optional EXPECT_SUBSTR must appear (case-insensitive)
+if os.environ.get('EXPECT_SUBSTR'):
+    if os.environ['EXPECT_SUBSTR'].lower() not in text.lower():
+        garbled = True
+        reasons.append(f'semantic-miss(expected={os.environ[\"EXPECT_SUBSTR\"]})')
+
 verdict = 'GARBLED' if garbled else 'CLEAN'
 print(f'{verdict} tokens={n_tokens} nw_chars={nw_chars} ratio={ratio:.3f} words={word_count} uniq_words={unique_words}')
 if reasons:
     print(f'  reasons: {\", \".join(reasons)}')
 print('---CONTENT---')
-print(content[:300])
+print(display[:300])
 print('---END---')
 
 sys.exit(1 if garbled else 0)
