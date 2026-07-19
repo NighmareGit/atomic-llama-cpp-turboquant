@@ -92,7 +92,7 @@ Apples-to-apples **atomic sync branch** vs **Path-B+ production** on 3-GPU and 5
 | `benches/path-b-plus/b6-diagnosis-matrix.tsv` | Gate run matrix |
 | `benches/path-b-plus/b6-2gpu-f-triton-n384-*/telemetry/trace-parse-extended.json` | Phase 1.1 |
 | `benches/path-b-plus/validate-rpc-matrix/` | PR 8 investigation logs |
-| `docs/rpc-multi-backend-pipeline-plus/TRACKING.md` | Structural ceiling verdict |
+| `docs/pipeline-plus/TRACKING.md` | Structural ceiling verdict |
 
 ---
 

@@ -4,7 +4,7 @@
 **Branch:** Path-D-Gpipeline-Assembly-Line  
 **Wayfinder ticket:** [Inventory profiler and heatmap inputs for placement](../../.scratch/placement-control-plane/issues/02-inventory-profiler-heatmap-inputs.md)  
 **Scope:** code + docs + on-disk sample artifacts; no new profiler runs.  
-**Related:** ADR 0004b, D4.7 research, D4.10 telemetry fields, D4.11–D4.14 Pareto tickets (planned), `docs/rpc-multi-backend-pipeline-plus/TELEMETRY.md`
+**Related:** ADR 0004b, D4.7 research, D4.10 telemetry fields, D4.11–D4.14 Pareto tickets (planned), `docs/pipeline-plus/TELEMETRY.md`
 
 ---
 
@@ -100,7 +100,7 @@ Useful for **probe infrastructure patterns** (RPC register, trace env, multi-rep
 
 ### 1.5 Unified telemetry CLI
 
-`docs/rpc-multi-backend-pipeline-plus/TELEMETRY.md` — `--telemetry`, `--telemetry-trace`, sample interval, aggregate mode — applies to `llama-server`, `rpc-server`, `llama-gpipe-profiler`. Env fallbacks still work (`GGML_RPC_SERVER_TELEMETRY`, `GGML_SCHED_TRACE`, …).
+`docs/pipeline-plus/TELEMETRY.md` — `--telemetry`, `--telemetry-trace`, sample interval, aggregate mode — applies to `llama-server`, `rpc-server`, `llama-gpipe-profiler`. Env fallbacks still work (`GGML_RPC_SERVER_TELEMETRY`, `GGML_SCHED_TRACE`, …).
 
 ### 1.6 Pareto / governor path (planned)
 
@@ -240,7 +240,7 @@ Ordered by dependency for the placement control plane destination.
 |-------|------|
 | ADR heatmap + CLI | `docs/adr/0004b-profiler-architecture.md` |
 | D4.7 design space | `docs/wayfinder/D4.7-profiler-research.md` |
-| Telemetry CLI + node_timings + documented rollup | `docs/rpc-multi-backend-pipeline-plus/TELEMETRY.md` |
+| Telemetry CLI + node_timings + documented rollup | `docs/pipeline-plus/TELEMETRY.md` |
 | Profiler binary | `tools/llama-gpipe-profiler/llama-gpipe-profiler.cpp` |
 | Pipeline profiler | `tools/llama-pipeline-profiler/` |
 | Server telemetry struct + stub assignments | `ggml/src/ggml-rpc/ggml-rpc.cpp` |

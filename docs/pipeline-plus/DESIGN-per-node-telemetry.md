@@ -177,7 +177,7 @@ Applications: `llama-server`, `rpc-server`, `llama-gpipe-profiler`.
 | 4.2 | `tools/server/server.cpp` | Wire `--telemetry*` flags |
 | 4.3 | `tools/rpc/rpc-server.cpp` | Wire `--telemetry*` flags |
 | 4.4 | `tools/llama-gpipe-profiler/llama-gpipe-profiler.cpp` | Convert env var flags to `--telemetry*` CLI args |
-| 4.5 | `docs/rpc-multi-backend-pipeline-plus/TELEMETRY.md` | New doc: all flags, formats, examples |
+| 4.5 | `docs/pipeline-plus/TELEMETRY.md` | New doc: all flags, formats, examples |
 | 4.6 | Existing docs | Update references from env vars to CLI flags |
 
 ### Phase 5: Sampling + aggregation

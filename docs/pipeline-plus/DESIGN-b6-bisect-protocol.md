@@ -707,7 +707,7 @@ No PII in trace jsonl. Bench prompts are fixed file `profiler-reasoning-long.txt
 
 ### Alerting (manual)
 
-Update `docs/rpc-multi-backend-pipeline-plus/TRACKING.md` within 1 hour of run completion. Fail loud if:
+Update `docs/pipeline-plus/TRACKING.md` within 1 hour of run completion. Fail loud if:
 
 - Run exits non-zero or `result.jsonl` missing
 - `overlap_pct` is 0.0 with `assembly_overlap_count == 0` (broken trace)
@@ -758,7 +758,7 @@ Then B+7a′ (`GGML_RPC_MULTI_SOCKET_FLUSH=0` bisect) if drain still dominant.
 
 ### Production rollback
 
-Per-flag mitigation disable switches (sets individual mitigations to legacy behavior while Plus remains enabled). See [IMPLEMENTATION.md § Rollback one-liner](../docs/rpc-multi-backend-pipeline-plus/IMPLEMENTATION.md):
+Per-flag mitigation disable switches (sets individual mitigations to legacy behavior while Plus remains enabled). See [IMPLEMENTATION.md § Rollback one-liner](../docs/pipeline-plus/IMPLEMENTATION.md):
 
 ```bash
 export GGML_PIPELINE_BARRIER_PARTIAL=0
@@ -793,9 +793,9 @@ All mitigations gated by `GGML_PIPELINE_PLUS=1` and per-flag `atoi(env)`.
 
 ## References
 
-- [docs/rpc-multi-backend-pipeline-plus/PLAN.md](../docs/rpc-multi-backend-pipeline-plus/PLAN.md)
-- [docs/rpc-multi-backend-pipeline-plus/TRACKING.md](../docs/rpc-multi-backend-pipeline-plus/TRACKING.md)
-- [docs/rpc-multi-backend-pipeline-plus/IMPLEMENTATION.md](../docs/rpc-multi-backend-pipeline-plus/IMPLEMENTATION.md)
+- [docs/pipeline-plus/PLAN.md](../docs/pipeline-plus/PLAN.md)
+- [docs/pipeline-plus/TRACKING.md](../docs/pipeline-plus/TRACKING.md)
+- [docs/pipeline-plus/IMPLEMENTATION.md](../docs/pipeline-plus/IMPLEMENTATION.md)
 - [docs/adr/0001-b6-ladder-execution-post-b9-null.md](../docs/adr/0001-b6-ladder-execution-post-b9-null.md)
 - [rpc-patch/docs/b6-gate/PLAN.md](../rpc-patch/docs/b6-gate/PLAN.md)
 - [rpc-patch/patch/HANDOVER-SESSION-2026-07-01.md](../rpc-patch/patch/HANDOVER-SESSION-2026-07-01.md)
@@ -856,7 +856,7 @@ All mitigations gated by `GGML_PIPELINE_PLUS=1` and per-flag `atoi(env)`.
 
 ### PR 1 — `ops: romulus-triton sync script for b6 bisect wave` (parallel, optional)
 
-**Files:** `scripts/b6-gate-sync-cluster.sh` (new), `docs/rpc-multi-backend-pipeline-plus/IMPLEMENTATION.md`  
+**Files:** `scripts/b6-gate-sync-cluster.sh` (new), `docs/pipeline-plus/IMPLEMENTATION.md`  
 **Dependencies:** none  
 **Description:** Single entrypoint: verify git SHA across remus/romulus/triton, rebuild romulus profiler (`romulus-build-profiler-host.sh`), rebuild triton `rpc-server`, smoke port 50054. Uses SSH key auth (no embedded passwords). Replaces ad-hoc SSH steps from handover docs.
 
@@ -880,7 +880,7 @@ All mitigations gated by `GGML_PIPELINE_PLUS=1` and per-flag `atoi(env)`.
 
 ### PR 7 — `docs: TRACKING + audit update after B+8/B+10 OFF bisects`
 
-**Files:** `docs/rpc-multi-backend-pipeline-plus/TRACKING.md`, `rpc-patch/docs/pathb-sync-site-audit.md`, `benches/path-b-plus/b6-diagnosis-matrix.tsv`, `benches/path-b-plus/regression.jsonl`  
+**Files:** `docs/pipeline-plus/TRACKING.md`, `rpc-patch/docs/pathb-sync-site-audit.md`, `benches/path-b-plus/b6-diagnosis-matrix.tsv`, `benches/path-b-plus/regression.jsonl`  
 **Dependencies:** PR 2, PR 3; **execution** of bisect runs + artifact rsync
 **Description:** Record verdicts, partial 2-GPU conclusion if M1 FAIL, champion table updates, evidence links to `no-partial` / `no-async-copy` artifact dirs.
 
@@ -926,7 +926,7 @@ Record pass/fail + strace artifact per cell. Fix should be in RPC client handsha
 
 ### PR 9 — `ops: b6-4gpu-g romulus gate run + B+7a′ prep`
 
-**Files:** `docs/rpc-multi-backend-pipeline-plus/TRACKING.md`, `scripts/b6-gate-profiler-romulus.sh` (if 4-GPU env tweaks needed)  
+**Files:** `docs/pipeline-plus/TRACKING.md`, `scripts/b6-gate-profiler-romulus.sh` (if 4-GPU env tweaks needed)  
 **Dependencies:** PR 7 (2-GPU partial verdict recorded)  
 **Description:** Execute `b6-4gpu-g` n=384 on romulus; diagnose vs canonical 4-GPU baseline; schedule `GGML_RPC_MULTI_SOCKET_FLUSH=0` bisect if drain-dominant.
 

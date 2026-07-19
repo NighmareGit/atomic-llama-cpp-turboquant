@@ -247,7 +247,7 @@ After runs, regenerate tables:
 ```bash
 python3 scripts/b6-gate-sync-vs-plus-comparison.py \
   --jsonl benches/path-b-plus/sync-vs-plus-comparison.jsonl \
-  --out docs/rpc-multi-backend-pipeline-plus/BENCHMARKS/path-b-plus-vs-sync-comparison.md
+  --out docs/pipeline-plus/BENCHMARKS/path-b-plus-vs-sync-comparison.md
 ```
 
 Or append rows to `sync-vs-plus-comparison.jsonl` and update s5 manually.
