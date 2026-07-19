@@ -3418,7 +3418,13 @@ void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
         pipeline_trace_emit("wavefront_depth_release", oldest, sched->cur_copy, sched->n_copies, 0);
     }
 
-    const int new_copy = sched->next_copy;
+    // During graph reuse (is_alloc=true), copy slots must NOT rotate here.
+    // The graph's tensor pointers are frozen at the alloc-time cur_copy;
+    // rotating here would make compute_splits copy to a different slot than
+    // the graph reads, garbling split inputs on multi-GPU. alloc_graph
+    // (called on graph shape changes) is the only place that rotates, because
+    // it also calls split_graph to update node->src to the new slot.
+    const int new_copy = sched->cur_copy;
     const uint32_t pending_mask = sched->barrier_slot_pending[new_copy];
     uint32_t wait_mask = (1u << sched->n_backends) - 1;
     if (ggml_sched_barrier_partial_enabled() && sched->barrier_copy_src_mask != 0) {
@@ -3481,9 +3487,9 @@ void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
         fflush(out);
     }
 
-    sched->prev_copy = sched->cur_copy;
-    sched->cur_copy  = new_copy;
-    sched->next_copy = (new_copy + 1) % sched->n_copies;
+    // Copy-slot rotation happens only in ggml_backend_sched_alloc_graph, where
+    // split_graph updates node->src to match. Rotating here (during graph
+    // reuse) would desynchronise the copy target from the graph's frozen slot.
 }
 
 void ggml_backend_sched_set_eval_callback(ggml_backend_sched_t sched, ggml_backend_sched_eval_callback callback, void * user_data) {

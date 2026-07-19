@@ -84,16 +84,97 @@ PLUS the simpler native dual-CUDA layer-split path described in README.
       -> subagent 019f7a67-...165 DONE. bash -n OK. GPU-gated.
 - [ ] 5. Commit tooling (selective add: detector, loop script, diag dir, index)
 - [ ] 6. Push to gitea + github; pull on triton
-- [ ] 7. triton Phase 1 RED/GREEN loop with patched detector
-- [ ] 8. triton Phase 3 falsification matrix (env toggles, NO rebuild needed):
-       - Plus=1 baseline (RED sanity)
-       - Plus=1 + GGML_PIPELINE_BARRIER_PARTIAL=0   (tests H1: mask too narrow)
-       - Plus=1 + GGML_SCHED_PIPELINE_DEPTH=2       (tests H5: over-rotation)
-       - Plus=1 + GGML_PIPELINE_MULTI_BACKEND_SEQ=1 (tests H6: reuse bypass)
-       - Plus=0 baseline (GREEN control)
-- [ ] 9. Synthesize source fix from winning hypothesis
+- [x] 7. triton Phase 1 RED/GREEN loop with patched detector (1.5B model, 5s repro)
+- [x] 8. triton Phase 3 falsification matrix (env toggles, NO rebuild) - DONE
+- [ ] 9. Synthesize source fix from surviving evidence
 - [ ] 10. Commit fix; push; pull on triton; rebuild; verify loop GREEN
 - [ ] 11. Phase 6: README.md + ISSUE.md Answer; final commit
+
+## FALSIFICATION MATRIX RESULTS (2026-07-19 15:01 UTC, triton, 1.5B model)
+
+| Case | Toggle | Verdict | Hypothesis | Status |
+|------|--------|---------|------------|--------|
+| 1 | Plus=0 (control) | CLEAN | baseline green | OK |
+| 2 | Plus=1 (baseline) | GARBLED ("capital capital capital...") | baseline red | OK |
+| 3 | Plus=1 + GGML_PIPELINE_BARRIER_PARTIAL=0 | GARBLED | H1: partial mask too narrow | **FALSIFIED** |
+| 4 | Plus=1 + GGML_SCHED_PIPELINE_DEPTH=2 | GARBLED | H5: over-rotation | **FALSIFIED** |
+| 5 | Plus=1 + GGML_PIPELINE_MULTI_BACKEND_SEQ=1 | CLEAN | H6: reuse full-sync bypass | **SUSPICIOUS** |
+
+### Interpretation
+
+H1 FALSIFIED: BARRIER_PARTIAL=0 forces wait_mask = ALL backends at pipeline_barrier
+(line 3422-3430). Still garbles. So the race is NOT in the barrier wait mask.
+Even waiting on all backends' events doesn't fix it -> data is stale BEFORE
+the barrier, or wrong data is being copied.
+
+H5 FALSIFIED: DEPTH=2 (matching n_backends) doesn't help. Over-rotation ruled out.
+
+H6 SUSPICIOUS: MULTI_BACKEND_SEQ=1 goes clean, BUT this env var likely forces
+Plus=0 internally (see ggml-backend.cpp:60 `else if multi_backend_seq: v=0`
+inside ggml_sched_pipeline_plus_enabled). So this "CLEAN" is just Plus disabled
+by another name, NOT evidence that the reuse bypass is the fix locus. NEED TO
+VERIFY by reading the full function.
+
+### Pivot: the issue is in the rotation copy mechanism itself, not the barrier
+
+Since BARRIER_PARTIAL=0 (full sync) doesn't fix it, the data being read from
+prev_copy is wrong at copy time, not at sync time. Focus shifts to:
+- ggml-backend.cpp:2660-2665 B+16 rotation copy (prev_copy -> cur_copy on consumer)
+- ggml-backend.cpp:2680+ second pass for non-FLAG_INPUT split tensors
+- Whether the B+16 copy sources from the right tensor/backend
+- Whether split-data (hidden state) tensors get rotation-copied at all
+
+Next step: read the second pass (non-INPUT split tensors, line 2680+) and the
+full Plus-gating function to verify MULTI_BACKEND_SEQ=1 indeed forces Plus=0.
+
+## ROOT CAUSE FOUND (2026-07-19, static analysis confirmed)
+
+### The bug: copy-slot/graph-slot mismatch during graph reuse
+
+During token generation, the graph is REUSED (llama-context.cpp:1603 can_reuse).
+In the reuse path:
+1. `pipeline_barrier` runs (ggml-backend.cpp:3385), which ROTATES copy slots
+   at lines 3484-3486: `prev_copy=cur_copy; cur_copy=next_copy; next_copy=(next_copy+1)%n_copies`
+2. `graph_compute_async` runs (ggml-backend.cpp:3357), but since `is_alloc=true`
+   (from the previous alloc_graph), alloc_graph is SKIPPED (line 3363)
+3. `compute_splits` runs, copying split inputs to `sched->cur_copy` (rotated)
+   at line 2688: `tensor_copy(input, split_backend_id, sched->cur_copy)`
+4. But the GRAPH's tensor pointers are FROZEN at the alloc-time cur_copy
+   (set at line 1900: `node->src[j] = tensor_id_copy(src_id, cur_backend_id, sched->cur_copy)`
+   during the LAST alloc_graph call)
+5. MISMATCH: copy writes to rotated slot, compute reads from frozen slot -> garble
+
+### Why single-GPU is immune
+
+Single-GPU has zero cross-backend split inputs. The mismatch between copy slot
+and graph slot is invisible because no split input copies happen.
+
+### Why the env toggles didn't fix it
+
+- BARRIER_PARTIAL=0: doesn't affect rotation (lines 3484-3486 are unconditional)
+- PIPELINE_DEPTH=2: only affects wavefront depth guard, not rotation
+- MULTI_BACKEND_SEQ=1: disables Plus entirely (ggml-backend.cpp:60)
+
+### The fix
+
+In `ggml_backend_sched_pipeline_barrier` (ggml-backend.cpp:3385-3487):
+- When is_alloc=true (graph reuse), the barrier must NOT rotate cur_copy
+- Event wait should target cur_copy (the slot the graph uses), not next_copy
+- Rotation only happens in alloc_graph (which also updates graph pointers)
+
+This matches the existing design intent at line 3377-3380:
+"if the graph is not already allocated, always use copy 0 after a synchronization
+this ensures that during generation the same copy is used every time"
+
+The pipeline_barrier violates this intent by rotating during reuse.
+
+### Trade-off
+
+Fix sacrifices copy-slot pipelining during generation (same slot reused each
+decode). The async compute overlap benefit of Plus is preserved (events still
+prevent blocking), but true double-buffered pipelining is disabled. This is
+the same trade-off the synchronize() path already makes. A future enhancement
+could update graph tensor pointers on rotation to re-enable pipelining.
 
 ## Agent findings (condensed)
 
