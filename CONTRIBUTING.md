@@ -196,3 +196,14 @@ Maintainers reserve the right to decline review or close pull requests for any r
 The Github issues, PRs and discussions contain a lot of information that can be useful to get familiar with the codebase. For convenience, some of the more important information is referenced from Github projects:
 
 https://github.com/ggml-org/llama.cpp/projects
+
+# Bug Diagnostics
+
+Hard-won debugging knowledge (root cause analysis, fix rationale, verification
+matrices for subtle bugs) is archived in the [`diagnostics/`](diagnostics/)
+directory at the repository root. Each subdirectory covers one issue, with a
+`README.md` containing the full investigation chain.
+
+If you encounter an issue that matches a known pattern, check there first —
+it may save you hours of re-deriving the same diagnosis. Please add new entries
+when you resolve a non-trivial bug so the knowledge accumulates for everyone.

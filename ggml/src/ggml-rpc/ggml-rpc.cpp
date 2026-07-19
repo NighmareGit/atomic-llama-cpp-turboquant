@@ -1320,6 +1320,8 @@ static void * ggml_backend_rpc_buffer_get_base(ggml_backend_buffer_t buffer) {
     return ctx->base_ptr;
 }
 
+// DO NOT USE: weak stub in libggml-base.so overrides this at dynamic link time.
+// Use direct iface comparison in the same translation unit instead (see serialize_tensor).
 bool ggml_backend_buffer_is_rpc(ggml_backend_buffer_t buffer) {
     return buffer != nullptr && buffer->iface.free_buffer == ggml_backend_rpc_buffer_free_buffer;
 }
@@ -1333,11 +1335,7 @@ static rpc_tensor serialize_tensor(const ggml_tensor * tensor) {
 
     result.id = reinterpret_cast<uint64_t>(tensor);
     result.type = tensor->type;
-    // NOTE: Use direct iface comparison instead of ggml_backend_buffer_is_rpc()
-    // because the weak stub in libggml-base.so overrides the strong definition
-    // in libggml-rpc.so at dynamic link time, returning false for all buffers.
-    // Comparing iface.free_buffer directly in this translation unit avoids the
-    // PLT/GOT resolution path that triggers the weak symbol resolution bug.
+    // Direct iface comparison bypasses weak symbol bug in ggml_backend_buffer_is_rpc()
     if (tensor->buffer && tensor->buffer->iface.free_buffer == ggml_backend_rpc_buffer_free_buffer) {
         ggml_backend_buffer_t buffer = tensor->buffer;
         ggml_backend_rpc_buffer_context * ctx = (ggml_backend_rpc_buffer_context *)buffer->context;
