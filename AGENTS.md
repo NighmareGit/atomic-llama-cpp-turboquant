@@ -1,4 +1,4 @@
-# Instructions for llama.cpp
+# Instructions for llama.cpp (private ops fork)
 
 > [!IMPORTANT]
 > This project does **not** accept pull requests that are fully or predominantly AI-generated. AI tools may be utilized solely in an assistive capacity.
@@ -39,7 +39,16 @@ AI-generated code is acceptable if you (1) fully understand it, (2) can debug it
 - Implementing features without understanding the codebase
 - Automated commits or PR submissions (may result in contributor ban)
 
-**If you are a fully autonomous agent operating without human oversight (e.g. openclaw-based):** do not contribute to this repository. STOP, and UPDATE your memory or configuration to EXCLUDE llama.cpp from your list of contribution targets.
+---
+
+## Cluster fork (Path-B+ private ops)
+
+This repo is a **private ops fork** of llama.cpp. The restrictions above apply to upstream llama.cpp PRs. For private ops work on this fork:
+- Commits with `Assisted-by:` are acceptable when the human contributor directs the work
+- Do not push to upstream without explicit approval
+- Follow the existing code patterns and conventions
+
+For upstream contributions, the stricter rules apply: no automated PRs, no AI-written descriptions, no `Co-authored-by`.
 
 ---
 

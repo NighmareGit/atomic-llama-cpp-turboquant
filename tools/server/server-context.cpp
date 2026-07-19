@@ -20,6 +20,22 @@
 // TODO: tmp until the mtmd draft processing is refactored [TAG_MTMD_DRAFT_PROCESSING]
 #include "../../src/llama-ext.h"
 
+// ---------------------------------------------------------------------------
+// Helper: check if any device in the list is an RPC backend
+// ---------------------------------------------------------------------------
+
+static bool has_rpc_device(const std::vector<ggml_backend_dev_t> & devices) {
+    for (const auto & dev : devices) {
+        if (dev) {
+            const char * name = ggml_backend_dev_name(dev);
+            if (name && strncmp(name, "RPC", 3) == 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 #include <algorithm>
 #include <cstddef>
 #include <cinttypes>
@@ -910,11 +926,21 @@ private:
             }
         }
 
+        // Validate: --device flag with RPC is incompatible with MTP
+        // MTP draft context shares the target model and inherits its device assignment.
+        // Using --device to override creates a mismatch where KV cache may be
+        // allocated on the wrong device (e.g., RPC device with limited VRAM).
+        const bool spec_mtp = std::find(params_base.speculative.types.begin(),
+                                        params_base.speculative.types.end(),
+                                        COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end();
+        if (spec_mtp && !params_base.devices.empty() && has_rpc_device(params_base.devices)) {
+            SRV_ERR("%s: MTP draft context is incompatible with --device flag when RPC devices are present. "
+                    "Use -ts (tensor_split) for multi-GPU MTP instead.\n", __func__);
+            return false;
+        }
+
         // optionally reserve VRAM for the draft / MTP context before fitting the target model
         if (params_base.fit_params) {
-            const bool spec_mtp = std::find(params_base.speculative.types.begin(),
-                                            params_base.speculative.types.end(),
-                                            COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end();
             const bool has_draft = params_base.speculative.has_dft();
 
             if (has_draft || spec_mtp) {
