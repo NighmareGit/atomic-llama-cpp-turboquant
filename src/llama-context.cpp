@@ -74,12 +74,20 @@ int32_t llama_decode_gpipe_impl(llama_context * ctx, llama_batch /*batch*/, cons
     ggml_cgraph * gf = ctx->gf_res_prev->get_gf();
 
     // Single-seq (Mode A): pipeline stages add no throughput benefit since
-    // there is only one data stream.  Compute the full graph once per token
-    // and skip the per-stage wait/record state machine.  Multi-seq (Mode B)
-    // benefits from pipeline overlap and uses the full state machine via
-    // llama_decode_gpipe_multi_impl.
+    // there is only one data stream.  Compute the full graph once per token.
+    //
+    // D6.11: signal a gpipe stage on the RPC backend before compute, even in
+    // single-seq mode, so the RPC backend uses GRAPH_COMPUTE_STAGE instead of
+    // GRAPH_COMPUTE.  The GRAPH_COMPUTE path calls filter_null_src_nodes on the
+    // server, which incorrectly marks ALL nodes as GGML_OP_NONE when cross-
+    // backend tensors (ROCm weights) have null data in the serialized graph.
+    // The GRAPH_COMPUTE_STAGE path skips filter_null_src_nodes.  Stage 0 is
+    // used as the signal value since the server does not filter by stage_id
+    // (see D6.11 in ggml-rpc.cpp graph_compute_stage).
     if (gf) {
+        ggml_backend_sched_signal_gpipe_stage(0);
         ggml_backend_sched_graph_compute_async(sched, gf);
+        ggml_backend_sched_signal_gpipe_stage(-1);
     }
     return 0;
 }

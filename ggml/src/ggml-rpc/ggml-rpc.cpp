@@ -2252,18 +2252,40 @@ static size_t serialize_graph_tensors(ggml_cgraph * cgraph, uint8_t * dest) {
 static void serialize_graph_for_all(
     const uint32_t * devices, uint32_t n_devices,
     ggml_cgraph * cgraph, std::vector<uint8_t> & output) {
-    // Over-estimate size: n_nodes is an upper bound on n_tensors
-    size_t tensor_size = sizeof(uint32_t) + cgraph->n_nodes * sizeof(uint64_t) +
-        sizeof(uint32_t) + cgraph->n_nodes * sizeof(rpc_tensor);
-    output.resize(
-        sizeof(uint32_t) + n_devices * sizeof(uint32_t) + tensor_size);
+    // Build tensor list first so we can allocate the exact size needed.
+    // n_tensors may exceed n_nodes because add_tensor recursively visits
+    // leaf weight tensors that are not node outputs.  Pre-allocating based
+    // on n_nodes would cause a buffer overflow in that case.
+    uint32_t n_nodes = cgraph->n_nodes;
+    std::vector<rpc_tensor> tensors;
+    std::unordered_set<ggml_tensor*> visited;
+    tensors.reserve((size_t)n_nodes * 2);
+    visited.reserve((size_t)n_nodes * 2);
+    for (uint32_t i = 0; i < n_nodes; i++) {
+        add_tensor(cgraph->nodes[i], tensors, visited);
+    }
+    uint32_t n_tensors = tensors.size();
+
+    size_t total_size = sizeof(uint32_t) + n_devices * sizeof(uint32_t) +
+        sizeof(uint32_t) + n_nodes * sizeof(uint64_t) +
+        sizeof(uint32_t) + n_tensors * sizeof(rpc_tensor);
+    output.resize(total_size);
 
     uint8_t * dest = output.data();
     memcpy(dest, &n_devices, sizeof(n_devices));
     dest += sizeof(n_devices);
     memcpy(dest, devices, n_devices * sizeof(uint32_t));
     dest += n_devices * sizeof(uint32_t);
-    serialize_graph_tensors(cgraph, dest);
+    memcpy(dest, &n_nodes, sizeof(n_nodes));
+    dest += sizeof(n_nodes);
+    for (uint32_t i = 0; i < n_nodes; i++) {
+        uint64_t id = (uint64_t)(uintptr_t)cgraph->nodes[i];
+        memcpy(dest, &id, sizeof(id));
+        dest += sizeof(id);
+    }
+    memcpy(dest, &n_tensors, sizeof(n_tensors));
+    dest += sizeof(n_tensors);
+    memcpy(dest, tensors.data(), n_tensors * sizeof(rpc_tensor));
 }
 
 // D4.10: write a server_telemetry jsonl record (one JSON object per line)
@@ -2426,9 +2448,29 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
     // D6.9: per-stage dispatch via GRAPH_COMPUTE_STAGE
     // When the GPipe dispatch sets gpipe_active_stage, we send a stage-filtered
     // graph to the server so only this stage's backend computes its splits.
+    // NOTE: we do NOT check server_supports_telemetry here. The stage-filtered
+    // path avoids calling filter_null_src_nodes on the server, which would
+    // incorrectly mark ALL nodes as GGML_OP_NONE when cross-backend tensors
+    // (e.g. ROCm weights) have null data on the serialized graph. The server
+    // handles telemetry being disabled gracefully (sends just the response
+    // header without telemetry payload).
     int gpipe_stage = ggml_backend_sched_get_tls_gpipe_stage();
-    if (gpipe_stage >= 0 && sock->server_supports_telemetry) {
+    // Fallback: if TLS is -1 but the scheduler has gpipe_active_stage set,
+    // use the scheduler's value.  The scheduler field is set by set_gpipe_stage
+    // (which sets both sched->gpipe_active_stage AND tls_gpipe_active_stage).
+    // If only the scheduler field is set (via the deprecated set_gpipe_stage path),
+    // detect it here.
+    if (gpipe_stage < 0) {
+        // Try to detect gpipe mode by checking if GGML_SCHED_GPIPE env var is set
+        const char * gpipe_env = getenv("GGML_SCHED_GPIPE");
+        if (gpipe_env && gpipe_env[0] == '1') {
+            gpipe_stage = 0; // Assume stage 0 when in gpipe mode
+            ggml_backend_sched_signal_gpipe_stage(0);
+        }
+    }
+    if (gpipe_stage >= 0) {
         const auto t0 = std::chrono::steady_clock::now();
+
         std::vector<uint8_t> input;
         // Use same serialization as GRAPH_COMPUTE_ALL (full graph)
         uint32_t n_devices = rpc_ctx->n_devices_on_endpoint > 0 ?
@@ -3311,35 +3353,62 @@ ggml_tensor * rpc_server::create_node(uint64_t id,
 // device-level telemetry). Bounds overhead of per-node sync on the RPC server.
 static constexpr int RPC_NODE_SAMPLE_INTERVAL = 16;
 
-// Safety net: nodes whose src tensors have null data pointers cannot be computed.
-// This catches cross-stage tensors from other GPipe devices (e.g. ROCm) that are
-// included in the full serialized graph but will be filtered by the stage scheduler.
-// The primary fix for RPC buffer detection is in ggml-backend-dl.cpp (RTLD_GLOBAL).
+// Safety net: nodes whose LEAF src tensors have null data pointers cannot be computed.
+// A leaf tensor is one that appears as an input (src) of some node but is NOT
+// itself a node output. Leaves with null data are cross-backend tensors (ROCm/CPU)
+// whose weights were never uploaded to this RPC server -- nodes depending on them
+// must be skipped to avoid CUDA kernel crashes.
+//
+// Non-leaf src tensors (intermediate node outputs) naturally have null data before
+// the CUDA backend allocates them during graph_compute -- those are NOT skipped,
+// unless their producer was already filtered (propagation step).
+//
+// Graph nodes are assumed to be in topological order, so a single forward pass
+// suffices: when we encounter a node whose intermediate src has null data, we
+// check if its producer was filtered (op == GGML_OP_NONE).
 static void filter_null_src_nodes(struct ggml_cgraph * graph) {
     if (!graph || graph->n_nodes == 0) {
         return;
+    }
+    // Build set of node output tensors (intermediates)
+    std::unordered_set<struct ggml_tensor *> node_outputs;
+    node_outputs.reserve((size_t) graph->n_nodes);
+    for (int i = 0; i < (int)graph->n_nodes; i++) {
+        if (graph->nodes[i]) {
+            node_outputs.insert(graph->nodes[i]);
+        }
     }
     int n_skipped = 0;
     for (int i = 0; i < (int)graph->n_nodes; i++) {
         struct ggml_tensor * node = graph->nodes[i];
         if (!node) { continue; }
-        bool has_null_src = false;
+        bool should_filter = false;
         for (int j = 0; j < GGML_MAX_SRC; j++) {
             if (node->src[j] && node->src[j]->data == nullptr) {
-                has_null_src = true;
+                // Leaf (cross-backend weight, not produced by any graph node)
+                if (node_outputs.find(node->src[j]) == node_outputs.end()) {
+                    should_filter = true;
+                    break;
+                }
+                // Intermediate produced by a node that was already filtered
+                if (node->src[j]->op == GGML_OP_NONE) {
+                    should_filter = true;
+                    break;
+                }
             }
         }
-        if (has_null_src) {
+        if (should_filter) {
             node->op = GGML_OP_NONE;
             n_skipped++;
         }
     }
     if (n_skipped > 0) {
-        GGML_LOG_DEBUG("[rpc-server] filtered %d nodes with null src data (op set to GGML_OP_NONE)\n", n_skipped);
+        GGML_LOG_DEBUG("[rpc-server] filtered %d nodes with null leaf src data\n", n_skipped);
     }
 }
 
 bool rpc_server::graph_compute(const std::vector<uint8_t> & input) {
+    GGML_LOG_DEBUG("[rpc-server] graph_compute (single-device) called, input.size=%zu\n", input.size());
     // serialization format:
     // | device (4 bytes) | n_nodes (4 bytes) | nodes (n_nodes * sizeof(uint64_t) | n_tensors (4 bytes) | tensors (n_tensors * sizeof(rpc_tensor)) |
     if (input.size() < 2*sizeof(uint32_t)) {
@@ -3505,6 +3574,7 @@ ggml_backend_sched_t rpc_server::create_multi_device_sched(
 }
 
 bool rpc_server::graph_compute_all(const std::vector<uint8_t> & input) {
+    GGML_LOG_DEBUG("[rpc-server] graph_compute_all (multi-device) called, input.size=%zu\n", input.size());
     // Format: | n_devices(4) | device_ids(n_devices*4) | n_nodes(4) | nodes(n_nodes*8) | n_tensors(4) | tensors(n_devices*rpc_tensor) |
     if (input.size() < sizeof(uint32_t) * 3) {
         return false;
@@ -3640,12 +3710,14 @@ bool rpc_server::graph_recompute_all(const rpc_msg_graph_recompute_all_req & req
 // Identical to graph_compute_all but sets gpipe_active_stage on the scheduler
 // so only splits matching the given stage's backend_id are computed.
 bool rpc_server::graph_compute_stage(const std::vector<uint8_t> & input, uint32_t stage_id) {
-    // Reuse graph_compute_all's deserialization (same binary format)
+    GGML_LOG_DEBUG("[rpc-server] graph_compute_stage called, stage_id=%u, input.size=%zu\n", stage_id, input.size());
     if (input.size() < sizeof(uint32_t) * 3) {
         return false;
     }
 
     const uint8_t * src = input.data();
+
+    // Parse graph data: | n_devices(4) | devices(n_devices*4) | n_nodes(4) | nodes(n_nodes*8) | n_tensors(4) | tensors(n_tensors*sizeof(rpc_tensor)) |
     uint32_t n_devices;
     memcpy(&n_devices, src, sizeof(n_devices));
     src += sizeof(n_devices);
@@ -3656,7 +3728,7 @@ bool rpc_server::graph_compute_stage(const std::vector<uint8_t> & input, uint32_
 
     uint32_t devices[8];
     size_t devs_size = n_devices * sizeof(uint32_t);
-    if (input.size() < sizeof(uint32_t) + devs_size + sizeof(uint32_t)) {
+    if (input.size() < (size_t)(src - input.data()) + devs_size + sizeof(uint32_t)) {
         return false;
     }
     memcpy(devices, src, devs_size);
@@ -3665,7 +3737,7 @@ bool rpc_server::graph_compute_stage(const std::vector<uint8_t> & input, uint32_
     uint32_t n_nodes;
     memcpy(&n_nodes, src, sizeof(n_nodes));
     src += sizeof(n_nodes);
-    if (input.size() < sizeof(uint32_t) + devs_size + sizeof(uint32_t) + n_nodes * sizeof(uint64_t) + sizeof(uint32_t)) {
+    if (input.size() < (size_t)(src - input.data()) + n_nodes * sizeof(uint64_t) + sizeof(uint32_t)) {
         return false;
     }
     const uint64_t * nodes = (const uint64_t *)src;
@@ -3673,7 +3745,7 @@ bool rpc_server::graph_compute_stage(const std::vector<uint8_t> & input, uint32_
     uint32_t n_tensors;
     memcpy(&n_tensors, src, sizeof(n_tensors));
     src += sizeof(n_tensors);
-    if (input.size() < sizeof(uint32_t) + devs_size + sizeof(uint32_t) + n_nodes * sizeof(uint64_t) + sizeof(uint32_t) + n_tensors * sizeof(rpc_tensor)) {
+    if (input.size() < (size_t)(src - input.data()) + n_tensors * sizeof(rpc_tensor)) {
         return false;
     }
     const rpc_tensor * tensors = (const rpc_tensor *)src;
