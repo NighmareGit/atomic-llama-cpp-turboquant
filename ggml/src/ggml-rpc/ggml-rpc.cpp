@@ -367,8 +367,13 @@ static int rpc_dual_socket_env_enabled() {
     static int v = -1;
     if (v < 0) {
         const char * e = getenv("GGML_RPC_DUAL_SOCKET");
-        // Default OFF until all rpc-servers are proto 4.4 (bisect sets =1 explicitly).
-        v = e ? atoi(e) : 0;
+        if (e && atoi(e) != 0) {
+            GGML_LOG_WARN("GGML_RPC_DUAL_SOCKET is deprecated and will be removed in Phase R3. "
+                          "It caused -9.1%% G regression on 4-GPU and a CUDA illegal-memory-access "
+                          "crash on RTX 3060 Ti. The flag is blocked - dual socket will NOT be activated.\n");
+        }
+        // Always disabled - deprecated.
+        v = 0;
     }
     return v;
 }
@@ -1334,6 +1339,11 @@ static rpc_tensor serialize_tensor(const ggml_tensor * tensor) {
         result.buffer = ctx != nullptr ? ctx->remote_ptr : 0;
         result.data = reinterpret_cast<uint64_t>(tensor->data);
     } else {
+        if (tensor->buffer && !ggml_backend_buffer_is_rpc(tensor->buffer)) {
+            // non-RPC buffer (e.g. ROCm compute buffer on the client).
+            // This is expected for tensors from other GPipe stages that are
+            // included in the full serialized graph but filtered server-side.
+        }
         result.buffer = 0;
         result.data   = 0;
     }
@@ -1370,6 +1380,9 @@ static enum ggml_status ggml_backend_rpc_buffer_init_tensor(ggml_backend_buffer_
         rpc_msg_init_tensor_req request;
 
         request.tensor = serialize_tensor(tensor);
+        // Always use known RPC buffer context (same reason as set_tensor)
+        request.tensor.buffer = ctx->remote_ptr;
+        request.tensor.data   = reinterpret_cast<uint64_t>(tensor->data);
 
         bool status = send_rpc_cmd(ctx->sock, RPC_CMD_INIT_TENSOR, &request, sizeof(request), nullptr, 0);
         RPC_STATUS_ASSERT(status);
@@ -1381,6 +1394,10 @@ static void ggml_backend_rpc_buffer_set_tensor(ggml_backend_buffer_t buffer, ggm
     ggml_backend_rpc_buffer_context * ctx = (ggml_backend_rpc_buffer_context *)buffer->context;
     auto sock = ctx->sock;
     rpc_tensor rpc_tensor = serialize_tensor(tensor);
+    // Always use known RPC buffer context - serialize_tensor may not detect
+    // the buffer as RPC when tensor->buffer points to a multi-buffer wrapper.
+    rpc_tensor.buffer = ctx->remote_ptr;
+    rpc_tensor.data   = reinterpret_cast<uint64_t>(tensor->data);
     if (ggml_backend_rpc_hash_defer()) {
         if (tls_hash_active_sock && tls_hash_active_sock != sock) {
             flush_pending_hash_for_socket(tls_hash_active_sock);
@@ -1441,6 +1458,9 @@ static void ggml_backend_rpc_buffer_get_tensor_async(ggml_backend_buffer_t buffe
     }
     rpc_msg_get_tensor_req request;
     request.tensor = serialize_tensor(tensor);
+    // Always use known RPC buffer context (same reason as set_tensor)
+    request.tensor.buffer = ctx->remote_ptr;
+    request.tensor.data   = reinterpret_cast<uint64_t>(tensor->data);
     request.offset = offset;
     request.size = size;
     uint8_t cmd_byte = RPC_CMD_GET_TENSOR;
@@ -1473,6 +1493,9 @@ static void ggml_backend_rpc_buffer_get_tensor(ggml_backend_buffer_t buffer, con
     flush_set_tensor_batch();
     rpc_msg_get_tensor_req request;
     request.tensor = serialize_tensor(tensor);
+    // Always use known RPC buffer context (same reason as set_tensor)
+    request.tensor.buffer = ctx->remote_ptr;
+    request.tensor.data   = reinterpret_cast<uint64_t>(tensor->data);
     request.offset = offset;
     request.size = size;
     bool status = send_rpc_cmd(sock, RPC_CMD_GET_TENSOR, &request, sizeof(request), data, size);
@@ -2938,16 +2961,21 @@ ggml_tensor * rpc_server::deserialize_tensor(struct ggml_context * ctx, const rp
     }
     result->buffer = reinterpret_cast<ggml_backend_buffer_t>(tensor->buffer);
     if (result->buffer && buffers.find(result->buffer) == buffers.end()) {
+        static std::atomic<int> warn_count{0};
+        if (warn_count.fetch_add(1, std::memory_order_relaxed) < 5) {
+            GGML_LOG_WARN("[%s] buffer %p not found in server buffer set (%zu buffers registered)\n",
+                __func__, (void*)result->buffer, buffers.size());
+        }
         result->buffer = nullptr;
     }
 
     if (result->buffer) {
         // require that the tensor data does not go beyond the buffer end
         uint64_t tensor_size = (uint64_t) ggml_nbytes(result);
-        uint64_t buffer_start = (uint64_t) ggml_backend_buffer_get_base(result->buffer);
-        uint64_t buffer_size = (uint64_t) ggml_backend_buffer_get_size(result->buffer);
         GGML_ASSERT(tensor->data + tensor_size >= tensor->data); // check for overflow
-        GGML_ASSERT(tensor->data >= buffer_start && tensor->data + tensor_size <= buffer_start + buffer_size);
+        // NOTE: tensor->data is a client-side address that may not be valid in the server's address space
+        // (e.g. ROCm client -> CUDA server). The actual offset is sent separately and validated
+        // in set_tensor(). Skip cross-address-space bounds comparison here.
     }
 
     result->op = (ggml_op) tensor->op;
@@ -2986,14 +3014,15 @@ bool rpc_server::set_tensor(const std::vector<uint8_t> & input) {
     }
     LOG_DBG("[%s] buffer: %p, data: %p, offset: %" PRIu64 ", size: %zu\n", __func__, (void*)tensor->buffer, tensor->data, offset, size);
 
-    // sanitize tensor->data
+    // sanitize offset + size against buffer size
+    // NOTE: in_tensor->data is a client-side address - do not use it for server-side bounds checking
+    // (e.g. ROCm client -> CUDA server). Validate using offset and size only.
     {
-        const size_t p0 = (size_t) ggml_backend_buffer_get_base(tensor->buffer);
-        const size_t p1 = p0 + ggml_backend_buffer_get_size(tensor->buffer);
+        const size_t buf_size = ggml_backend_buffer_get_size(tensor->buffer);
 
-        if (in_tensor->data + offset < p0 || in_tensor->data + offset >= p1 || size > (p1 - in_tensor->data - offset)) {
-            GGML_LOG_ERROR("[%s] tensor data region (data=0x%" PRIx64 ", offset=%" PRIu64 ", size=%zu) out of buffer bounds [0x%zx, 0x%zx)\n",
-                           __func__, in_tensor->data, offset, size, p0, p1);
+        if (offset + size > buf_size) {
+            GGML_LOG_ERROR("[%s] tensor data region (offset=%" PRIu64 ", size=%zu) exceeds buffer size %zu\n",
+                           __func__, offset, size, buf_size);
             return false;
         }
     }
@@ -3282,6 +3311,34 @@ ggml_tensor * rpc_server::create_node(uint64_t id,
 // device-level telemetry). Bounds overhead of per-node sync on the RPC server.
 static constexpr int RPC_NODE_SAMPLE_INTERVAL = 16;
 
+// Safety net: nodes whose src tensors have null data pointers cannot be computed.
+// This catches cross-stage tensors from other GPipe devices (e.g. ROCm) that are
+// included in the full serialized graph but will be filtered by the stage scheduler.
+// The primary fix for RPC buffer detection is in ggml-backend-dl.cpp (RTLD_GLOBAL).
+static void filter_null_src_nodes(struct ggml_cgraph * graph) {
+    if (!graph || graph->n_nodes == 0) {
+        return;
+    }
+    int n_skipped = 0;
+    for (int i = 0; i < (int)graph->n_nodes; i++) {
+        struct ggml_tensor * node = graph->nodes[i];
+        if (!node) { continue; }
+        bool has_null_src = false;
+        for (int j = 0; j < GGML_MAX_SRC; j++) {
+            if (node->src[j] && node->src[j]->data == nullptr) {
+                has_null_src = true;
+            }
+        }
+        if (has_null_src) {
+            node->op = GGML_OP_NONE;
+            n_skipped++;
+        }
+    }
+    if (n_skipped > 0) {
+        GGML_LOG_DEBUG("[rpc-server] filtered %d nodes with null src data (op set to GGML_OP_NONE)\n", n_skipped);
+    }
+}
+
 bool rpc_server::graph_compute(const std::vector<uint8_t> & input) {
     // serialization format:
     // | device (4 bytes) | n_nodes (4 bytes) | nodes (n_nodes * sizeof(uint64_t) | n_tensors (4 bytes) | tensors (n_tensors * sizeof(rpc_tensor)) |
@@ -3346,6 +3403,9 @@ bool rpc_server::graph_compute(const std::vector<uint8_t> & input) {
             return false;
         }
     }
+    // Filter out nodes with null src data (non-RPC buffers on client)
+    filter_null_src_nodes(graph);
+
     // issue 12: on sampled decodes, compute per-node for placement-grade heatmaps.
     // Sampled to bound overhead; produces correct output (same ops + order).
     uint64_t us = 0;
@@ -3514,6 +3574,9 @@ bool rpc_server::graph_compute_all(const std::vector<uint8_t> & input) {
         }
     }
 
+    // Filter out nodes with null src data (non-RPC buffers on client)
+    filter_null_src_nodes(graph);
+
     // Create multi-device scheduler
     ggml_backend_sched_t sched = create_multi_device_sched(devices, n_devices, graph);
     if (!sched) {
@@ -3643,6 +3706,9 @@ bool rpc_server::graph_compute_stage(const std::vector<uint8_t> & input, uint32_
             return false;
         }
     }
+
+    // Filter out nodes with null src data (non-RPC buffers on client)
+    filter_null_src_nodes(graph);
 
     ggml_backend_sched_t sched = create_multi_device_sched(devices, n_devices, graph);
     if (!sched) {

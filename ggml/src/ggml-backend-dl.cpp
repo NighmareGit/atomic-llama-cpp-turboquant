@@ -32,7 +32,10 @@ const char * dl_error() {
 #else
 
 dl_handle * dl_load_library(const fs::path & path) {
-    dl_handle * handle = dlopen(path.string().c_str(), RTLD_NOW | RTLD_LOCAL);
+    // Use RTLD_GLOBAL so strong symbols from the loaded backend override
+    // weak stubs in the base library (e.g. ggml_backend_buffer_is_rpc in
+    // libggml-rpc.so must override the "return false" stub in libggml-base.so).
+    dl_handle * handle = dlopen(path.string().c_str(), RTLD_NOW | RTLD_GLOBAL);
     return handle;
 }
 
