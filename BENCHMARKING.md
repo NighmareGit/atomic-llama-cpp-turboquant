@@ -359,7 +359,7 @@ bash scripts/b6-gate-phase12b-gantt.sh b6-4gpu-g-triton-n384-romulus-native ...
 | dual ON | 73.2 | 0.2% | 1036 |
 | dual OFF | 80.5 | 0.2% | 171 |
 
-**NULL overlap; default OFF.** Docs: [FEATURE-b11](docs/rpc-multi-backend-pipeline-plus/FEATURE-b11-dual-socket-rpc.md), [RPC-PROTOCOL](docs/rpc-multi-backend-pipeline-plus/RPC-PROTOCOL.md).
+**NULL overlap; default OFF.** Docs: [FEATURE-b11](docs/pipeline-plus/FEATURE-b11-dual-socket-rpc.md), [RPC-PROTOCOL](docs/pipeline-plus/RPC-PROTOCOL.md).
 
 ---
 

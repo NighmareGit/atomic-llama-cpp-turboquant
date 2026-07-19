@@ -366,7 +366,7 @@ Per-sequence KV-ready release follows ADR-0002: a sequence's next token cannot s
 - `docs/wayfinder/D0.2-split-topology-map.md`
 - `docs/adr/0002-gpipe-kv-ordering.md`
 - `docs/wayfinder/D0.5-implementation-seam.md`
-- `docs/rpc-multi-backend-pipeline-plus/DESIGN-path-d-layer-pipeline.md`
+- `docs/pipeline-plus/DESIGN-path-d-layer-pipeline.md`
 
 ---
 

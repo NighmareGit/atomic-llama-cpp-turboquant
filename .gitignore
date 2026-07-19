@@ -1,5 +1,8 @@
 # Extensions
 
+# Derived data
+profiler-out/
+
 *.a
 *.bat
 *.bin

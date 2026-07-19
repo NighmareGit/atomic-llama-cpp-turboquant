@@ -86,10 +86,10 @@ flowchart TB
 | Path-B Plus barrier (P0) | `ggml/src/ggml-backend.cpp` (`ggml_backend_sched_pipeline_barrier`) |
 | Narrow sampling sync (P1) | `src/llama-context.cpp` (`synchronize_sampling`, `llama_pipeline_plus_enabled`) |
 | RPC events + scoped drain (P2) | `ggml/src/ggml-rpc/ggml-rpc.cpp` |
-| RPC protocol | `ggml/include/ggml-rpc.h` ([RPC-PROTOCOL.md](docs/rpc-multi-backend-pipeline-plus/RPC-PROTOCOL.md), proto 4.4.2) |
+| RPC protocol | `ggml/include/ggml-rpc.h` ([RPC-PROTOCOL.md](docs/pipeline-plus/RPC-PROTOCOL.md), proto 4.4.2) |
 | Scheduler / RPC trace emit | `ggml-backend.cpp`, `ggml-rpc.cpp` |
 | Cluster benches / hotpath parse | `rpc-patch/scripts/pathb-*.sh`, `pathb-hotpath-summary.sh` |
-| Path B/Plus mission | `docs/rpc-multi-backend-pipeline-plus/` (MISSION, PLAN, TRACKING) |
+| Path B/Plus mission | `docs/pipeline-plus/` (MISSION, PLAN, TRACKING) |
 | Path B/Plus planning | `rpc-patch/docs/rpc-path-b-plus-overview.md` |
 
 ---
@@ -224,7 +224,7 @@ if (cparams.pipeline_parallel && llama_pipeline_plus_enabled()) {
 | `--rpc` | e.g. `192.168.8.176:50051,127.0.0.1:50051,192.168.8.21:50053` | Multi-hop endpoint list |
 | `-ts` | VRAM-proportional split | e.g. `36,24,24,16` for 4-GPU primary |
 | RPC proto | **4.4.2** (cluster); 4.3.2+ min | `COPY_TENSOR_PEER` (4.3), `CHANNEL_BIND` dual-socket (4.4, default OFF) |
-| `GGML_RPC_DUAL_SOCKET` | `0` (default) | `=1` splits cmd/rsp TCP per endpoint; see [FEATURE-b11](docs/rpc-multi-backend-pipeline-plus/FEATURE-b11-dual-socket-rpc.md) |
+| `GGML_RPC_DUAL_SOCKET` | `0` (default) | `=1` splits cmd/rsp TCP per endpoint; see [FEATURE-b11](docs/pipeline-plus/FEATURE-b11-dual-socket-rpc.md) |
 
 ### B+11 dual-socket RPC (proto 4.4)
 
@@ -235,7 +235,7 @@ Optional cmd/response TCP split per RPC endpoint to reduce HOL blocking on multi
 export GGML_RPC_DUAL_SOCKET=1
 ```
 
-Docs: [FEATURE-b11-dual-socket-rpc.md](docs/rpc-multi-backend-pipeline-plus/FEATURE-b11-dual-socket-rpc.md), [RPC-PROTOCOL.md](docs/rpc-multi-backend-pipeline-plus/RPC-PROTOCOL.md).
+Docs: [FEATURE-b11-dual-socket-rpc.md](docs/pipeline-plus/FEATURE-b11-dual-socket-rpc.md), [RPC-PROTOCOL.md](docs/pipeline-plus/RPC-PROTOCOL.md).
 
 ### Verify after deploy
 
