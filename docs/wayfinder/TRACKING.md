@@ -302,6 +302,7 @@ Aborts if VRAM/RAM/disk/running-instances indicate OOM risk.
 5. **R3 Advanced Optimization** — Adaptive depth + deprecation cleanup (paused for Slice 7 vectors).
 6. **D4.11-D4.14 Pareto Optimizer** — Planned + ticketed, future sprint.
 7. **Cluster performance benchmarks** — D5.7 deferred: global_3bk_pct, overlap_pct on 5-GPU cluster (3+ GPUs where n_stages>2 shows benefit).
+8. **D8 Double-Buffered Decode Pipeline** — future enhancement to restore copy-slot rotation during decode, lost by PPLUS garble fix `f68e17b9b`. Expected TG ceiling: ~3-6% on dual-GPU, ~5-10% on RPC cluster. Sequence behind Slice 7. `docs/wayfinder/D8-DOUBLE-BUFFERED-DECODE-PIPELINE.md`.
 
 ---
 
