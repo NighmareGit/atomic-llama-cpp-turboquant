@@ -154,6 +154,30 @@ bool placement_plan_pack_capacity(
     placement_plan & out,
     std::vector<placement_plan_error> & errors);
 
+// --- min-hop contiguous packer ---
+
+// Like pack_capacity but respects backend speed ordering and layer-type affinity
+// to minimize cross-backend transitions (hops) while placing attention layers on
+// the local GPU and SSM/recurrent layers on remote backends.
+//
+// Backend sort order: local GPU(s) first, then RPC backends by usable weight desc.
+// Contiguous block assignment: each backend gets a single contiguous range of layers,
+// exactly (n_backends - 1) hops in total, regardless of model architecture.
+//
+// For hybrid models (is_layer_recurrent non-empty and has true entries):
+//   Scans for contiguous regions by layer-type affinity; assigns the attention-heaviest
+//   block(s) to the local GPU and SSM-heaviest to remote backends.
+// For non-hybrid models: proportional capacity split, local first.
+//
+// Falls back to placement_plan_pack_capacity when no local GPU backend is found.
+bool placement_plan_pack_capacity_min_hop(
+    const placement_inventory & inv,
+    int32_t n_layer,
+    const std::string & model_path,
+    const std::vector<bool> & is_layer_recurrent,
+    placement_plan & out,
+    std::vector<placement_plan_error> & errors);
+
 // --- attention-local packer (attn + MTP on local client GPU) ---
 
 // Like pack_capacity, but aware of per-layer recurrent (SSM) vs attention architecture.

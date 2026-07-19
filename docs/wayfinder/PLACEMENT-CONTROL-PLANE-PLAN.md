@@ -255,6 +255,8 @@ Implementation of a phase may be multiple PRs; acceptance is per phase below.
 - Override vs range conflict matrix polish; better CLI names.
 - Optional degrade UX hardening; alias auto-rebind policies (still fail-loud default).
 - Align D4.11–D4.14 Pareto work as **generators** of plan IR only.
+- **RPC host / node-local CPU backend** for in-rail spill (same-host hop cheaper than client mid-rail bounce). Map issue: [15-rpc-host-cpu-backend](../../.scratch/placement-control-plane/issues/15-rpc-host-cpu-backend.md). Until shipped, plan `"cpu"` remains **client** host; multi-machine mid-rail client sandwich should be avoided (edge spill / more GPUs / shoehorn).
+- **Min-hop structural default (dense)** with fit-omit, shoehorn, C3 spill, optional decode residuals; hybrid keeps attn-local. Map issue: [16-min-hop-packer-structural-default](../../.scratch/placement-control-plane/issues/16-min-hop-packer-structural-default.md).
 
 **Acceptance:** per-item as pulled into a sprint; none block calling the control plane “architecturally complete” after P1–P3.
 

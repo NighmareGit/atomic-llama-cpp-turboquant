@@ -11,6 +11,7 @@
 #include "ggml.h"
 #include "heatmap-rollup.h"
 #include "llama.h"
+#include "placement-plan.h"
 #include "sampling.h"
 #include "speculative.h"
 
@@ -97,8 +98,11 @@ struct profiler_config {
     bool sample              = false; // use real sampling instead of synthetic token cycling
 
     llama_split_mode split_mode = LLAMA_SPLIT_MODE_LAYER;
-    ggml_type type_k = GGML_TYPE_Q4_0;
-    ggml_type type_v = GGML_TYPE_Q4_0;
+    ggml_type type_k = GGML_TYPE_F16;
+    ggml_type type_v = GGML_TYPE_F16;
+
+    // Placement plan
+    std::string placement_path;
 };
 
 // ---------------------------------------------------------------------------
@@ -311,6 +315,15 @@ struct task_result {
 };
 
 // ---------------------------------------------------------------------------
+// Global placement state (prepared once before task loop, applied per session)
+// ---------------------------------------------------------------------------
+
+static std::vector<ggml_backend_dev_t> g_placement_devices;
+static std::vector<ggml_backend_dev_t> g_placement_layer_devices;
+static std::vector<llama_model_tensor_buft_override> g_placement_tensor_overrides;
+static bool g_placement_valid = false;
+
+// ---------------------------------------------------------------------------
 // Session: load model, warmup, run a single task
 // ---------------------------------------------------------------------------
 
@@ -320,10 +333,6 @@ static task_result run_session(
         bool capture_trace) {
     setup_trace_env(cfg.trace_dir, capture_trace, cfg.server_telemetry);
 
-    if (!cfg.rpc_endpoints.empty()) {
-        register_rpc_servers(cfg.rpc_endpoints);
-    }
-
     // D6.9: enable GPipe with configurable stage count for per-stage profiling
     if (cfg.gpipe_stages >= 2) {
         setenv("GGML_SCHED_GPIPE", "1", 1);
@@ -332,10 +341,24 @@ static task_result run_session(
     }
 
     llama_model_params mparams = llama_model_default_params();
-    mparams.n_gpu_layers = cfg.n_gpu_layers;
-    mparams.split_mode   = cfg.split_mode;
-    if (!cfg.tensor_split.empty()) {
-        mparams.tensor_split = cfg.tensor_split.data();
+    if (g_placement_valid) {
+        // Placement plan overrides tensor_split, split_mode, and n_gpu_layers
+        mparams.n_gpu_layers    = -1; // full layer map from plan
+        mparams.split_mode      = LLAMA_SPLIT_MODE_LAYER;
+        mparams.layer_devices   = g_placement_layer_devices.data();
+        mparams.n_layer_devices = (int32_t) g_placement_layer_devices.size();
+        mparams.devices         = g_placement_devices.data();
+        if (!g_placement_tensor_overrides.empty()) {
+            mparams.tensor_buft_overrides = g_placement_tensor_overrides.data();
+        }
+        fprintf(stderr, ">>> placement plan active: %d layers on %zu devices\n",
+                mparams.n_layer_devices, g_placement_devices.size() - 1);
+    } else {
+        mparams.n_gpu_layers = cfg.n_gpu_layers;
+        mparams.split_mode   = cfg.split_mode;
+        if (!cfg.tensor_split.empty()) {
+            mparams.tensor_split = cfg.tensor_split.data();
+        }
     }
 
     llama_model * model = llama_model_load_from_file(cfg.model_path.c_str(), mparams);
@@ -523,7 +546,7 @@ static task_result run_session(
                         ? 1e9 * task.n_gen / (double) elapsed : 0.0;
     } else {
         // Token generation: serial decode of n_gen tokens.
-        if (!run_prompt(ctx, prompt_tokens, cfg.n_batch)) {
+        if (!run_prompt(ctx, tg_prompt_tokens, cfg.n_batch)) {
             llama_free(ctx);
             llama_model_free(model);
             throw std::runtime_error("tg prefill failed");
@@ -1134,6 +1157,7 @@ static void usage(const char * argv0) {
         "  --prompt-file PATH          Text file for TG prompt (default: BOS-only)\n"
         "  --model-draft PATH          Separate draft model for MTP (e.g., Gemma assistant)\n"
         "  --sample                   Use real sampling instead of token cycling (TG quality test)\n"
+        "  --placement PATH           Placement plan JSON (overrides -ts, -sm, and -ngl)\n"
         "  -h, --help                 Usage\n",
         argv0);
 }
@@ -1241,6 +1265,8 @@ int llama_gpipe_profiler(int argc, char ** argv) {
             cfg.sample = true;
         } else if (arg == "--model-draft") {
             cfg.model_draft_path = need(arg.c_str());
+        } else if (arg == "--placement") {
+            cfg.placement_path = need(arg.c_str());
         } else {
             fprintf(stderr, "error: unknown arg %s\n", arg.c_str());
             usage(argv[0]);
@@ -1298,6 +1324,11 @@ int llama_gpipe_profiler(int argc, char ** argv) {
     llama_backend_init();
     ggml_backend_load_all();
 
+    // Register RPC servers once (moved out of per-session run_session).
+    if (!cfg.rpc_endpoints.empty()) {
+        register_rpc_servers(cfg.rpc_endpoints);
+    }
+
     // Collect client-side GPU device metadata before model load.
     heatmap_data hm;
     hm.telemetry.client_devices = collect_client_devices();
@@ -1324,6 +1355,80 @@ int llama_gpipe_profiler(int argc, char ** argv) {
         uint64_t n_params = llama_model_n_params(model);
         hm.param_count_b = (double) n_params / 1e9;
         llama_model_free(model);
+    }
+
+    // Prepare placement plan (once, then applied per session).
+    if (!cfg.placement_path.empty()) {
+        fprintf(stderr, ">>> placement plan: %s\n", cfg.placement_path.c_str());
+
+        // Load placement plan
+        placement_plan plan;
+        std::vector<placement_plan_error> errors;
+        if (!placement_plan_load_file(cfg.placement_path, plan, errors)) {
+            for (const auto & e : errors) {
+                fprintf(stderr, "error: placement plan load: %s\n", e.message.c_str());
+            }
+            llama_backend_free();
+            throw std::runtime_error("failed to load placement plan: " + cfg.placement_path);
+        }
+
+        // Discover backends (convert comma-separated endpoints to vector)
+        std::vector<std::string> rpc_endpoints_vec;
+        if (!cfg.rpc_endpoints.empty()) {
+            rpc_endpoints_vec = string_split<std::string>(cfg.rpc_endpoints, ',');
+        }
+        placement_reserve_params rp;
+        rp.n_ctx      = cfg.ctx_size;
+        rp.n_parallel = cfg.n_parallel;
+        rp.flash_attn = true;
+        placement_inventory inv = placement_discover_live(rpc_endpoints_vec, rp);
+        if (!inv.topology_complete) {
+            fprintf(stderr, "warning: topology discovery incomplete (continuing)\n");
+        }
+
+        // Detect mixed local+RPC topology
+        bool has_local = false, has_rpc = false;
+        for (const auto & r : inv.records) {
+            if (r.kind == PLACEMENT_KIND_LOCAL_GPU) has_local = true;
+            if (r.kind == PLACEMENT_KIND_RPC_DEVICE) has_rpc = true;
+        }
+        const bool mixed = has_local && has_rpc;
+
+        // Resolve backends
+        std::vector<std::string> missing;
+        if (!placement_plan_match_backends(plan, inv, missing)) {
+            fprintf(stderr, "error: placement plan backends not found:\n");
+            for (const auto & m : missing) {
+                fprintf(stderr, "  missing: %s\n", m.c_str());
+            }
+            llama_backend_free();
+            throw std::runtime_error("placement plan backend resolution failed");
+        }
+
+        // Apply plan
+        int32_t n_layer = plan.n_layer > 0 ? plan.n_layer : hm.n_layers;
+        placement_apply_result apply;
+        errors.clear();
+        if (!placement_plan_prepare_apply(plan, n_layer, inv, mixed, apply, errors)) {
+            for (const auto & e : errors) {
+                fprintf(stderr, "error: placement plan apply: %s\n", e.message.c_str());
+            }
+            llama_backend_free();
+            throw std::runtime_error("failed to apply placement plan");
+        }
+
+        // Store in global state (null-terminated device list)
+        g_placement_devices = apply.devices;
+        g_placement_devices.push_back(nullptr);
+        g_placement_layer_devices = apply.layer_devices;
+        g_placement_tensor_overrides = apply.tensor_buft_overrides;
+        g_placement_valid = true;
+
+        fprintf(stderr, ">>> placement plan applied: %d layers\n%s",
+                n_layer, apply.debug_dump.c_str());
+        for (const auto & note : apply.override_notes) {
+            fprintf(stderr, ">>> placement note: %s\n", note.c_str());
+        }
     }
 
     try {

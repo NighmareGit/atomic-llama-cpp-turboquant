@@ -2364,6 +2364,19 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_env("LLAMA_ARG_PLACEMENT_GENERATE_ONLY"));
     add_opt(common_arg(
+        {"--placement-generate-min-hop"}, "PATH",
+        "opt-in: discover capacity, pack layers into min-hop contiguous blocks by speed\n"
+        "and write plan JSON to PATH\n"
+        "(then load with that plan unless --placement-generate-only)\n"
+        "Minimizes cross-backend RPC transitions; layers assigned proportionally\n"
+        "by usable capacity, fastest backends filled first.\n"
+        "For hybrid models (attention+SSM), swaps a remote block with high\n"
+        "attention density onto local GPU if density gap >= 0.25.",
+        [](common_params & params, const std::string & value) {
+            params.placement_generate_min_hop_path = value;
+        }
+    ).set_env("LLAMA_ARG_PLACEMENT_GENERATE_MIN_HOP"));
+    add_opt(common_arg(
         {"--placement-generate-heat"}, "PATH",
         "opt-in: discover capacity, pack layers by heat scores, write plan JSON to PATH\n"
         "(requires --placement-heatmap; then load with that plan unless --placement-generate-only)\n"

@@ -1,0 +1,55 @@
+975:>>> GPipe enabled: n_stages=3
+2061:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+2087:>>> wall_ms=262.56 tps=1950.00 n_eval=1 n_reused=1
+2089:>>> GPipe enabled: n_stages=3
+3165:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+3191:>>> wall_ms=205.54 tps=2491.05 n_eval=1 n_reused=1
+3193:>>> GPipe enabled: n_stages=3
+4269:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+4295:>>> wall_ms=205.69 tps=2489.17 n_eval=1 n_reused=1
+4297:>>> GPipe enabled: n_stages=3
+5373:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+5399:>>> wall_ms=205.20 tps=2495.12 n_eval=1 n_reused=1
+5401:>>> GPipe enabled: n_stages=3
+6477:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+6503:>>> wall_ms=205.40 tps=2492.65 n_eval=1 n_reused=1
+6506:>>> GPipe enabled: n_stages=3
+7582:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+7608:>>> wall_ms=205.01 tps=2497.42 n_eval=1 n_reused=1
+7610:>>> GPipe enabled: n_stages=3
+8686:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+8712:>>> wall_ms=208.98 tps=2450.05 n_eval=1 n_reused=1
+8714:>>> GPipe enabled: n_stages=3
+9790:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+9816:>>> wall_ms=207.61 tps=2466.20 n_eval=1 n_reused=1
+9818:>>> GPipe enabled: n_stages=3
+10894:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+10920:>>> wall_ms=205.68 tps=2489.28 n_eval=1 n_reused=1
+10922:>>> GPipe enabled: n_stages=3
+11998:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+12024:>>> wall_ms=205.05 tps=2496.96 n_eval=1 n_reused=1
+12027:>>> GPipe enabled: n_stages=3
+13103:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+13125:>>> MTP: creating draft context (n_max=2, n_min=1)
+13190:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+13368:>>> wall_ms=1447.36 tps=88.44 n_eval=1 n_reused=127
+13370:>>> GPipe enabled: n_stages=3
+14446:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+14468:>>> MTP: creating draft context (n_max=2, n_min=1)
+14533:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+14711:>>> wall_ms=1434.14 tps=89.25 n_eval=1 n_reused=127
+14713:>>> GPipe enabled: n_stages=3
+15789:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+15811:>>> MTP: creating draft context (n_max=2, n_min=1)
+15876:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+16054:>>> wall_ms=1440.31 tps=88.87 n_eval=1 n_reused=127
+16056:>>> GPipe enabled: n_stages=3
+17132:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+17154:>>> MTP: creating draft context (n_max=2, n_min=1)
+17219:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+17397:>>> wall_ms=5458.41 tps=23.45 n_eval=1 n_reused=127
+17399:>>> GPipe enabled: n_stages=3
+18475:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+18497:>>> MTP: creating draft context (n_max=2, n_min=1)
+18562:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+18740:>>> wall_ms=1439.05 tps=88.95 n_eval=1 n_reused=127

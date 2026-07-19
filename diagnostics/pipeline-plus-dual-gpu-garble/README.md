@@ -251,6 +251,8 @@ model types until `f68e17b9b` fixed the barrier/graph copy-slot mismatch.
 
 **Status: FIXED in `f68e17b9b`** (2026-07-19).
 
+**Related open work (perf / MTP, not this garble):** dual-GPU TG full-throttle restore and server GPipe+MTP are tracked in [../d7-perf-regression-133-vs-current/ISSUE.md](../d7-perf-regression-133-vs-current/ISSUE.md). That ticket must keep this pack green (Plus=1 multi-GPU CLEAN) while fixing throughput.
+
 **Root cause**: During graph reuse (the token-generation hot path),
 `ggml_backend_sched_pipeline_barrier` rotated copy slots (`cur_copy` /
 `next_copy`) but the graph's tensor pointers were frozen at the alloc-time

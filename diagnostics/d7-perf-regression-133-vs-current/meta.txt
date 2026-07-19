@@ -1,0 +1,8 @@
+BASE=/tmp/d7-a2a-profiler-20260719162451
+git_worktree=906468aac
+binary=usage: /home/hunter/projects/path-d-gpipeline-assembly-line/build-hip/bin/llama-gpipe-profiler -m <model.gguf> [options]
+version: 10167 (802ccb4c6)
+built with GNU 13.3.0 for Linux x86_64
+model=/mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf
+rpc=127.0.0.1:50051
+date=2026-07-19T16:24:51+02:00

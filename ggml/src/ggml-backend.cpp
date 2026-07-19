@@ -350,6 +350,22 @@ static FILE * sched_trace_file() {
     return trace_f;
 }
 
+// D7.10: per-node heatmap timing (default = sched_trace_lvl, overridable).
+// Set GGML_SCHED_PER_NODE_TIMING=0 to keep per-split tracing without
+// one-node-at-a-time compute (avoids 20x throughput penalty).
+static bool ggml_sched_per_node_timing_enabled() {
+    static int v = -2;
+    if (v == -2) {
+        const char * e = getenv("GGML_SCHED_PER_NODE_TIMING");
+        if (e) {
+            v = atoi(e) ? 1 : 0;
+        } else {
+            v = -1; // inherit from sched_trace_lvl
+        }
+    }
+    return v >= 0 ? (v != 0) : (sched_trace_lvl() != 0);
+}
+
 static void sched_trace_emit(int split_id, int backend_id, int copy_id, const char * phase, int64_t elapsed_us) {
     if (!sched_trace_lvl()) {
         return;
@@ -1351,6 +1367,8 @@ struct ggml_backend_sched {
     // B+14 W2: cross-decode wavefront depth guard
     int wavefront_inflight;
     int wavefront_oldest_copy;
+    int wavefront_wslot;  // D7.12: rotating event write slot for cross-decode pipelining
+    int wavefront_prev_slot;  // D7.12: previous decode's event slot (for wait operations)
 
     // Per-backend compute timing (us) aggregated across all splits in last sched run
     int64_t per_backend_compute_us[GGML_SCHED_MAX_BACKENDS];
@@ -2157,11 +2175,11 @@ static void sched_trace_emit_hotpath(ggml_backend_sched_t sched, const char * ph
 static void ggml_backend_sched_wait_copy_slot(
         ggml_backend_sched_t sched, int split_id, int split_backend_id, ggml_backend_t split_backend) {
     const auto ev_t0 = std::chrono::steady_clock::now();
-    if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
+    if (sched->events[split_backend_id][sched->wavefront_prev_slot] != NULL) {
         if (split_backend->iface.event_wait != NULL) {
-            ggml_backend_event_wait(split_backend, sched->events[split_backend_id][sched->cur_copy]);
+            ggml_backend_event_wait(split_backend, sched->events[split_backend_id][sched->wavefront_prev_slot]);
         } else {
-            ggml_backend_event_synchronize(sched->events[split_backend_id][sched->cur_copy]);
+            ggml_backend_event_synchronize(sched->events[split_backend_id][sched->wavefront_prev_slot]);
         }
     } else {
         ggml_backend_synchronize(split_backend);
@@ -2194,7 +2212,7 @@ static void ggml_backend_sched_wait_producer(
             }
         }
     }
-    ggml_backend_event_t ev = sched->events[producer_bid][sched->cur_copy];
+    ggml_backend_event_t ev = sched->events[producer_bid][sched->wavefront_prev_slot];
     const auto t0 = std::chrono::steady_clock::now();
     if (ev != NULL) {
         if (ggml_backend_is_rpc(producer_backend)) {
@@ -2422,7 +2440,7 @@ static void ggml_backend_sched_wait_gather_producer_slots(
             waited_mask |= (1u << producer_bid);
             return;
         }
-        ggml_backend_event_t ev = sched->events[producer_bid][sched->cur_copy];
+        ggml_backend_event_t ev = sched->events[producer_bid][sched->wavefront_prev_slot];
         if (ev != NULL) {
             if (ggml_backend_is_rpc(producer_backend)) {
                 ggml_backend_event_synchronize(ev);
@@ -2641,7 +2659,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
             }
             struct ggml_tensor * input_cpy = tensor_copy(input, split_backend_id, sched->cur_copy);
             // inputs from the user must be copied immediately to prevent the user overwriting the data before the copy is done
-            if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
+            if (sched->events[split_backend_id][sched->wavefront_prev_slot] != NULL) {
                 // D6.10: skip GPU event wait for host-sourced INPUT copies when
                 // copy-slot rotation (n_copies > 1) ensures no buffer conflict
                 // with in-flight GPU operations. The event gates GPU compute
@@ -2655,7 +2673,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     }
                 }
                 if (!skip_wait) {
-                    ggml_backend_event_synchronize(sched->events[split_backend_id][sched->cur_copy]);
+                    ggml_backend_event_synchronize(sched->events[split_backend_id][sched->wavefront_prev_slot]);
                 }
             } else {
                 ggml_backend_synchronize(split_backend);
@@ -2733,11 +2751,11 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     {
                         const int input_bid = ggml_backend_sched_backend_id(sched, input_backend);
                         if (ggml_sched_moe_async_copy_enabled() && input_bid >= 0 &&
-                            sched->events[input_bid][sched->cur_copy] != NULL) {
+                            sched->events[input_bid][sched->wavefront_prev_slot] != NULL) {
                             if (split_backend->iface.event_wait != NULL) {
-                                ggml_backend_event_wait(split_backend, sched->events[input_bid][sched->cur_copy]);
+                                ggml_backend_event_wait(split_backend, sched->events[input_bid][sched->wavefront_prev_slot]);
                             } else {
-                                ggml_backend_event_synchronize(sched->events[input_bid][sched->cur_copy]);
+                                ggml_backend_event_synchronize(sched->events[input_bid][sched->wavefront_prev_slot]);
                             }
                         } else {
                             ggml_backend_synchronize(input_backend);
@@ -2834,11 +2852,11 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                         if (input_backend != nullptr) {
                             ggml_backend_synchronize(input_backend);
                         }
-                        if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
+                        if (sched->events[split_backend_id][sched->wavefront_prev_slot] != NULL) {
                             if (split_backend->iface.event_wait != NULL) {
-                                ggml_backend_event_wait(split_backend, sched->events[split_backend_id][sched->cur_copy]);
+                                ggml_backend_event_wait(split_backend, sched->events[split_backend_id][sched->wavefront_prev_slot]);
                             } else {
-                                ggml_backend_event_synchronize(sched->events[split_backend_id][sched->cur_copy]);
+                                ggml_backend_event_synchronize(sched->events[split_backend_id][sched->wavefront_prev_slot]);
                             }
                         } else {
                             ggml_backend_synchronize(split_backend);
@@ -2927,7 +2945,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
         const auto compute_t0 = std::chrono::steady_clock::now();
         const int64_t t_compute_start_us = sched_trace_lvl() ? ggml_time_us() : 0;
         if (!sched->callback_eval) {
-            if (sched_trace_lvl()) {
+            if (ggml_sched_per_node_timing_enabled()) {
                 // Per-node timing for placement-grade heatmaps (issue 12).
                 std::vector<sched_node_timing> node_timings;
                 uint64_t split_us = compute_split_per_node(split_backend, split->graph, node_timings);
@@ -2978,18 +2996,19 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 std::chrono::steady_clock::now() - compute_t0).count();
             // Per-node timing already emitted a graph_compute_async event with
             // node_timings above; only the plain emit is skipped to avoid dupes.
-            if (!sched_trace_lvl()) {
+            if (!ggml_sched_per_node_timing_enabled()) {
                 sched_trace_emit(split_id, split_backend_id, sched->cur_copy, "graph_compute_async", us);
             }
             sched->per_backend_compute_us[split_backend_id] += us;
         }
 
-        // record the event of this copy
+        // D7.12: record event to the rotating wavefront write slot, not
+        // cur_copy, so each in-flight decode gets a distinct event slot.
         const auto record_t0 = std::chrono::steady_clock::now();
         if (split->n_inputs > 0) {
-            if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
-                ggml_backend_event_record(sched->events[split_backend_id][sched->cur_copy], split_backend);
-                sched->barrier_slot_pending[sched->cur_copy] |= (1u << split_backend_id);
+            if (sched->events[split_backend_id][sched->wavefront_wslot] != NULL) {
+                ggml_backend_event_record(sched->events[split_backend_id][sched->wavefront_wslot], split_backend);
+                sched->barrier_slot_pending[sched->wavefront_wslot] |= (1u << split_backend_id);
             }
         }
         const int64_t t_event_record_us = sched_trace_lvl() ? ggml_time_us() : 0;
@@ -3001,8 +3020,8 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
             if (next_backend != nullptr && !ggml_backend_is_rpc(next_backend)) {
                 const auto pf_t0 = std::chrono::steady_clock::now();
                 if (!ggml_sched_rpc_get_tensor_defer() &&
-                    sched->events[split_backend_id][sched->cur_copy] != NULL) {
-                    ggml_backend_event_synchronize(sched->events[split_backend_id][sched->cur_copy]);
+                    sched->events[split_backend_id][sched->wavefront_wslot] != NULL) {
+                    ggml_backend_event_synchronize(sched->events[split_backend_id][sched->wavefront_wslot]);
                 }
                 g_rpc_producer_ready_mask |= (1u << split_backend_id);
                 const int n_pf = ggml_backend_sched_prefetch_gather_rpc_inputs(
@@ -3297,6 +3316,8 @@ void ggml_backend_sched_reset(ggml_backend_sched_t sched) {
     memset(sched->barrier_slot_pending, 0, sizeof(sched->barrier_slot_pending));
     sched->wavefront_inflight = 0;
     sched->wavefront_oldest_copy = 0;
+    sched->wavefront_wslot = 0;
+    sched->wavefront_prev_slot = 0;
 }
 
 void ggml_backend_sched_reserve_size(ggml_backend_sched_t sched, struct ggml_cgraph * measure_graph, size_t * sizes) {
@@ -3399,9 +3420,23 @@ void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
     const bool wf_cross = ggml_sched_wavefront_cross_enabled();
     const int depth_limit = ggml_sched_pipeline_depth_limit(sched);
 
-    // B+14 W2: depth guard - release oldest copy slot before reusing when at capacity.
+    // D7.12: advance wavefront write slot each decode so each in-flight token
+    // records events to a distinct slot. This lets the depth_release correctly
+    // synchronize the genuinely oldest decode instead of clobbering events[*][0].
+    if (wf_cross && sched->n_copies > 1) {
+        sched->wavefront_wslot = (sched->wavefront_wslot + 1) % sched->n_copies;
+        sched->wavefront_prev_slot = (sched->wavefront_wslot + sched->n_copies - 1) % sched->n_copies;
+    } else {
+        sched->wavefront_prev_slot = sched->cur_copy;
+    }
+    const int ev_slot = sched->wavefront_wslot;  // slot this decode writes to
+    const int prev_slot = sched->wavefront_prev_slot;  // previous decode wrote here
+
+    // D7.12: depth guard — release the oldest in-flight decode's event slot
+    // (depth_limit slots behind current). Synchronizes that slot on all backends
+    // to confirm the GPU has caught up before reusing.
     if (wf_cross && sched->wavefront_inflight >= depth_limit) {
-        const int oldest = sched->wavefront_oldest_copy;
+        const int oldest = (ev_slot + sched->n_copies - depth_limit) % sched->n_copies;
         for (int i = 0; i < sched->n_backends; i++) {
             if (sched->events[i][oldest] != NULL) {
                 ggml_backend_event_synchronize(sched->events[i][oldest]);
@@ -3418,7 +3453,7 @@ void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
         sched->barrier_slot_pending[oldest] = 0;
         sched->wavefront_oldest_copy = (oldest + 1) % sched->n_copies;
         sched->wavefront_inflight--;
-        pipeline_trace_emit("wavefront_depth_release", oldest, sched->cur_copy, sched->n_copies, 0);
+        pipeline_trace_emit("wavefront_depth_release", oldest, ev_slot, sched->n_copies, 0);
     }
 
     // During graph reuse (is_alloc=true), copy slots must NOT rotate here.
@@ -3427,8 +3462,11 @@ void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
     // the graph reads, garbling split inputs on multi-GPU. alloc_graph
     // (called on graph shape changes) is the only place that rotates, because
     // it also calls split_graph to update node->src to the new slot.
-    const int new_copy = sched->cur_copy;
-    const uint32_t pending_mask = sched->barrier_slot_pending[new_copy];
+    //
+    // D7.12: event operations (wait/record) use wavefront_wslot instead of
+    // cur_copy, so event slots rotate independently of copy slots. This allows
+    // each in-flight decode to track its own GPU completion without interference.
+    const uint32_t pending_mask = sched->barrier_slot_pending[prev_slot];
     uint32_t wait_mask = (1u << sched->n_backends) - 1;
     if (ggml_sched_barrier_partial_enabled() && sched->barrier_copy_src_mask != 0) {
         wait_mask = sched->barrier_copy_src_mask;
@@ -3437,14 +3475,14 @@ void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
         }
     }
     for (int i = 0; i < sched->n_backends; i++) {
-        if (!(wait_mask & (1u << i)) || sched->events[i][new_copy] == NULL) {
+        if (!(wait_mask & (1u << i)) || sched->events[i][prev_slot] == NULL) {
             continue;
         }
         // B+14 W2: non-blocking event_wait on GPU backends when cross wavefront is on.
         if (wf_cross && !ggml_backend_is_rpc_backend(sched->backends[i])) {
             ggml_backend_t b = sched->backends[i];
             if (b->iface.event_wait != NULL) {
-                ggml_backend_event_wait(b, sched->events[i][new_copy]);
+                ggml_backend_event_wait(b, sched->events[i][prev_slot]);
                 continue;
             }
         }
@@ -3453,9 +3491,9 @@ void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
         if (wf_cross && ggml_backend_is_rpc_backend(sched->backends[i])) {
             continue;
         }
-        ggml_backend_event_synchronize(sched->events[i][new_copy]);
+        ggml_backend_event_synchronize(sched->events[i][prev_slot]);
     }
-    sched->barrier_slot_pending[new_copy] = 0;
+    sched->barrier_slot_pending[prev_slot] = 0;
 
     // D7.8: with wf_cross, per-split wait_producer handles RPC event sync;
     // no barrier-level RPC drain needed. Without wf_cross, drain RPC backends.
@@ -3473,7 +3511,7 @@ void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
 
     const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - t0).count();
-    pipeline_trace_emit("pipeline_barrier", sched->cur_copy, new_copy, sched->n_copies, us);
+    pipeline_trace_emit("pipeline_barrier", sched->cur_copy, ev_slot, sched->n_copies, us);
     if (pipeline_trace_lvl()) {
         FILE * out = pipeline_trace_file();
         if (!out) {
@@ -3481,9 +3519,9 @@ void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
         }
         fprintf(out,
             "{\"event\":\"pipeline_barrier_mask\",\"copy_to\":%d,\"wait_mask\":%u,\"src_mask\":%u,\"pending_mask\":%u,"
-            "\"wavefront_inflight\":%d,\"wavefront_depth\":%d,\"wf_cross\":%d}\n",
-            new_copy, wait_mask, sched->barrier_copy_src_mask, pending_mask,
-            sched->wavefront_inflight, depth_limit, wf_cross ? 1 : 0);
+            "\"wavefront_inflight\":%d,\"wavefront_depth\":%d,\"wf_cross\":%d,\"ev_slot\":%d}\n",
+            ev_slot, wait_mask, sched->barrier_copy_src_mask, pending_mask,
+            sched->wavefront_inflight, depth_limit, wf_cross ? 1 : 0, ev_slot);
         fflush(out);
     }
 

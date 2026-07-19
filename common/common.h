@@ -722,6 +722,7 @@ struct common_params {
     // If set, generates plan then uses it as placement_plan_path when that is empty.
     // With --placement-generate-only, write plan and exit (no model load).
     std::string placement_generate_path;
+    std::string placement_generate_min_hop_path;
     bool        placement_generate_only = false;
     // Heat-aware packer (P3 / issue 13): discover + heatmap -> write plan with inline heat
     // Requires --placement-heatmap PATH for the heat input.

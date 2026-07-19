@@ -87,8 +87,20 @@ PLUS the simpler native dual-CUDA layer-split path described in README.
 - [x] 7. triton Phase 1 RED/GREEN loop with patched detector (1.5B model, 5s repro)
 - [x] 8. triton Phase 3 falsification matrix (env toggles, NO rebuild) - DONE
 - [x] 9. Root cause + source fix (f68e17b9b) - DONE
-- [x] 10. Rebuild triton (31s), verify GREEN on 1.5B + 27B + full matrix - DONE
-- [ ] 11. Phase 6 close-out: README + ISSUE + diagnostics index + final commit
+- [x] 11. Phase 6 close-out: README + ISSUE + diagnostics index + final commit (802ccb4c6)
+- [x] 12. D8 future-enhancement doc written + TRACKING pointer (906468aac)
+
+## PERF DATA (apples-to-apples, triton 27B Q5_K_M, 64 tokens)
+
+| Config | PP t/s | TG t/s | Notes |
+|--------|--------|--------|-------|
+| Plus=0 baseline (post-fix) | 82.69 | 29.94 | working baseline |
+| Plus=1 post-fix (f68e17b9b) | 76.28 | 29.89 | TG parity with Plus=0; PP -7.8% |
+| Plus=1 pre-fix | n/a (garbled) | n/a | unusable |
+| README baseline (Plus=0) | 58.4 | 29.8 | different test setup |
+
+TG regression from fix: ~0% (within noise). PP overhead: ~8% (Plus sync, expected).
+D8 future enhancement ceiling: ~3-6% TG on dual-GPU, ~5-10% on RPC cluster.
 
 ## FIX VERIFICATION (2026-07-19 15:28 UTC, triton, post-fix f68e17b9b)
 

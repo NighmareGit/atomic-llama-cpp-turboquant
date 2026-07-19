@@ -1057,6 +1057,286 @@ bool placement_plan_pack_capacity_attn_local(
 }
 
 // ---------------------------------------------------------------------------
+// Min-hop contiguous packer
+// ---------------------------------------------------------------------------
+
+bool placement_plan_pack_capacity_min_hop(
+        const placement_inventory & inv,
+        int32_t n_layer,
+        const std::string & model_path,
+        const std::vector<bool> & is_layer_recurrent,
+        placement_plan & out,
+        std::vector<placement_plan_error> & errors) {
+    out = placement_plan{};
+    if (n_layer <= 0) {
+        add_err(errors, "pack_min_hop: n_layer must be positive");
+        return false;
+    }
+
+    // Build candidate list with speed tiers (same as attn_local)
+    struct cand {
+        std::string backend_id;
+        uint64_t    usable = 0;
+        uint64_t    free_mib = 0;
+        uint64_t    total_mib = 0;
+        int         speed_tier = 0; // 2=local GPU, 1=RPC, 0=CPU
+    };
+    std::vector<cand> cands;
+    for (const auto & r : inv.records) {
+        uint64_t u = r.usable_weight_mib;
+        if (u == 0) {
+            u = r.free_mib;
+        }
+        if (u == 0) {
+            continue;
+        }
+        int st = 0;
+        if (r.kind == PLACEMENT_KIND_LOCAL_GPU) {
+            st = 2;
+        } else if (r.kind == PLACEMENT_KIND_RPC_DEVICE || r.kind == PLACEMENT_KIND_RPC_TP_UNIT) {
+            st = 1;
+        }
+        cands.push_back({r.backend_id, u, r.free_mib, r.total_mib, st});
+    }
+
+    if (cands.empty()) {
+        add_err(errors, "pack_min_hop: no backends with positive usable/free capacity");
+        return false;
+    }
+
+    // Sort: local first (tier 2), then RPC (tier 1) by usable desc
+    std::sort(cands.begin(), cands.end(), [](const cand & a, const cand & b) {
+        if (a.speed_tier != b.speed_tier) {
+            return a.speed_tier > b.speed_tier;
+        }
+        if (a.usable != b.usable) {
+            return a.usable > b.usable;
+        }
+        return a.backend_id < b.backend_id;
+    });
+
+    // Check if we have a local GPU
+    int local_idx = -1;
+    for (size_t i = 0; i < cands.size(); ++i) {
+        if (cands[i].speed_tier == 2) {
+            local_idx = (int) i;
+            break;
+        }
+    }
+
+    // Fallback: no local GPU -> use simple capacity packer
+    if (local_idx < 0) {
+        return placement_plan_pack_capacity(inv, n_layer, model_path, out, errors);
+    }
+
+    // Check if hybrid model
+    bool is_hybrid = false;
+    if (!is_layer_recurrent.empty()) {
+        for (auto v : is_layer_recurrent) {
+            if (v) { is_hybrid = true; break; }
+        }
+    }
+
+    // Cap number of backends to n_layer
+    if ((int32_t) cands.size() > n_layer) {
+        cands.resize((size_t) n_layer);
+        if (local_idx >= (int) cands.size()) {
+            local_idx = -1;
+        }
+    }
+
+    const size_t n_backends = cands.size();
+
+    // Compute proportional layer counts
+    uint64_t sum_u = 0;
+    for (const auto & c : cands) {
+        sum_u += c.usable;
+    }
+    if (sum_u == 0) {
+        add_err(errors, "pack_min_hop: total usable is zero");
+        return false;
+    }
+
+    std::vector<int32_t> counts(n_backends, 0);
+    int32_t assigned = 0;
+    for (size_t i = 0; i < n_backends; ++i) {
+        int32_t n = (int32_t) ((cands[i].usable * (uint64_t) n_layer) / sum_u);
+        if (n < 1) {
+            n = 1;
+        }
+        counts[i] = n;
+        assigned += n;
+    }
+    // Trim over-allocation from slowest backends first (reverse order)
+    while (assigned > n_layer) {
+        bool trimmed = false;
+        for (size_t i = n_backends; i > 0 && assigned > n_layer; --i) {
+            size_t idx = i - 1;
+            if (counts[idx] > 1) {
+                counts[idx]--;
+                assigned--;
+                trimmed = true;
+            }
+        }
+        if (!trimmed) break;
+    }
+    if (assigned < n_layer) {
+        counts[0] += (n_layer - assigned);
+    }
+
+    // Build final assignments (contiguous blocks)
+    struct block {
+        int32_t start;
+        int32_t end;
+        std::string backend_id;
+        uint64_t usable;
+        uint64_t free_mib;
+        uint64_t total_mib;
+    };
+    std::vector<block> blocks;
+
+    if (!is_hybrid) {
+        // Non-hybrid: simple contiguous split in speed-sorted order (local first)
+        int32_t cursor = 0;
+        for (size_t i = 0; i < n_backends; ++i) {
+            if (counts[i] <= 0) continue;
+            blocks.push_back({cursor, cursor + counts[i],
+                cands[i].backend_id, cands[i].usable,
+                cands[i].free_mib, cands[i].total_mib});
+            cursor += counts[i];
+        }
+    } else {
+        // Hybrid: same contiguous split, but optionally reorder blocks so that
+        // the local GPU gets the attention-heaviest contiguous span.
+        // When attention density is uniform (no clear winner), local stays first.
+        //
+        // Compute smoothed attention density per layer (window=3)
+        std::vector<float> attn_score((size_t) n_layer, 0.0f);
+        for (int32_t i = 0; i < n_layer; ++i) {
+            if ((size_t) i < is_layer_recurrent.size() && !is_layer_recurrent[(size_t) i]) {
+                attn_score[(size_t) i] = 1.0f;
+            }
+        }
+        const int sw = 3;
+        std::vector<float> smoothed(n_layer, 0.0f);
+        for (int32_t i = 0; i < n_layer; ++i) {
+            float sum = 0.0f;
+            int cnt = 0;
+            for (int32_t j = std::max(0, i - sw); j <= std::min(n_layer - 1, i + sw); ++j) {
+                sum += attn_score[j];
+                cnt++;
+            }
+            smoothed[i] = sum / (float) cnt;
+        }
+
+        // Assign blocks speed-sorted (local first)
+        int32_t cursor = 0;
+        std::vector<block> tmp_blocks;
+        for (size_t i = 0; i < n_backends; ++i) {
+            if (counts[i] <= 0) continue;
+            tmp_blocks.push_back({cursor, cursor + counts[i],
+                cands[i].backend_id, cands[i].usable,
+                cands[i].free_mib, cands[i].total_mib});
+            cursor += counts[i];
+        }
+
+        // Swap local with best remote block if attention density gap >= 0.25
+        if (local_idx >= 0 && (size_t) local_idx < tmp_blocks.size()) {
+            const auto & local_block = tmp_blocks[local_idx];
+            float local_density = 0.0f;
+            for (int32_t i = local_block.start; i < local_block.end; ++i) {
+                local_density += smoothed[i];
+            }
+            local_density /= (float)(local_block.end - local_block.start);
+
+            float best_density = local_density;
+            size_t best_remote = (size_t) -1;
+            for (size_t i = 0; i < tmp_blocks.size(); ++i) {
+                if ((int) i == local_idx) continue;
+                float d = 0.0f;
+                for (int32_t j = tmp_blocks[i].start; j < tmp_blocks[i].end; ++j) {
+                    d += smoothed[j];
+                }
+                d /= (float)(tmp_blocks[i].end - tmp_blocks[i].start);
+                if (d > best_density) {
+                    best_density = d;
+                    best_remote = i;
+                }
+            }
+
+            const float density_gap = best_density - local_density;
+            if (best_remote != (size_t) -1 && density_gap >= 0.25f) {
+                std::swap(tmp_blocks[local_idx], tmp_blocks[best_remote]);
+            }
+        }
+
+        // Re-sort by layer_start to restore contiguity
+        std::sort(tmp_blocks.begin(), tmp_blocks.end(),
+            [](const block & a, const block & b) { return a.start < b.start; });
+        blocks = std::move(tmp_blocks);
+    }
+
+    // Build output plan
+    out.schema_version = 1;
+    out.created_at = placement_now_iso8601();
+    out.model_path = model_path;
+    out.n_layer = n_layer;
+    out.split_mode = "layer";
+    out.capacity_snapshot_at = inv.records.empty() ? out.created_at : inv.records[0].reported_at;
+    out.reserve_mode = inv.reserve_mode.empty() ? "table" : inv.reserve_mode;
+    out.reserve_model_version = inv.reserve_model_version.empty()
+        ? PLACEMENT_RESERVE_MODEL_TABLE_V1 : inv.reserve_model_version;
+    out.heat.status = "none";
+    out.heat.task = "";
+    out.heat.schema_version = 1;
+    out.overrides.clear();
+
+    for (const auto & b : blocks) {
+        placement_plan_assignment a;
+        a.layer_start = b.start;
+        a.layer_end = b.end;
+        a.backend_id = b.backend_id;
+        out.assignments.push_back(a);
+
+        placement_plan::backend_snapshot bs;
+        bs.backend_id = b.backend_id;
+        bs.usable_weight_mib = b.usable;
+        bs.free_mib = b.free_mib;
+        bs.total_mib = b.total_mib;
+        // Deduplicate backends
+        bool found = false;
+        for (const auto & existing : out.backends) {
+            if (existing.backend_id == b.backend_id) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            out.backends.push_back(bs);
+        }
+    }
+
+    // Verify total coverage
+    int32_t covered = 0;
+    for (const auto & b : blocks) {
+        covered += (b.end - b.start);
+    }
+    if (covered != n_layer) {
+        add_err(errors, "pack_min_hop: internal layer sum " + std::to_string(covered) +
+            " != n_layer " + std::to_string(n_layer));
+        return false;
+    }
+
+    // Self-validate
+    std::vector<placement_plan_error> verr;
+    if (!placement_plan_validate(out, n_layer, /*mixed*/ true, verr)) {
+        for (const auto & e : verr) {
+            errors.push_back(e);
+        }
+        return false;
+    }
+    return true;
+}
 
 // ---------------------------------------------------------------------------
 // Heat-aware packer (issue 13 / P3)

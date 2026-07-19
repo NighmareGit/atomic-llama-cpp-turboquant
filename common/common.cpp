@@ -1193,8 +1193,9 @@ struct common_init_result::impl {
 // Capacity packer: discover + pack + write plan. Optionally exit (generate-only).
 // On success with load path, sets params.placement_plan_path if empty.
 // Also handles heat-aware generation when placement_generate_heat_path is set
+// and min-hop generation when placement_generate_min_hop_path is set.
 static bool common_placement_generate(common_params & params) {
-    if (params.placement_generate_path.empty() && params.placement_generate_heat_path.empty()) {
+    if (params.placement_generate_path.empty() && params.placement_generate_heat_path.empty() && params.placement_generate_min_hop_path.empty()) {
         return true;
     }
 
@@ -1312,6 +1313,38 @@ static bool common_placement_generate(common_params & params) {
     }
 
     // Min-hop generation path
+    if (!params.placement_generate_min_hop_path.empty()) {
+        placement_plan plan;
+        std::vector<placement_plan_error> errors;
+        if (!placement_plan_pack_capacity_min_hop(inv, n_layer, params.model.path, is_layer_recurrent, plan, errors)) {
+            for (const auto & e : errors) {
+                LOG_ERR("%s: %s\n", __func__, e.message.c_str());
+            }
+            return false;
+        }
+
+        if (!placement_plan_write_file(plan, params.placement_generate_min_hop_path)) {
+            LOG_ERR("%s: failed to write min-hop plan to %s\n", __func__,
+                params.placement_generate_min_hop_path.c_str());
+            return false;
+        }
+        LOG_INF("%s: wrote min-hop plan (%d layers, %zu assignments) to %s\n",
+            __func__, n_layer, plan.assignments.size(), params.placement_generate_min_hop_path.c_str());
+        for (const auto & a : plan.assignments) {
+            LOG_INF("%s:   layers [%d, %d) -> %s\n", __func__,
+                a.layer_start, a.layer_end, a.backend_id.c_str());
+        }
+
+        if (params.placement_generate_only) {
+            fflush(stdout);
+            fflush(stderr);
+            _Exit(0);
+        }
+        if (params.placement_plan_path.empty()) {
+            params.placement_plan_path = params.placement_generate_min_hop_path;
+        }
+        return true;
+    }
 
     // Capacity-only generation (uses attention-local packer when recurrent info available)
     placement_plan plan;
