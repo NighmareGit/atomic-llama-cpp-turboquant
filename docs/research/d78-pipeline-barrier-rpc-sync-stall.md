@@ -159,15 +159,76 @@ Reasoning:
 
 ---
 
-## 5. Expected Improvement
+## 5. Fix Implementation and Results
 
-| Metric | Before | After (estimated) |
-|--------|--------|-------------------|
-| Wall time per token | 17.96 ms | ~5-6 ms |
-| t/s | 55.7 | ~170-200 |
-| GPU utilization | 15.5% | ~50-60% |
+### 5.1 Changes Applied (commit X — ggml-backend.cpp)
 
-The remaining bottleneck will be the 3060 Ti compute time (25% of model layers at ~3-5ms) plus PCIe transfer overhead.
+1. **Enable wf_cross by default with PPLUS=1** (line 147): when `GGML_SCHED_WAVEFRONT_CROSS` env is unset and PPLUS is active, default to `wf_cross=1`. This enables non-blocking stream-level event waits on GPU backends.
+
+2. **Skip RPC backends in barrier event loop** (lines 3451-3454): when `wf_cross` is active, skip RPC backends entirely in `pipeline_barrier`. The per-split `wait_producer` in `compute_splits` already synchronizes RPC events at tensor consumption time.
+
+3. **Skip RPC drain in barrier when wf_cross** (lines 3460-3467): collapse the nested if/else RPC drain block to a single `if (defer_barrier && !wf_cross)` guard. With wf_cross, the per-split path handles all RPC event synchronization.
+
+### 5.2 Trace-Verified Improvement (pipeline barrier only)
+
+Measured via `GGML_PIPELINE_TRACE=1` on ROMULUS (7900XTX + 3060Ti RPC, 9B Q4_K_M):
+
+| Metric | Before Fix | After Fix |
+|--------|-----------|-----------|
+| Barrier elapsed_us | ~12,000 (12ms blocking) | **8 us (non-blocking)** |
+| Barrier wait_mask includes RPC? | YES | NO (RPC skipped) |
+| wf_cross active? | NO (env not set, no PPLUS default) | **YES** (auto-enabled) |
+
+The barrier itself improved by **1500x** — from 12ms to 8 microseconds.
+
+### 5.3 End-to-End Throughput
+
+| Config | t/s | Limiting Factor |
+|--------|-----|-----------------|
+| No RPC (single GPU, estimated) | ~260 | GPU compute |
+| RPC + PPLUS=1 (before fix) | 55.7 | Double RPC sync (barrier + wait_producer) |
+| RPC + PPLUS=1 (after fix) | 55.5 | **Single RPC sync in wait_producer** |
+
+### 5.4 Why Throughput Didn't Increase
+
+The double sync was eliminated, but the 3060 Ti's compute time for its 25% of layers (~12ms per token) is the fundamental bottleneck. The single remaining `event_synchronize` in `wait_producer` (line 2201-2202 of ggml-backend.cpp) is necessary — it waits for real RPC results to arrive.
+
+With the current single-depth pipeline (copy-slot rotation disabled by f68e17b9b), every token blocks on RPC completion. The ceiling is the slowest device: 1 / 0.012s = ~83 t/s ideal, minus PCIe transfer and CPU overhead = ~55 t/s observed.
+
+**The fix correctly eliminates the redundant sync.** The unexpected ceiling is the 3060 Ti compute speed itself, not the synchronization mechanism.
+
+### 5.5 Profiler-Driven Breakdown (sched_trace, rocprofv3, RPC telemetry)
+
+On 2026-07-19 a comprehensive profiling run was conducted with ALL three instruments:
+- `GGML_SCHED_TRACE=1` (per-split timing, client-side)
+- `rocprofv3 --kernel-trace` (main GPU kernel profiling)
+- `GGML_RPC_SERVER_TELEMETRY=1` (RPC server-side device timing)
+
+**sched_trace results (130 decodes, 3 splits each):**
+
+| Split | Backend | Compute (avg) | Idle (avg) | Role |
+|-------|---------|--------------|------------|------|
+| 1 | RPC (3060Ti, 25% layers) | **11.76ms** | 1.99ms | Layer compute + protocol overhead |
+| 2 | CPU setup | 0.01ms | 0.00ms | Graph setup |
+
+Backend 0 (7900XTX) shows 267ms avg with profiler overhead (~18ms unprofiled, matching 55 t/s).
+
+**RPC telemetry gap:** `collect_telemetry()` is only called from `graph_compute()` (initial graph build), NOT from `graph_recompute()` (token generation). The graph_recompute path at line 3485-3499 of ggml-rpc.cpp measures `us` but writes it only to `rpc_trace_emit`, never to the telemetry JSONL. Result: 196,006 telemetry records from prompt processing, **zero from the 128 tokens of generation we actually care about.**
+
+**Fix (commit X — ggml-rpc.cpp):** Add `collect_telemetry()` + direct JSONL write to both `graph_recompute()` and `graph_recompute_all()`. The telemetry cannot piggyback on the recompute response (fire-and-forget path), so it is written directly to the telemetry file under `telemetry_mtx`. Requires Docker image rebuild.
+
+### 5.6 Per-Token Breakdown (deduced)
+
+| Component | Time | % of Wall |
+|-----------|------|-----------|
+| Pipeline barrier | 0.008ms (8us) | 0.04% |
+| CPU setup | 0.01ms | 0.06% |
+| 3060Ti compute (25% layers) | **11.76ms** | **65.7%** |
+| RPC overhead (CPU serialization) | 1.99ms | 11.1% |
+| 7900XTX compute (75% layers, est.) | 4.00ms | 22.4% |
+| **Total per token** | **~17.76ms** | **100% → 56 t/s** |
+
+The 3060Ti's 11.76ms compute for its 25% layers is the hard ceiling. The wf_cross barrier fix correctly eliminates the 12ms double-sync but cannot reduce the single necessary sync.
 
 ---
 

@@ -3496,6 +3496,17 @@ bool rpc_server::graph_recompute(const rpc_msg_graph_recompute_req & request) {
     const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - t0).count();
     rpc_trace_emit("rpc_server::graph_recompute", "server_compute", RPC_CMD_GRAPH_RECOMPUTE, 0, true, us);
+    // D7.8: collect telemetry for graph reuse (token generation) and write directly
+    // (recompute is fire-and-forget, so telemetry can't piggyback on the response)
+    if (telemetry_enabled) {
+        uint32_t dev = device;
+        int64_t per_device_us = (int64_t) us;
+        collect_telemetry(&dev, 1, &per_device_us);
+        {
+            std::lock_guard<std::mutex> lock(telemetry_mtx);
+            rpc_write_server_telemetry_jsonl(last_telemetry);
+        }
+    }
     return true;
 }
 
@@ -3673,6 +3684,17 @@ bool rpc_server::graph_recompute_all(const rpc_msg_graph_recompute_all_req & req
         std::chrono::steady_clock::now() - t0).count();
     rpc_trace_emit("rpc_server::graph_recompute_all", "server_compute",
                    RPC_CMD_GRAPH_RECOMPUTE_ALL, 0, true, us);
+
+    // D7.8: collect telemetry for multi-device graph reuse and write directly
+    if (telemetry_enabled) {
+        int64_t per_device_us[RPC_TELEMETRY_MAX_DEVICES] = {0};
+        per_device_us[0] = (int64_t) us;
+        collect_telemetry(request.devices, request.n_devices, per_device_us);
+        {
+            std::lock_guard<std::mutex> lock(telemetry_mtx);
+            rpc_write_server_telemetry_jsonl(last_telemetry);
+        }
+    }
 
     // NOTE: sched is cached in all_scheds, freed in ~rpc_server
     return true;
