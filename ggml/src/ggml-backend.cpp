@@ -144,6 +144,9 @@ static bool ggml_sched_wavefront_cross_enabled() {
             v = atoi(e);
         } else {
             v = ggml_sched_wavefront_master_enabled() ? 1 : 0;
+            if (v == 0 && ggml_sched_pipeline_plus_enabled()) {
+                v = 1;  // D7.8: enable by default with PPLUS
+            }
         }
     }
     return v != 0 && ggml_sched_pipeline_plus_enabled();
@@ -3445,24 +3448,21 @@ void ggml_backend_sched_pipeline_barrier(ggml_backend_sched_t sched) {
                 continue;
             }
         }
+        // D7.8: skip RPC backends entirely when wf_cross; per-split
+        // wait_producer in compute_splits handles RPC event sync.
+        if (wf_cross && ggml_backend_is_rpc_backend(sched->backends[i])) {
+            continue;
+        }
         ggml_backend_event_synchronize(sched->events[i][new_copy]);
     }
     sched->barrier_slot_pending[new_copy] = 0;
 
-    // B+9: batch-defer RPC EVENT recv until barrier (drain via backend synchronize).
-    if (ggml_sched_rpc_event_defer_barrier()) {
-        if (wf_cross) {
-            // B+14 W2: drain only RPC backends in wait_mask, not the full cluster.
-            for (int i = 0; i < sched->n_backends; i++) {
-                if ((wait_mask & (1u << i)) && ggml_backend_is_rpc_backend(sched->backends[i])) {
-                    ggml_backend_synchronize(sched->backends[i]);
-                }
-            }
-        } else {
-            for (int i = 0; i < sched->n_backends; i++) {
-                if (ggml_backend_is_rpc_backend(sched->backends[i])) {
-                    ggml_backend_synchronize(sched->backends[i]);
-                }
+    // D7.8: with wf_cross, per-split wait_producer handles RPC event sync;
+    // no barrier-level RPC drain needed. Without wf_cross, drain RPC backends.
+    if (ggml_sched_rpc_event_defer_barrier() && !wf_cross) {
+        for (int i = 0; i < sched->n_backends; i++) {
+            if (ggml_backend_is_rpc_backend(sched->backends[i])) {
+                ggml_backend_synchronize(sched->backends[i]);
             }
         }
     }
