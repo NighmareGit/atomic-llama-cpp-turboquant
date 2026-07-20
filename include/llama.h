@@ -306,6 +306,16 @@ extern "C" {
         // proportion of the model (layers or rows) to offload to each GPU, size: llama_max_devices()
         const float * tensor_split;
 
+        // Optional device type ordering for multi-device setups.
+        // Comma-separated: "gpu,rpc" (GPUs first, RPC second) or "rpc,gpu" (default).
+        // Valid tokens: gpu, rpc, igpu. NULL or "" = default (rpc,gpu).
+        const char * device_order;
+
+        // per-device memory overhead to reserve (MiB), size: llama_max_devices()
+        // subtracted from free memory before auto-split normalization
+        // NULL or all-zero => no overhead reserved
+        const float * device_overhead;
+
         // Optional explicit per-layer device map (placement control plane).
         // When non-NULL and n_layer_devices > 0, overrides tensor_split proportions for
         // repeating layers [0, min(n_layer, n_layer_devices)). NULL entry => CPU.

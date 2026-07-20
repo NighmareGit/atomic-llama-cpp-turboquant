@@ -1254,6 +1254,17 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             if (free == 0 && total == 0) {
                 ggml_backend_dev_memory(cpu_dev, &free, &total);
             }
+
+            // subtract per-device overhead reservation (--device-overhead)
+            if (params.device_overhead && i < llama_max_devices()) {
+                const size_t overhead_bytes = (size_t)(params.device_overhead[i] * 1024.0f * 1024.0f);
+                if (overhead_bytes < free) {
+                    free -= overhead_bytes;
+                } else {
+                    free = 0;
+                }
+            }
+
             splits[i] = free;
         }
     } else {
@@ -2296,6 +2307,8 @@ llama_model_params llama_model_default_params() {
         /*.split_mode                  =*/ LLAMA_SPLIT_MODE_LAYER,
         /*.main_gpu                    =*/ 0,
         /*.tensor_split                =*/ nullptr,
+        /*.device_order                =*/ nullptr,
+        /*.device_overhead             =*/ nullptr,
         /*.layer_devices               =*/ nullptr,
         /*.n_layer_devices             =*/ 0,
         /*.progress_callback           =*/ nullptr,

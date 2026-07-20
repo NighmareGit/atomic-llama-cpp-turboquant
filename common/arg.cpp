@@ -2579,6 +2579,35 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_env("LLAMA_ARG_TENSOR_SPLIT"));
     add_opt(common_arg(
+        {"--device-order"}, "ORDER",
+        "comma-separated device type order: gpu,rpc,igpu (default: rpc,gpu)",
+        [](common_params & params, const std::string & value) {
+            params.device_order = value;
+        }
+    ).set_env("LLAMA_ARG_DEVICE_ORDER"));
+    add_opt(common_arg(
+        {"--device-overhead"}, "N0,N1,N2,...",
+        "per-device memory overhead to reserve (MiB), subtracted from free memory before auto-split, e.g. 512,256",
+        [](common_params & params, const std::string & value) {
+            std::string arg_next = value;
+
+            // split string by , and /
+            const std::regex regex{R"(,[/]*)"};
+            const std::sregex_token_iterator it_end;
+            std::vector<std::string> split_arg;
+            for (std::sregex_token_iterator it(arg_next.begin(), arg_next.end(), regex, -1); it != it_end; ++it) {
+                split_arg.push_back(std::string(*it));
+            }
+            for (size_t i = 0; i < llama_max_devices(); ++i) {
+                if (i < split_arg.size()) {
+                    params.device_overhead[i] = std::stof(split_arg[i]);
+                } else {
+                    params.device_overhead[i] = 0.0f;
+                }
+            }
+        }
+    ).set_env("LLAMA_ARG_DEVICE_OVERHEAD"));
+    add_opt(common_arg(
         {"-mg", "--main-gpu"}, "INDEX",
         string_format("the GPU to use for the model (with split-mode = none), or for intermediate results and KV (with split-mode = row) (default: %d)", params.main_gpu),
         [](common_params & params, int value) {

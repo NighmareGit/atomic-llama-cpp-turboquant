@@ -442,19 +442,32 @@ static thread_local struct {
 
 struct rpc_event_t;
 
-// Path B: pending EVENT_RECORD response (one per thread)
-static thread_local struct {
-    socket_ptr sock;
-    bool pending;
-    rpc_event_t * ev;
-} tls_pending_event = {nullptr, false, nullptr};
+// B+15: per-socket FIFO queue for deferred EVENT_RECORD responses.
+// Replaces thread-local tls_pending_event which races across sockets:
+// the old single slot could only track one pending response per thread,
+// so a second backend's graph_compute would clobber the first's slot,
+// causing responses to interleave on the TCP response channel.
+struct rpc_deferred_entry {
+    enum rpc_cmd          cmd_type;
+    std::vector<uint8_t>  rsp; // owned response buffer (read at drain time)
+    struct rpc_event_t *  event = nullptr; // linked by event_record
+};
+
+struct rpc_socket_state {
+    std::deque<rpc_deferred_entry> queue;
+};
+
+// Keyed by socket. get_socket() returns a cached stable socket_ptr per
+// endpoint, so the key is stable for the lifetime of the connection.
+static std::unordered_map<socket_ptr, rpc_socket_state> g_rpc_sockets;
+static std::mutex g_rpc_sockets_mutex;
+
+static void rpc_socket_queue_push(const socket_ptr & sock, rpc_deferred_entry entry);
+static void rpc_socket_drain(const socket_ptr & sock);
 
 static void rpc_drain_all_endpoints_pending() {
     if (tls_pending_copy.pending && tls_pending_copy.sock) {
         drain_pending_copy_response(tls_pending_copy.sock);
-    }
-    if (tls_pending_event.pending && tls_pending_event.sock) {
-        drain_pending_event_response(tls_pending_event.sock);
     }
     flush_pending_get_tensor();
     flush_pending_hash_all();
@@ -468,11 +481,26 @@ static void rpc_drain_all_endpoints_pending() {
     // tensor buffers and corrupt KV-cache attention outputs.
     ggml_backend_rpc_flush_pending_downloads();
 
+    std::vector<socket_ptr> live;
+
+    // B+15: drain queued EVENT_RECORD responses for every socket that has
+    // them. Done before multi_socket_flush so the response channel is clean.
+    // Collect sockets under the lock, then drain outside it (rpc_socket_drain
+    // takes the same lock internally).
+    {
+        std::lock_guard<std::mutex> lock(g_rpc_sockets_mutex);
+        for (auto & [sock, state] : g_rpc_sockets) {
+            live.push_back(sock);
+        }
+    }
+    for (const auto & sock : live) {
+        rpc_socket_drain(sock);
+    }
+
     if (!rpc_multi_socket_flush()) {
         return;
     }
 
-    std::vector<socket_ptr> live;
     {
         std::lock_guard<std::mutex> lock(g_rpc_socket_registry_mutex);
         auto it = g_rpc_socket_registry.begin();
@@ -488,12 +516,11 @@ static void rpc_drain_all_endpoints_pending() {
     for (const auto & sock : live) {
         flush_pending_get_tensor_for_socket(sock);
         flush_pending_hash_for_socket(sock);
-        if (tls_pending_event.pending && tls_pending_event.sock == sock) {
-            drain_pending_event_response(sock);
-        }
         if (tls_pending_copy.pending && tls_pending_copy.sock == sock) {
             drain_pending_copy_response(sock);
         }
+        // B+15: drain any remaining queued EVENT_RECORD responses.
+        rpc_socket_drain(sock);
     }
 }
 
@@ -776,38 +803,15 @@ static void rpc_finish_event_response(rpc_event_t * ev) {
     if (!ev || !ev->response_pending || !ev->sock) {
         return;
     }
-    if (tls_pending_event.pending && tls_pending_event.sock == ev->sock) {
-        rpc_msg_event_record_rsp rsp = {};
-        size_t rsp_sz = ev->sock->server_supports_trace_id ? sizeof(rsp) : 12;
-        if (!recv_rpc_cmd_deferred(ev->sock, &rsp, rsp_sz)) {
-            GGML_LOG_ERROR("[%s] failed to read event response\n", __func__);
-        }
-        tls_pending_event.pending = false;
-        if (tls_pending_event.ev) {
-            tls_pending_event.ev->response_pending = false;
-            tls_pending_event.ev = nullptr;
-        }
-    }
+    // B+15: drain any queued responses for this socket. The drain reads
+    // each response and signals its linked event.
+    rpc_socket_drain(ev->sock);
     ev->response_pending = false;
 }
 
 static void drain_pending_event_response(const socket_ptr & sock) {
-    if (tls_pending_event.pending && tls_pending_event.sock == sock) {
-        const auto t0 = std::chrono::steady_clock::now();
-        if (tls_pending_event.ev) {
-            rpc_finish_event_response(tls_pending_event.ev);
-        } else {
-            rpc_msg_event_record_rsp rsp = {};
-            size_t rsp_sz = sock->server_supports_trace_id ? sizeof(rsp) : 12;
-            if (!recv_rpc_cmd_deferred(sock, &rsp, rsp_sz)) {
-                GGML_LOG_ERROR("[%s] failed to drain pending event response\n", __func__);
-            }
-            tls_pending_event.pending = false;
-        }
-        const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::steady_clock::now() - t0).count();
-        rpc_trace_emit(__func__, "drain_event", RPC_CMD_EVENT_RECORD, sizeof(rpc_msg_event_record_rsp), true, us);
-    }
+    // B+15: drain the per-socket queue instead of the thread-local slot.
+    rpc_socket_drain(sock);
 }
 
 static void drain_pending_copy_response(const socket_ptr & sock) {
@@ -821,6 +825,33 @@ static void drain_pending_copy_response(const socket_ptr & sock) {
         const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - t0).count();
         rpc_trace_emit(__func__, "drain_copy", RPC_CMD_COPY_TENSOR, sizeof(rpc_msg_copy_tensor_rsp), true, us);
+    }
+}
+
+static void rpc_socket_queue_push(const socket_ptr & sock, rpc_deferred_entry entry) {
+    std::lock_guard<std::mutex> lock(g_rpc_sockets_mutex);
+    g_rpc_sockets[sock].queue.push_back(std::move(entry));
+}
+
+// Drain all queued responses for a socket. Swaps the queue under the lock,
+// then does the blocking recv outside the lock so the global mutex is not
+// held during I/O (which would serialize drains across all sockets).
+static void rpc_socket_drain(const socket_ptr & sock) {
+    std::deque<rpc_deferred_entry> to_drain;
+    {
+        std::lock_guard<std::mutex> lock(g_rpc_sockets_mutex);
+        auto it = g_rpc_sockets.find(sock);
+        if (it == g_rpc_sockets.end()) return;
+        to_drain.swap(it->second.queue);
+        if (it->second.queue.empty()) {
+            g_rpc_sockets.erase(it);
+        }
+    }
+    for (auto & entry : to_drain) {
+        recv_rpc_cmd_deferred(sock, entry.rsp.data(), entry.rsp.size());
+        if (entry.event) {
+            entry.event->response_pending = false;
+        }
     }
 }
 
@@ -838,9 +869,8 @@ static bool rpc_same_endpoint(const char * a, const char * b) {
 }
 
 static void flush_pending_get_tensor_for_socket(const socket_ptr & sock) {
-    if (tls_pending_event.pending && tls_pending_event.sock == sock) {
-        drain_pending_event_response(sock);
-    }
+    // B+15: drain queued EVENT_RECORD responses for this socket.
+    rpc_socket_drain(sock);
     for (auto it = tls_pending_get_tensor.begin(); it != tls_pending_get_tensor.end(); ) {
         if (it->sock != sock) {
             ++it;
@@ -901,8 +931,9 @@ struct ggml_backend_rpc_context {
     std::string endpoint;
     uint32_t    device;
     std::string name;
-    // Path B: track pending compute for event linkage
-    socket_ptr  last_compute_sock;
+    // B+15: true if the last graph_compute sent EVENT_RECORD deferred and the
+    // response is queued, so event_record links the event instead of sending
+    // a duplicate. Per-context (not thread-local), so it does not race.
     bool        last_compute_sent_event = false;
     // D4.5: multi-device dispatch state
     uint32_t    n_devices_on_endpoint = 0;
@@ -1224,8 +1255,9 @@ static bool negotiate_hello(const std::shared_ptr<socket_t> & sock, const char *
                       sock->server_supports_peer_copy ? "yes" : "no",
                       sock->rsp_channel ? "yes" : "no");
     }
-    // reset B+ pending state after fresh hello to avoid stale drain on subsequent cmds
-    tls_pending_event = {nullptr, false, nullptr};
+    // B+15: drain queued EVENT_RECORD responses after fresh hello to avoid
+    // stale drain on subsequent cmds.
+    rpc_socket_drain(sock);
     tls_pending_copy = {nullptr, false};
     tls_pending_hash.clear();
     tls_hash_active_sock.reset();
@@ -2148,29 +2180,43 @@ bool ggml_backend_rpc_hash_defer(void) {
 static void rpc_backend_event_record(ggml_backend_t backend, ggml_backend_event_t event) {
     ggml_backend_rpc_context * rpc_ctx = (ggml_backend_rpc_context *) backend->context;
     auto * ev = (rpc_event_t *) event->context;
+    auto sock = get_socket(rpc_ctx->endpoint);
 
-    if (rpc_ctx->last_compute_sent_event && rpc_ctx->last_compute_sock) {
-        // Event was already sent deferred inside graph_compute.
-        // If the response hasn't been drained yet, link the event struct
-        // so event_wait/event_synchronize can drain it later.
-        if (tls_pending_event.pending && tls_pending_event.sock == rpc_ctx->last_compute_sock) {
-            tls_pending_event.ev = ev;
-            ev->sock = rpc_ctx->last_compute_sock;
-            ev->response_pending = true;
+    if (rpc_ctx->last_compute_sent_event) {
+        // B+15: EVENT_RECORD was already sent deferred inside graph_compute
+        // and queued with event=nullptr. Link the event to the un-linked
+        // queued entry (if still pending) so the drain signals it.
+        std::lock_guard<std::mutex> lock(g_rpc_sockets_mutex);
+        auto it = g_rpc_sockets.find(sock);
+        if (it != g_rpc_sockets.end()) {
+            for (auto & entry : it->second.queue) {
+                if (entry.event == nullptr) {
+                    entry.event = ev;
+                    ev->sock = sock;
+                    ev->response_pending = true;
+                    break;
+                }
+            }
         }
         rpc_ctx->last_compute_sent_event = false;
     } else {
-        auto sock = get_socket(rpc_ctx->endpoint);
+        // Non-reuse path: send EVENT_RECORD deferred and queue it.
         uint64_t tid = ggml_pipeline_trace_get_trace_id();
         rpc_msg_event_record_req ev_req = {ev->id, rpc_ctx->device, tid};
         size_t ev_sz = sock->server_supports_trace_id ? sizeof(ev_req) : 12;
         send_rpc_cmd_deferred(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz);
-        tls_pending_event.sock = sock;
-        tls_pending_event.pending = true;
-        tls_pending_event.ev = ev;
+        rpc_deferred_entry de;
+        de.cmd_type = RPC_CMD_EVENT_RECORD;
+        de.rsp.resize(ev_sz);
+        de.event = ev;
+        rpc_socket_queue_push(sock, std::move(de));
         ev->sock = sock;
         ev->response_pending = true;
     }
+
+    // B+15: drain all queued responses for this socket. Each entry's event
+    // is signaled (response_pending = false) once its response is read.
+    rpc_socket_drain(sock);
 }
 
 static void rpc_backend_event_wait(ggml_backend_t backend, ggml_backend_event_t event) {
@@ -2477,7 +2523,6 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
             memcpy(&telem, resp_buf.data() + sizeof(rsp), sizeof(telem));
             rpc_write_server_telemetry_jsonl(telem);
         }
-        rpc_ctx->last_compute_sock = nullptr;
         const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - t0).count();
         rpc_trace_emit(__func__, "graph_compute_stage",
@@ -2522,12 +2567,13 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
             size_t ev_sz = sock->server_supports_trace_id ? sizeof(ev_req) : 12;
             send_rpc_cmd_deferred(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz);
             rpc_ctx->last_compute_sent_event = true;
-            rpc_ctx->last_compute_sock = sock;
-            // Mark response pending now so drain functions (flush_pending_get_tensor, etc.)
-            // see it before event_record links the rpc_event_t struct.
-            tls_pending_event.sock = sock;
-            tls_pending_event.pending = true;
-            tls_pending_event.ev = nullptr;
+            // B+15: queue the deferred EVENT_RECORD response instead of using
+            // the thread-local single slot. event_record links the event.
+            rpc_deferred_entry de;
+            de.cmd_type = RPC_CMD_EVENT_RECORD;
+            de.rsp.resize(ev_sz);
+            de.event = nullptr;
+            rpc_socket_queue_push(sock, std::move(de));
             const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - t0).count();
             rpc_trace_emit(__func__, "graph_recompute_all", RPC_CMD_GRAPH_RECOMPUTE_ALL, sizeof(req), false, us);
@@ -2578,12 +2624,13 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
         // response is in-flight.
         send_rpc_cmd_deferred(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz);
         rpc_ctx->last_compute_sent_event = true;
-        rpc_ctx->last_compute_sock = sock;
-        // Mark response pending now so drain functions (flush_pending_get_tensor, etc.)
-        // see it before event_record links the rpc_event_t struct.
-        tls_pending_event.sock = sock;
-        tls_pending_event.pending = true;
-        tls_pending_event.ev = nullptr;
+        // B+15: queue the deferred EVENT_RECORD response instead of using
+        // the thread-local single slot. event_record links the event.
+        rpc_deferred_entry de;
+        de.cmd_type = RPC_CMD_EVENT_RECORD;
+        de.rsp.resize(ev_sz);
+        de.event = nullptr;
+        rpc_socket_queue_push(sock, std::move(de));
         const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - t0).count();
         rpc_trace_emit(__func__, "graph_recompute", RPC_CMD_GRAPH_RECOMPUTE, sizeof(request), false, us);
@@ -2617,7 +2664,6 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
                                        &rsp, sizeof(rsp));
             RPC_STATUS_ASSERT(status);
         }
-        rpc_ctx->last_compute_sock = nullptr;
         rpc_ctx->last_compute_sent_event = false;
         const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - t0).count();
@@ -2688,7 +2734,6 @@ ggml_backend_t ggml_backend_rpc_init(const char * endpoint, uint32_t device) {
         /* .endpoint               = */ endpoint,
         /* .device                 = */ device,
         /* .name                   = */ dev_name,
-        /* .last_compute_sock      = */ nullptr,
     };
     // D4.5: query endpoint device count for multi-device dispatch
     // NOTE: get_socket() calls negotiate_hello() synchronously before returning,

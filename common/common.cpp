@@ -1902,6 +1902,8 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
     mparams.main_gpu        = params.main_gpu;
     mparams.split_mode      = params.split_mode;
     mparams.tensor_split    = params.tensor_split;
+    mparams.device_order    = params.device_order.empty() ? nullptr : params.device_order.c_str();
+    mparams.device_overhead = params.device_overhead;
     if (params.placement_plan_active && !params.placement_layer_devices.empty()) {
         mparams.layer_devices   = params.placement_layer_devices.data();
         mparams.n_layer_devices = (int32_t) params.placement_layer_devices.size();

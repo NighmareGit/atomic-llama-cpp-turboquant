@@ -235,16 +235,30 @@ static bool llama_prepare_model_devices(const llama_model_params & params, llama
             }
         }
 
-        // add RPC servers at the front of the list to minimize network transfers
-        model->devices.insert(model->devices.begin(), rpc_servers.begin(), rpc_servers.end());
+        // Build device list according to --device-order preference.
+        // Default "rpc,gpu" preserves legacy behavior (RPC first to minimize network transfers).
+        // Use "gpu,rpc" for GPU->RPC->GPU pipeline where output is forced to device[0].
+        const char * order = params.device_order && params.device_order[0] ? params.device_order : "rpc,gpu";
+        std::string order_str(order);
+        size_t pos = 0;
+        while (pos < order_str.size()) {
+            while (pos < order_str.size() && (order_str[pos] == ' ' || order_str[pos] == '\t')) pos++;
+            size_t end = order_str.find(',', pos);
+            if (end == std::string::npos) end = order_str.size();
+            std::string token = order_str.substr(pos, end - pos);
+            pos = end + 1;
 
-        // add GPUs
-        model->devices.insert(model->devices.end(), gpus.begin(), gpus.end());
-
-        // add integrated GPUs only if no discrete GPUs were found
-        // (RPC servers do not count, otherwise the local iGPU would be dropped on iGPU+RPC setups)
-        if (gpus.empty()) {
-            model->devices.insert(model->devices.end(), igpus.begin(), igpus.end());
+            if (token == "gpu") {
+                model->devices.insert(model->devices.end(), gpus.begin(), gpus.end());
+            } else if (token == "rpc") {
+                model->devices.insert(model->devices.end(), rpc_servers.begin(), rpc_servers.end());
+            } else if (token == "igpu") {
+                // only add iGPUs if no discrete GPUs were found
+                // (RPC servers do not count, otherwise the local iGPU would be dropped on iGPU+RPC setups)
+                if (gpus.empty()) {
+                    model->devices.insert(model->devices.end(), igpus.begin(), igpus.end());
+                }
+            }
         }
     }
 
