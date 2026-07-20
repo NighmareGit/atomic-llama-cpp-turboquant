@@ -2150,12 +2150,15 @@ static void rpc_backend_event_record(ggml_backend_t backend, ggml_backend_event_
     auto * ev = (rpc_event_t *) event->context;
 
     if (rpc_ctx->last_compute_sent_event && rpc_ctx->last_compute_sock) {
-        tls_pending_event.sock = rpc_ctx->last_compute_sock;
-        tls_pending_event.pending = true;
-        tls_pending_event.ev = ev;
+        // Event was already sent deferred inside graph_compute.
+        // If the response hasn't been drained yet, link the event struct
+        // so event_wait/event_synchronize can drain it later.
+        if (tls_pending_event.pending && tls_pending_event.sock == rpc_ctx->last_compute_sock) {
+            tls_pending_event.ev = ev;
+            ev->sock = rpc_ctx->last_compute_sock;
+            ev->response_pending = true;
+        }
         rpc_ctx->last_compute_sent_event = false;
-        ev->sock = rpc_ctx->last_compute_sock;
-        ev->response_pending = true;
     } else {
         auto sock = get_socket(rpc_ctx->endpoint);
         uint64_t tid = ggml_pipeline_trace_get_trace_id();
@@ -2511,13 +2514,20 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
             bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_RECOMPUTE_ALL, &req, sizeof(req));
             RPC_STATUS_ASSERT(status);
 
-            // Send EVENT_RECORD matching the existing pattern
+            // Send EVENT_RECORD deferred: response drained later by event_wait
+            // or at the next RPC operation on this socket. This avoids blocking
+            // the scheduler's for-loop, allowing ROCm dispatch to overlap.
             uint64_t tid = ggml_pipeline_trace_get_trace_id();
             rpc_msg_event_record_req ev_req = {0, rpc_ctx->device, tid};
             size_t ev_sz = sock->server_supports_trace_id ? sizeof(ev_req) : 12;
-            rpc_msg_event_record_rsp ev_rsp = {};
-            status = send_rpc_cmd(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz, &ev_rsp, sizeof(ev_rsp));
-            RPC_STATUS_ASSERT(status);
+            send_rpc_cmd_deferred(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz);
+            rpc_ctx->last_compute_sent_event = true;
+            rpc_ctx->last_compute_sock = sock;
+            // Mark response pending now so drain functions (flush_pending_get_tensor, etc.)
+            // see it before event_record links the rpc_event_t struct.
+            tls_pending_event.sock = sock;
+            tls_pending_event.pending = true;
+            tls_pending_event.ev = nullptr;
             const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - t0).count();
             rpc_trace_emit(__func__, "graph_recompute_all", RPC_CMD_GRAPH_RECOMPUTE_ALL, sizeof(req), false, us);
@@ -2560,14 +2570,20 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
         uint64_t tid = ggml_pipeline_trace_get_trace_id();
         rpc_msg_event_record_req ev_req = {0, rpc_ctx->device, tid};
         size_t ev_sz = sock->server_supports_trace_id ? sizeof(ev_req) : 12;
-        // FIX: use blocking send_rpc_cmd instead of send_rpc_cmd_deferred.
-        // The deferred version caused the client's drain_pending_event_response
-        // to fail on the second token because the server's event handler was
-        // blocking on wait_compute_idle(). The blocking version waits for the
-        // response immediately, avoiding the deferred drain entirely.
-        rpc_msg_event_record_rsp ev_rsp = {};
-        status = send_rpc_cmd(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz, &ev_rsp, sizeof(ev_rsp));
-        RPC_STATUS_ASSERT(status);
+        // Defer the EVENT_RECORD response: the scheduler's event_record
+        // already has a last_compute_sent_event fast-path, and the response
+        // drains at event_wait/event_synchronize or at the next RPC op.
+        // This makes graph_compute_async truly async (<50us TCP send only),
+        // letting the scheduler dispatch ROCm splits while the RPC event
+        // response is in-flight.
+        send_rpc_cmd_deferred(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz);
+        rpc_ctx->last_compute_sent_event = true;
+        rpc_ctx->last_compute_sock = sock;
+        // Mark response pending now so drain functions (flush_pending_get_tensor, etc.)
+        // see it before event_record links the rpc_event_t struct.
+        tls_pending_event.sock = sock;
+        tls_pending_event.pending = true;
+        tls_pending_event.ev = nullptr;
         const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - t0).count();
         rpc_trace_emit(__func__, "graph_recompute", RPC_CMD_GRAPH_RECOMPUTE, sizeof(request), false, us);
@@ -2669,9 +2685,10 @@ static uint32_t rpc_get_n_devices_on_endpoint(socket_ptr sock);
 ggml_backend_t ggml_backend_rpc_init(const char * endpoint, uint32_t device) {
     std::string dev_name = "RPC" + std::to_string(device) + "[" + std::string(endpoint) + "]";
     ggml_backend_rpc_context * ctx = new ggml_backend_rpc_context {
-        /* .endpoint       = */ endpoint,
-        /* .device         = */ device,
-        /* .name           = */ dev_name,
+        /* .endpoint               = */ endpoint,
+        /* .device                 = */ device,
+        /* .name                   = */ dev_name,
+        /* .last_compute_sock      = */ nullptr,
     };
     // D4.5: query endpoint device count for multi-device dispatch
     // NOTE: get_socket() calls negotiate_hello() synchronously before returning,
