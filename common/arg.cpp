@@ -2326,6 +2326,159 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             }
         ).set_env("GGML_RPC_MULTIDEVICE"));
     }
+
+    // B+ pipeline mitigation flags (Path-D prototype)
+    add_opt(common_arg(
+        {"--pipeline-plus"},
+        {"--no-pipeline-plus"},
+        "master switch for B+ pipeline mitigations (default: enabled)",
+        [](common_params & params, bool value) {
+            setenv("GGML_PIPELINE_PLUS", value ? "1" : "0", 1);
+            GGML_UNUSED(params);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--pplus-barrier-partial"},
+        {"--no-pplus-barrier-partial"},
+        "B+8a: partial barrier, skip idle backends (default: enabled)",
+        [](common_params & params, bool value) {
+            setenv("GGML_PIPELINE_BARRIER_PARTIAL", value ? "1" : "0", 1);
+            GGML_UNUSED(params);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--pplus-barrier-strict"},
+        {"--no-pplus-barrier-strict"},
+        "B+8b: strict partial barrier, intersect src mask with pending events (default: enabled)",
+        [](common_params & params, bool value) {
+            setenv("GGML_PIPELINE_BARRIER_PARTIAL_STRICT", value ? "1" : "0", 1);
+            GGML_UNUSED(params);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--pplus-moe-async"},
+        {"--no-pplus-moe-async"},
+        "B+9: async MoE expert weight copy (default: enabled)",
+        [](common_params & params, bool value) {
+            setenv("GGML_SCHED_MOE_ASYNC_COPY", value ? "1" : "0", 1);
+            GGML_UNUSED(params);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--pplus-rpc-defer-barrier"},
+        {"--no-pplus-rpc-defer-barrier"},
+        "B+7: defer RPC event barriers, batch completions (default: enabled)",
+        [](common_params & params, bool value) {
+            setenv("GGML_RPC_EVENT_DEFER_BARRIER", value ? "1" : "0", 1);
+            GGML_UNUSED(params);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--pplus-rpc-get-defer"},
+        {"--no-pplus-rpc-get-defer"},
+        "B+13: defer RPC GET_TENSOR downloads (default: enabled)",
+        [](common_params & params, bool value) {
+            setenv("GGML_RPC_GET_TENSOR_DEFER", value ? "1" : "0", 1);
+            GGML_UNUSED(params);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--pplus-rpc-flush"},
+        {"--no-pplus-rpc-flush"},
+        "B+11: multi-socket flush at split barrier (default: enabled)",
+        [](common_params & params, bool value) {
+            setenv("GGML_RPC_MULTI_SOCKET_FLUSH", value ? "1" : "0", 1);
+            GGML_UNUSED(params);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--pplus-wavefront-cross"},
+        {"--no-pplus-wavefront-cross"},
+        "W2/D7.8: cross-decode wavefront dispatch (default: enabled)",
+        [](common_params & params, bool value) {
+            setenv("GGML_SCHED_WAVEFRONT_CROSS", value ? "1" : "0", 1);
+            GGML_UNUSED(params);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--pplus-wavefront"},
+        {"--no-pplus-wavefront"},
+        "B+14: wavefront assembly-line dispatch (default: disabled)",
+        [](common_params & params, bool value) {
+            setenv("GGML_SCHED_WAVEFRONT_DISPATCH", value ? "1" : "0", 1);
+            GGML_UNUSED(params);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--pplus-input-async"},
+        {"--no-pplus-input-async"},
+        "B+17: async H2D for INPUT tensor copies (default: disabled)",
+        [](common_params & params, bool value) {
+            setenv("GGML_SCHED_INPUT_COPY_ASYNC", value ? "1" : "0", 1);
+            GGML_UNUSED(params);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--pplus-gpipe"},
+        {"--no-pplus-gpipe"},
+        "deep pipeline (stage-based parallelism) mode (default: disabled)",
+        [](common_params & params, bool value) {
+            setenv("GGML_SCHED_GPIPE", value ? "1" : "0", 1);
+            GGML_UNUSED(params);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--pplus-gpipe-adaptive"},
+        {"--no-pplus-gpipe-adaptive"},
+        "B+16: adaptive GPipe stage tuning (default: disabled)",
+        [](common_params & params, bool value) {
+            setenv("GGML_SCHED_GPIPE_ADAPTIVE", value ? "1" : "0", 1);
+            GGML_UNUSED(params);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--pplus-p0-full-sync"},
+        {"--no-pplus-p0-full-sync"},
+        "P0 graph-reuse barrier full sync, no cur_copy rotation (default: disabled)",
+        [](common_params & params, bool value) {
+            setenv("GGML_PIPELINE_P0_FULL_SYNC", value ? "1" : "0", 1);
+            GGML_UNUSED(params);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--pplus-p1-full-sync"},
+        {"--no-pplus-p1-full-sync"},
+        "P1 narrow sampling sync (default: disabled)",
+        [](common_params & params, bool value) {
+            setenv("GGML_PIPELINE_P1_FULL_SYNC", value ? "1" : "0", 1);
+            GGML_UNUSED(params);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--pplus-pipeline-depth"}, "N",
+        "max pipeline depth, concurrently in-flight decode iterations (default: 4)",
+        [](common_params & params, int value) {
+            setenv("GGML_SCHED_PIPELINE_DEPTH", std::to_string(value).c_str(), 1);
+            GGML_UNUSED(params);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--pplus-gpipe-depth"}, "N",
+        "GPipe stage count override, clamped to [2, max] (default: auto)",
+        [](common_params & params, int value) {
+            setenv("GGML_SCHED_GPIPE_DEPTH", std::to_string(value).c_str(), 1);
+            GGML_UNUSED(params);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+    add_opt(common_arg(
+        {"--pplus-rpc-min-servers"}, "N",
+        "min RPC server count before event deferral activates (default: 1)",
+        [](common_params & params, int value) {
+            setenv("GGML_RPC_EVENT_DEFER_MIN_SERVERS", std::to_string(value).c_str(), 1);
+            GGML_UNUSED(params);
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}));
+
     add_opt(common_arg(
         {"--placement-discover"},
         "opt-in: run capacity discovery, print/write inventory JSON, then exit (no model load)",

@@ -401,6 +401,44 @@ void common_params_print_info(const common_params & params, bool print_devices) 
             ggml_backend_dev_memory(dev, &free, &total);
             LOG_INF("  - %-8s: %s (%zu MiB, %zu MiB free)\n", ggml_backend_dev_name(dev), ggml_backend_dev_description(dev), total / 1024 / 1024, free / 1024 / 1024);
         }
+
+        // dump active B+ pipeline mitigation flags
+        {
+            struct { const char * env; const char * label; } flags[] = {
+                {"GGML_PIPELINE_PLUS",                   "PPLUS"},
+                {"GGML_PIPELINE_BARRIER_PARTIAL",        "B+8a BARRIER_PARTIAL"},
+                {"GGML_PIPELINE_BARRIER_PARTIAL_STRICT", "B+8b BARRIER_STRICT"},
+                {"GGML_SCHED_MOE_ASYNC_COPY",            "B+9 MOE_ASYNC"},
+                {"GGML_RPC_EVENT_DEFER_BARRIER",         "B+7 RPC_DEFER"},
+                {"GGML_RPC_GET_TENSOR_DEFER",            "B+13 RPC_GET_DEFER"},
+                {"GGML_RPC_MULTI_SOCKET_FLUSH",          "B+11 RPC_FLUSH"},
+                {"GGML_SCHED_WAVEFRONT_CROSS",           "W2 WAVEFRONT_CROSS"},
+                {"GGML_SCHED_WAVEFRONT_DISPATCH",        "B+14 WAVEFRONT"},
+                {"GGML_SCHED_WAVEFRONT_INTRA",           "W1 WAVEFRONT_INTRA"},
+                {"GGML_SCHED_INPUT_COPY_ASYNC",          "B+17 INPUT_ASYNC"},
+                {"GGML_SCHED_GPIPE",                     "GPIPE"},
+                {"GGML_SCHED_GPIPE_ADAPTIVE",            "B+16 GPIPE_ADAPTIVE"},
+                {"GGML_RPC_HASH_DEFER",                  "RPC_HASH_DEFER"},
+            };
+            std::string active;
+            for (const auto & f : flags) {
+                const char * val = getenv(f.env);
+                if (val && atoi(val) != 0) {
+                    if (!active.empty()) { active += " "; }
+                    active += f.label;
+                }
+            }
+            // also show numeric knobs when non-default
+            const char * depth = getenv("GGML_SCHED_PIPELINE_DEPTH");
+            if (depth && atoi(depth) > 0) {
+                active += " PIPELINE_DEPTH=" + std::string(depth);
+            }
+            const char * gpipe_depth = getenv("GGML_SCHED_GPIPE_DEPTH");
+            if (gpipe_depth && atoi(gpipe_depth) > 0) {
+                active += " GPIPE_DEPTH=" + std::string(gpipe_depth);
+            }
+            LOG_INF("  pipeline-flags: %s\n", active.c_str());
+        }
     }
     LOG_INF("%s\n", common_params_get_system_info(params).c_str());
 }
