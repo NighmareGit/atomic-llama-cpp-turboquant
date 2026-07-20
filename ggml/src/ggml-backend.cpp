@@ -2233,6 +2233,14 @@ static void ggml_backend_sched_wait_producer(
 }
 
 // B+13 gather: RPC buffer routing first, then iface cpy, then host/device fallbacks.
+
+// Workaround for weak symbol resolution bug: ggml_backend_buffer_is_rpc stub
+// always returns false at dynamic link time. Detect RPC buffers by name instead.
+static bool sched_buf_is_rpc(ggml_backend_buffer_t buf) {
+    if (buf == nullptr) return false;
+    return strncmp(ggml_backend_buffer_name(buf), "RPC", 3) == 0;
+}
+
 static bool ggml_backend_sched_try_async_tensor_copy(
         ggml_backend_sched_t sched, ggml_backend_t input_backend, ggml_backend_t split_backend,
         const ggml_tensor * input, ggml_tensor * input_cpy) {
@@ -2249,7 +2257,7 @@ static bool ggml_backend_sched_try_async_tensor_copy(
     const bool host_dst = ggml_backend_buffer_is_host(buf_dst);
 
     // B+13: sched tensor_backend_id can disagree with src/dst buffer (split-2 gather).
-    if (ggml_backend_buffer_is_rpc(buf_src) && !ggml_backend_buffer_is_rpc(buf_dst)) {
+    if (sched_buf_is_rpc(buf_src) && !sched_buf_is_rpc(buf_dst)) {
         const auto rpc_t0 = std::chrono::steady_clock::now();
         if (ggml_backend_rpc_try_download_tensor(split_backend, input, input_cpy)) {
             g_sched_copy_reject = "rpc_download_defer";
@@ -2260,7 +2268,7 @@ static bool ggml_backend_sched_try_async_tensor_copy(
         }
         g_sched_copy_reject = "rpc_download_fail";
     }
-    if (!ggml_backend_buffer_is_rpc(buf_src) && ggml_backend_buffer_is_rpc(buf_dst)) {
+    if (!sched_buf_is_rpc(buf_src) && sched_buf_is_rpc(buf_dst)) {
         if (input_backend != nullptr && ggml_backend_rpc_try_upload_tensor(input_backend, input, input_cpy)) {
             g_sched_copy_reject = "rpc_upload_defer";
             return true;
@@ -2311,7 +2319,7 @@ static bool ggml_backend_sched_try_async_tensor_copy(
         g_sched_copy_reject = "input_backend_null";
     }
 
-    if (!host_src && !host_dst && !ggml_backend_buffer_is_rpc(buf_src) && !ggml_backend_buffer_is_rpc(buf_dst)) {
+    if (!host_src && !host_dst && !sched_buf_is_rpc(buf_src) && !sched_buf_is_rpc(buf_dst)) {
         if (ggml_backend_sched_try_same_device_cpy(sched, split_backend, input, input_cpy)) {
             return true;
         }
@@ -2319,7 +2327,7 @@ static bool ggml_backend_sched_try_async_tensor_copy(
     }
 
     if (host_src != host_dst) {
-        if (ggml_backend_buffer_is_rpc(buf_src) || ggml_backend_buffer_is_rpc(buf_dst)) {
+        if (sched_buf_is_rpc(buf_src) || sched_buf_is_rpc(buf_dst)) {
             g_sched_copy_reject = "host_xfer_rpc";
             return false;
         }
