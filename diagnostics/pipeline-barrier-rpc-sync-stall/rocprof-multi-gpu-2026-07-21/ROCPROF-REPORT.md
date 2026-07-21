@@ -332,17 +332,22 @@ Wall-clock per token: ~2,135 ms (gated by RPC0/3090)
 
 | File | Description | Size |
 |------|-------------|------|
-| `2gpu/roc-kernel_kernel_trace.csv` | 7900 XTX per-kernel timestamps (2-GPU) | 92 MB |
+| `2gpu/roc-kernel_kernel_trace.csv.gz` | 7900 XTX per-kernel timestamps (2-GPU) | 5.6 MB (92 MB raw) |
 | `2gpu/roc-kernel_kernel_stats.csv` | Kernel aggregate stats (2-GPU) | 16 KB |
-| `2gpu/server.log` | llama-server stderr (2-GPU) | 44 KB |
-| `4gpu/roc-4gpu_kernel_trace.csv` | 7900 XTX per-kernel timestamps (4-GPU) | 8.3 MB |
+| `4gpu/roc-4gpu_kernel_trace.csv.gz` | 7900 XTX per-kernel timestamps (4-GPU) | 518 KB (8.3 MB raw) |
 | `4gpu/roc-4gpu_kernel_stats.csv` | Kernel aggregate stats (4-GPU) | 13 KB |
-| `4gpu/sched-trace.jsonl` | GGML_SCHED_TRACE per-split timing (4-GPU) | 3.7 MB |
-| `4gpu/server.log` | llama-server stderr (4-GPU) | 33 KB |
+| `4gpu/sched-trace.jsonl.gz` | GGML_SCHED_TRACE per-split timing (4-GPU) | 504 KB (3.7 MB raw) |
+
+Decompress with `gunzip` before analysis. Small CSV files are stored uncompressed.
 
 ### Quick Analysis Commands
 
 ```bash
+# Decompress trace files first:
+#   gunzip 2gpu/roc-kernel_kernel_trace.csv.gz
+#   gunzip 4gpu/roc-4gpu_kernel_trace.csv.gz
+#   gunzip 4gpu/sched-trace.jsonl.gz
+
 # Kernel trace summary (7900 XTX)
 sudo python3 -c "
 import csv; from collections import defaultdict
