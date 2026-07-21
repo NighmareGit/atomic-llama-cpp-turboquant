@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "n_layer": 26,
+  "split_mode": "layer",
+  "assignments": [
+    {"layer_start":  0, "layer_end":  3, "backend_id": "rpc://127.0.0.1:50051#0"},
+    {"layer_start":  3, "layer_end":  4, "backend_id": "local:ROCm0"},
+    {"layer_start":  4, "layer_end":  7, "backend_id": "rpc://192.168.8.23:50052#1"},
+    {"layer_start":  7, "layer_end":  8, "backend_id": "rpc://192.168.8.23:50052#0"},
+    {"layer_start":  8, "layer_end": 12, "backend_id": "local:ROCm0"},
+    {"layer_start": 12, "layer_end": 15, "backend_id": "rpc://192.168.8.23:50052#1"},
+    {"layer_start": 15, "layer_end": 16, "backend_id": "rpc://192.168.8.23:50052#0"},
+    {"layer_start": 16, "layer_end": 19, "backend_id": "rpc://127.0.0.1:50051#0"},
+    {"layer_start": 19, "layer_end": 20, "backend_id": "rpc://192.168.8.23:50052#0"},
+    {"layer_start": 20, "layer_end": 23, "backend_id": "rpc://192.168.8.23:50052#1"},
+    {"layer_start": 23, "layer_end": 24, "backend_id": "local:ROCm0"},
+    {"layer_start": 24, "layer_end": 26, "backend_id": "rpc://127.0.0.1:50051#0"}
+  ]
+}
