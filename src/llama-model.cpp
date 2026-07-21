@@ -1312,12 +1312,21 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             LLAMA_LOG_DEBUG("load_tensors: layer %3d assigned to device %s, is_swa = %d\n", il, ggml_backend_dev_name(cpu_dev), is_swa);
             return {cpu_dev, &pimpl->cpu_buft_list};
         }
-        // Pin MTP head layers to the first GPU device regardless of the
+        // Pin MTP head layers to the first LOCAL GPU device regardless of the
         // proportional split. The head is tiny (~76 MiB) and placing it on
-        // a remote device forces cross-device hidden-state transfers that
+        // a remote (RPC) device forces cross-device hidden-state transfers that
         // garble draft predictions during speculative decoding.
+        // NOTE: devices[0] may be an RPC backend (registered before local GPUs),
+        // so we search for the first non-RPC accelerator device.
         if (hparams.n_layer_nextn > 0 && il >= (int)hparams.n_layer() && il < n_layer_all && !devices.empty()) {
-            auto * dev = devices[0].dev;
+            ggml_backend_dev_t dev = devices[0].dev;
+            for (const auto & d : devices) {
+                const char * name = ggml_backend_dev_name(d.dev);
+                if (name && strncmp(name, "RPC", 3) != 0) {
+                    dev = d.dev;
+                    break;
+                }
+            }
             LLAMA_LOG_DEBUG("load_tensors: layer %3d assigned to device %s (MTP head), is_swa = %d\n", il, ggml_backend_dev_name(dev), is_swa);
             return {dev, &pimpl->gpu_buft_list.at(dev)};
         }
