@@ -4,6 +4,7 @@
 #include "ggml-backend-impl.h"
 #include "ggml-cpp.h"
 #include "transport.h"
+#include "rpc-async-audit.h"
 
 #include <array>
 #include <cinttypes>
@@ -74,7 +75,7 @@ static void rpc_trace_emit_hotpath_fields(FILE * out) {
     }
 }
 
-static void rpc_trace_emit(const char * fn, const char * phase, int cmd, size_t bytes, bool blocking, int64_t elapsed_us) {
+void rpc_trace_emit(const char * fn, const char * phase, int cmd, size_t bytes, bool blocking, int64_t elapsed_us) {
     if (!rpc_trace_lvl()) {
         return;
     }
@@ -2465,6 +2466,44 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
     flush_pending_hash_all();
     flush_set_tensor_batch();
 
+    // --- async vs blocking path audit -------------------------------------
+    // This function has five distinct code paths. Each is classified below by
+    // whether it BLOCKS waiting for a server response on the wire, or returns
+    // immediately (async / fire-and-forget) with the response drained later.
+    //
+    //  PATH                        | TRIGGER                          | BLOCKING?  | SYNC
+    //  -----------------------------|----------------------------------|------------|---------------------------
+    //  GRAPH_COMPUTE_STAGE         | gpipe_stage >= 0 (D6.9 GPipe)    | BLOCKS     | response + telemetry payload
+    //  GRAPH_RECOMPUTE_ALL (reuse) | n_devices>1 AND uid matches      | async      | deferred EVENT_RECORD (TCP)
+    //  GRAPH_COMPUTE_ALL (first)   | n_devices>1 AND new uid          | BLOCKS     | response + telemetry payload
+    //  GRAPH_RECOMPUTE (reuse)     | uid != 0 AND uid==last_graph_uid | async      | deferred EVENT_RECORD (TCP)
+    //  GRAPH_COMPUTE (first)       | new uid (single-device)          | BLOCKS     | 4-byte response
+    //
+    //  BLOCKING paths use send_rpc_cmd(sock, cmd, input, input_size, output, output_size):
+    //    the call does NOT return until the server finishes the graph compute
+    //    and the full response is received over TCP. First-time graph submission
+    //    also serializes the entire cgraph (expensive for large models).
+    //
+    //  ASYNC paths use send_rpc_cmd(sock, cmd, input, input_size) with no
+    //    output buffer (fire-and-forget), followed by send_rpc_cmd_deferred()
+    //    for EVENT_RECORD. The EVENT_RECORD response is NOT read here — it is
+    //    queued via rpc_socket_queue_push() and drained later by rpc_socket_drain()
+    //    at event_wait / event_synchronize / the next RPC op on this socket.
+    //    This lets the scheduler dispatch ROCm splits while the EVENT_RECORD
+    //    response is in-flight.
+    //
+    //  Conditions that select each path (in evaluation order):
+    //    1. gpipe_stage >= 0             -> GRAPH_COMPUTE_STAGE (D6.9)
+    //    2. multi_device && n_devices>1  -> GRAPH_COMPUTE_ALL / GRAPH_RECOMPUTE_ALL
+    //    3. reuse (uid match)            -> GRAPH_RECOMPUTE (single) / GRAPH_RECOMPUTE_ALL (multi)
+    //    4. else (first-time)            -> GRAPH_COMPUTE (single) / GRAPH_COMPUTE_ALL (multi)
+    //
+    //  rpc_ctx->is_multi_device_capable and rpc_ctx->n_devices_on_endpoint are
+    //  populated at backend init from the server's DEVICE_COUNT response.
+    //  reuse requires cgraph->uid != 0 (set by the scheduler for repeated
+    //  token-generation graphs) AND last_graph_uid == uid.
+    // -------------------------------------------------------------------------
+
     // D6.9: per-stage dispatch via GRAPH_COMPUTE_STAGE
     // When the GPipe dispatch sets gpipe_active_stage, we send a stage-filtered
     // graph to the server so only this stage's backend computes its splits.
@@ -2525,8 +2564,8 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
         }
         const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - t0).count();
-        rpc_trace_emit(__func__, "graph_compute_stage",
-                       RPC_CMD_GRAPH_COMPUTE_STAGE, input.size(), false, us);
+        rpc_trace_graph_compute(RPC_PATH_GRAPH_COMPUTE_STAGE,
+                                RPC_CMD_GRAPH_COMPUTE_STAGE, input.size(), us);
 
         return GGML_STATUS_SUCCESS;
     }
@@ -2576,8 +2615,8 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
             rpc_socket_queue_push(sock, std::move(de));
             const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - t0).count();
-            rpc_trace_emit(__func__, "graph_recompute_all", RPC_CMD_GRAPH_RECOMPUTE_ALL, sizeof(req), false, us);
-            LOG_DBG("RPC-REUSE dev=%u uid=%" PRIu64 " reuse=1 (multi-device)\n", rpc_ctx->device, cgraph->uid);
+            rpc_trace_graph_compute(RPC_PATH_RECOMPUTE_ALL,
+                                    RPC_CMD_GRAPH_RECOMPUTE_ALL, sizeof(req), us);
         } else {
             rpc_dev_ctx->seen_graph_uids.insert(cgraph->uid);
             LOG_DBG("RPC-REUSE dev=%u uid=%" PRIu64 " reuse=0 (multi-device)\n", rpc_ctx->device, cgraph->uid);
@@ -2602,7 +2641,8 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
             }
             const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - t0).count();
-            rpc_trace_emit(__func__, "graph_compute_all", RPC_CMD_GRAPH_COMPUTE_ALL, input.size(), false, us);
+            rpc_trace_graph_compute(RPC_PATH_COMPUTE_ALL,
+                                    RPC_CMD_GRAPH_COMPUTE_ALL, input.size(), us);
         }
         return GGML_STATUS_SUCCESS;
     }
@@ -2623,7 +2663,8 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
         // drains at event_wait/event_synchronize or at the next RPC op.
         // This makes graph_compute_async truly async (<50us TCP send only),
         // letting the scheduler dispatch ROCm splits while the RPC event
-        // response is in-flight.
+        // response is in-flight. EVENT_RECORD stays on TCP even when
+        // GRAPH_RECOMPUTE used UDP — it needs reliable ordering for sync.
         send_rpc_cmd_deferred(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz);
         rpc_ctx->last_compute_sent_event = true;
         // B+15: queue the deferred EVENT_RECORD response instead of using
@@ -2635,8 +2676,8 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
         rpc_socket_queue_push(sock, std::move(de));
         const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - t0).count();
-        rpc_trace_emit(__func__, "graph_recompute", RPC_CMD_GRAPH_RECOMPUTE, sizeof(request), false, us);
-        LOG_DBG("RPC-REUSE dev=%u uid=%" PRIu64 " reuse=1\n", rpc_ctx->device, cgraph->uid);
+        rpc_trace_graph_compute(RPC_PATH_RECOMPUTE,
+                                RPC_CMD_GRAPH_RECOMPUTE, sizeof(rpc_msg_graph_recompute_req), us);
     } else {
         rpc_dev_ctx->seen_graph_uids.insert(cgraph->uid);
         LOG_DBG("RPC-REUSE dev=%u uid=%" PRIu64 " reuse=0\n", rpc_ctx->device, cgraph->uid);
@@ -2671,7 +2712,8 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
         rpc_ctx->last_compute_sent_event = false;
         const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - t0).count();
-        rpc_trace_emit(__func__, "graph_compute", RPC_CMD_GRAPH_COMPUTE, input.size(), false, us);
+        rpc_trace_graph_compute(RPC_PATH_COMPUTE,
+                                RPC_CMD_GRAPH_COMPUTE, input.size(), us);
     }
     return GGML_STATUS_SUCCESS;
 }
