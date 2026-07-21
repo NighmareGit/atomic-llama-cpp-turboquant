@@ -57,6 +57,21 @@ GGML_CUDA_GRAPHS=0 rocprofv3 --kernel-trace --stats --summary \
 
 ## Profiler Data
 
-Raw trace: `/tmp/rocprof-data-20260719-191812/`
+### Single-pair (2026-07-19)
+
+Raw trace: `rocprof-data-20260719-191812/`
 - `roc-kernel_kernel_stats.csv` — kernel timing summary
 - `roc-kernel_kernel_trace.csv` — per-kernel dispatch trace (22,632 entries)
+
+### Multi-GPU Pipeline Profiling (2026-07-21)
+
+Full report: [rocprof-multi-gpu-2026-07-21/ROCPROF-REPORT.md](rocprof-multi-gpu-2026-07-21/ROCPROF-REPORT.md)
+
+2-GPU (7900 XTX + 3060 Ti) and 4-GPU (7900 XTX + 3060 Ti + 3090 + 3070) pipeline profiling with rocprofv3 kernel traces + GGML_SCHED_TRACE per-backend split timing. Identifies 5 pipeline bubbles: 3090 split imbalance (critical), network RPC data movement stalls, host-to-device issues, 7900 XTX kernel gaps, and 7900 XTX under-utilization.
+
+| Config | 7900 XTX Compute | Bottleneck | Speed (no profiler) |
+|--------|-----------------|------------|---------------------|
+| 2-GPU | 1,960 ms | 3060 Ti (local) | 64 tok/s |
+| 4-GPU | 183 ms | 3090 (network) | 24 tok/s |
+
+Raw data: `rocprof-multi-gpu-2026-07-21/2gpu/` and `rocprof-multi-gpu-2026-07-21/4gpu/`

@@ -916,7 +916,7 @@ struct ggml_backend_rpc_device_context {
     uint32_t    device;
     std::string name;
     std::string description;
-    uint64_t    last_graph_uid;
+    std::unordered_set<uint64_t> seen_graph_uids;
 };
 
 struct ggml_backend_rpc_buffer_type_context {
@@ -2547,7 +2547,7 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
             devices[i] = i;
         }
 
-        bool reuse = cgraph->uid != 0 && rpc_dev_ctx->last_graph_uid == cgraph->uid;
+        bool reuse = cgraph->uid != 0 && rpc_dev_ctx->seen_graph_uids.count(cgraph->uid);
         if (reuse) {
             // D4.5: fire-and-forget + EVENT_RECORD (matches existing GRAPH_COMPUTE pattern)
             rpc_msg_graph_recompute_all_req req = {};
@@ -2577,8 +2577,10 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
             const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - t0).count();
             rpc_trace_emit(__func__, "graph_recompute_all", RPC_CMD_GRAPH_RECOMPUTE_ALL, sizeof(req), false, us);
+            LOG_DBG("RPC-REUSE dev=%u uid=%" PRIu64 " reuse=1 (multi-device)\n", rpc_ctx->device, cgraph->uid);
         } else {
-            rpc_dev_ctx->last_graph_uid = cgraph->uid;
+            rpc_dev_ctx->seen_graph_uids.insert(cgraph->uid);
+            LOG_DBG("RPC-REUSE dev=%u uid=%" PRIu64 " reuse=0 (multi-device)\n", rpc_ctx->device, cgraph->uid);
             std::vector<uint8_t> input;
             serialize_graph_for_all(devices, n_devices, cgraph, input);
             // D4.10: use response version; server sends telemetry when enabled
@@ -2606,7 +2608,7 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
     }
 
     const auto t0 = std::chrono::steady_clock::now();
-    bool reuse = cgraph->uid != 0 && rpc_dev_ctx->last_graph_uid == cgraph->uid;
+    bool reuse = cgraph->uid != 0 && rpc_dev_ctx->seen_graph_uids.count(cgraph->uid);
     if (reuse) {
         rpc_msg_graph_recompute_req request;
         request.device = rpc_ctx->device;
@@ -2634,8 +2636,10 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
         const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - t0).count();
         rpc_trace_emit(__func__, "graph_recompute", RPC_CMD_GRAPH_RECOMPUTE, sizeof(request), false, us);
+        LOG_DBG("RPC-REUSE dev=%u uid=%" PRIu64 " reuse=1\n", rpc_ctx->device, cgraph->uid);
     } else {
-        rpc_dev_ctx->last_graph_uid = cgraph->uid;
+        rpc_dev_ctx->seen_graph_uids.insert(cgraph->uid);
+        LOG_DBG("RPC-REUSE dev=%u uid=%" PRIu64 " reuse=0\n", rpc_ctx->device, cgraph->uid);
         std::vector<uint8_t> input;
         serialize_graph(rpc_ctx->device, cgraph, input);
         // D4.10: use response version when server supports telemetry;
@@ -3385,7 +3389,14 @@ ggml_tensor * rpc_server::create_node(uint64_t id,
 
 // issue 12: sample every Nth decode for per-node timing (more expensive than
 // device-level telemetry). Bounds overhead of per-node sync on the RPC server.
-static constexpr int RPC_NODE_SAMPLE_INTERVAL = 16;
+// Override with GGML_RPC_NODE_SAMPLE_INTERVAL env var (set to 1 for full profiling).
+static int rpc_node_sample_interval() {
+    static int cached = []() -> int {
+        const char * e = getenv("GGML_RPC_NODE_SAMPLE_INTERVAL");
+        return e ? atoi(e) : 16;
+    }();
+    return cached;
+}
 
 // Safety net: nodes whose LEAF src tensors have null data pointers cannot be computed.
 // A leaf tensor is one that appears as an input (src) of some node but is NOT
@@ -3513,7 +3524,8 @@ bool rpc_server::graph_compute(const std::vector<uint8_t> & input) {
     // Sampled to bound overhead; produces correct output (same ops + order).
     uint64_t us = 0;
     const uint64_t sample_id = telemetry_node_sample_count.fetch_add(1, std::memory_order_relaxed);
-    const bool sample_nodes = telemetry_enabled && (sample_id % RPC_NODE_SAMPLE_INTERVAL) == 0;
+    const int interval = rpc_node_sample_interval();
+    const bool sample_nodes = telemetry_enabled && (sample_id % interval) == 0;
     std::vector<rpc_node_timing> node_timings;
 
     const auto t0 = std::chrono::steady_clock::now();
@@ -3552,12 +3564,30 @@ bool rpc_server::graph_recompute(const rpc_msg_graph_recompute_req & request) {
     }
     ggml_cgraph * graph = stored_graphs[device].graph;
     LOG_DBG("[%s] device: %u\n", __func__, device);
+
+    // issue 12: per-node timing on recompute path (same sampling as graph_compute).
+    uint64_t us = 0;
+    const uint64_t sample_id = telemetry_node_sample_count.fetch_add(1, std::memory_order_relaxed);
+    const int interval = rpc_node_sample_interval();
+    const bool sample_nodes = telemetry_enabled && (sample_id % interval) == 0;
+    std::vector<rpc_node_timing> node_timings;
+
     const auto t0 = std::chrono::steady_clock::now();
-    ggml_status status = ggml_backend_graph_compute(backends[device], graph);
+    ggml_status status;
+    if (sample_nodes) {
+        us = compute_graph_per_node(backends[device], graph, node_timings);
+        status = GGML_STATUS_SUCCESS;
+    } else {
+        status = ggml_backend_graph_compute(backends[device], graph);
+        us = (uint64_t) std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - t0).count();
+    }
     GGML_ASSERT(status == GGML_STATUS_SUCCESS && "Unsuccessful graph computations are not supported with RPC");
-    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
-        std::chrono::steady_clock::now() - t0).count();
     rpc_trace_emit("rpc_server::graph_recompute", "server_compute", RPC_CMD_GRAPH_RECOMPUTE, 0, true, us);
+    // issue 12: emit per-node timings for this sampled decode.
+    if (sample_nodes && !node_timings.empty()) {
+        rpc_write_node_timings_jsonl(node_timings);
+    }
     // D7.8: collect telemetry for graph reuse (token generation) and write directly
     // (recompute is fire-and-forget, so telemetry can't piggyback on the response)
     if (telemetry_enabled) {
@@ -4856,7 +4886,7 @@ ggml_backend_reg_t ggml_backend_rpc_add_server(const char * endpoint) {
             /* .device      = */    ind,
             /* .name        = */    dev_name,
             /* .description = */    dev_desc,
-            /* .last_graph_uid = */ 0,
+            // seen_graph_uids default-constructs empty
         };
 
         ggml_backend_dev_t dev = new ggml_backend_device {
