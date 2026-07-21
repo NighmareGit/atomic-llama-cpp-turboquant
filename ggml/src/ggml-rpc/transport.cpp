@@ -114,12 +114,22 @@ static_assert(sizeof(rdma_caps) == RPC_CONN_CAPS_SIZE, "rdma_caps must match con
 #endif // GGML_RPC_RDMA
 
 struct socket_t::impl {
-    impl(sockfd_t fd) : use_rdma(false), fd(fd) {}
+    impl(sockfd_t fd) : udp_fd(-1), udp_port(0), use_rdma(false), fd(fd) {}
     ~impl();
     bool send_data(const void * data, size_t size);
     bool recv_data(void * data, size_t size);
     void get_caps(uint8_t * local_caps);
     void update_caps(const uint8_t * remote_caps);
+
+    // UDP transport for fire-and-forget graph submission (opt-in).
+    bool init_udp(int udp_port);
+    bool send_udp(const void * data, size_t size) const;
+    bool udp_enabled() const { return udp_fd >= 0; }
+    uint32_t udp_next_seq();    // next monotonic seq for this socket (thread-safe)
+    mutable std::mutex udp_mu;  // guards lazy init of udp_fd and udp_seq
+    sockfd_t         udp_fd;    // client UDP socket, -1 = not initialized
+    int              udp_port;  // remote UDP port (tcp_port + 1)
+    uint32_t         udp_seq = 0; // monotonic UDP sequence number
 
 #ifdef GGML_RPC_RDMA
     bool tcp_peer_closed();
@@ -144,8 +154,10 @@ socket_t::impl::~impl() {
     LOG_DBG("[%s] closing socket %d\n", __func__, this->fd);
 #ifdef _WIN32
     if (fd != INVALID_SOCKET) closesocket(this->fd);
+    if (udp_fd != INVALID_SOCKET) closesocket(udp_fd);
 #else
     if (fd >= 0) close(this->fd);
+    if (udp_fd >= 0) close(udp_fd);
 #endif
 }
 
@@ -503,6 +515,106 @@ bool socket_t::impl::recv_data(void * data, size_t size) {
     return true;
 }
 
+// UDP transport for fire-and-forget graph submission.
+//
+// This is opt-in (GGML_RPC_UDP=1) and additive: TCP is untouched. The UDP
+// socket is created lazily on first init_udp() and aimed at the remote's UDP
+// port (tcp_port + 1 by default). send_udp() fires a single datagram with no
+// ACK and no retransmit — loss is tolerated because the next token's graph
+// call replaces a lost frame. The caller falls back to TCP if UDP is not
+// enabled or send_udp() fails.
+static bool is_valid_fd(sockfd_t sockfd); // defined later in this file
+bool socket_t::impl::init_udp(int udp_port) {
+    if (udp_enabled()) {
+        return true;
+    }
+    std::lock_guard<std::mutex> lock(udp_mu);
+    if (udp_enabled()) {
+        return true;
+    }
+    this->udp_port = udp_port;
+
+    // Resolve the remote host from the existing TCP connection's peer address.
+    sockaddr_storage peer_addr = {};
+    socklen_t peer_len = sizeof(peer_addr);
+    if (getpeername(fd, reinterpret_cast<sockaddr *>(&peer_addr), &peer_len) != 0) {
+        GGML_LOG_ERROR("[%s] getpeername failed for UDP target\n", __func__);
+        return false;
+    }
+
+    sockfd_t sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (!is_valid_fd(sockfd)) {
+        GGML_LOG_ERROR("[%s] socket(SOCK_DGRAM) failed\n", __func__);
+        return false;
+    }
+
+    // Build the target address: same host as TCP, but the UDP port.
+    sockaddr_in target_addr = {};
+    target_addr.sin_family = AF_INET;
+    target_addr.sin_port = htons(static_cast<uint16_t>(udp_port));
+    if (peer_addr.ss_family == AF_INET) {
+        target_addr.sin_addr = reinterpret_cast<const sockaddr_in *>(&peer_addr)->sin_addr;
+    } else if (peer_addr.ss_family == AF_INET6) {
+        // Extract IPv4 from IPv4-mapped IPv6 if present; otherwise fail.
+        const auto * a6 = reinterpret_cast<const sockaddr_in6 *>(&peer_addr);
+        if (IN6_IS_ADDR_V4MAPPED(&a6->sin6_addr)) {
+            memcpy(&target_addr.sin_addr, &a6->sin6_addr.s6_addr[12], 4);
+        } else {
+            GGML_LOG_ERROR("[%s] IPv6 peer not supported for UDP (no v4-mapped addr)\n", __func__);
+#ifdef _WIN32
+            closesocket(sockfd);
+#else
+            close(sockfd);
+#endif
+            return false;
+        }
+    } else {
+        GGML_LOG_ERROR("[%s] unexpected peer address family %d\n", __func__, peer_addr.ss_family);
+#ifdef _WIN32
+        closesocket(sockfd);
+#else
+        close(sockfd);
+#endif
+        return false;
+    }
+
+    // Store the target as a connected UDP socket so send_udp() can use send().
+    // connect() on a UDP socket does not wire anything — it just sets the
+    // default destination, which is exactly what we want.
+    if (::connect(sockfd, reinterpret_cast<const sockaddr *>(&target_addr),
+                  sizeof(target_addr)) != 0) {
+        GGML_LOG_ERROR("[%s] connect(udp) failed for port %d\n", __func__, udp_port);
+#ifdef _WIN32
+        closesocket(sockfd);
+#else
+        close(sockfd);
+#endif
+        return false;
+    }
+
+    udp_fd = sockfd;
+    LOG_DBG("[%s] UDP socket %d -> port %d (tcp peer)\n", __func__, udp_fd, udp_port);
+    return true;
+}
+
+bool socket_t::impl::send_udp(const void * data, size_t size) const {
+    if (!udp_enabled()) {
+        return false;
+    }
+    // send() on a connected UDP socket; single datagram, no retransmit.
+    ssize_t n = send(udp_fd, static_cast<const char *>(data), size, 0);
+    if (n < 0 || static_cast<size_t>(n) != size) {
+        GGML_LOG_ERROR("[%s] send_udp failed (sent=%zd, size=%zu)\n", __func__, n, size);
+        return false;
+    }
+    return true;
+}
+
+uint32_t socket_t::impl::udp_next_seq() {
+    std::lock_guard<std::mutex> lock(udp_mu);
+    return udp_seq++;
+}
+
 void socket_t::impl::get_caps(uint8_t * local_caps) {
     memset(local_caps, 0, RPC_CONN_CAPS_SIZE);
     local_caps[0] |= RPC_CAP_TRACE_ID; // advertise trace_id support (EVENT_RECORD 20B)
@@ -563,6 +675,22 @@ void socket_t::get_caps(uint8_t * local_caps) {
 
 void socket_t::update_caps(const uint8_t * remote_caps) {
     return pimpl->update_caps(remote_caps);
+}
+
+bool socket_t::init_udp(int udp_port) {
+    return pimpl->init_udp(udp_port);
+}
+
+bool socket_t::send_udp(const void * data, size_t size) const {
+    return pimpl->send_udp(data, size);
+}
+
+bool socket_t::udp_enabled() const {
+    return pimpl->udp_enabled();
+}
+
+uint32_t socket_t::udp_next_seq() {
+    return pimpl->udp_next_seq();
 }
 
 static bool is_valid_fd(sockfd_t sockfd) {

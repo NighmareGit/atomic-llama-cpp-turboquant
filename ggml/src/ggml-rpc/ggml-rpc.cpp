@@ -26,6 +26,15 @@
 #include <functional>
 #include <thread>
 
+// UDP listener for fire-and-forget graph submission (opt-in via GGML_RPC_UDP=1).
+#ifndef _WIN32
+#  include <arpa/inet.h>
+#  include <sys/socket.h>
+#  include <sys/types.h>
+#  include <netinet/in.h>
+#  include <unistd.h>
+#endif
+
 static const char * RPC_DEBUG = std::getenv("GGML_RPC_DEBUG");
 
 #define LOG_DBG(...) \
@@ -395,6 +404,71 @@ static bool rpc_server_telemetry_env_enabled() {
         v = e ? atoi(e) : 0;
     }
     return v != 0;
+}
+
+// UDP transport for fire-and-forget graph submission. Opt-in via GGML_RPC_UDP=1.
+// When enabled, the reuse paths in graph_compute send GRAPH_RECOMPUTE over UDP
+// instead of TCP. EVENT_RECORD stays on TCP (it needs reliable ordering for
+// synchronization). Falls back to TCP if UDP is not initialized or send fails.
+static bool rpc_udp_env_enabled() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_RPC_UDP");
+        v = e ? atoi(e) : 0;
+    }
+    return v != 0;
+}
+
+// UDP datagram header for graph recompute. Fixed 21-byte header (single-device)
+// or 25+4*n_devices (ALL variant). See PRD section 2.1 for the wire format.
+struct rpc_udp_header {
+    uint32_t magic;      // 0x474D4C01 ("GGML" + version)
+    uint32_t seq;        // monotonic per socket, wraps ok
+    uint8_t  cmd;        // RPC_CMD_GRAPH_RECOMPUTE or GRAPH_RECOMPUTE_ALL
+    uint32_t device;     // device index
+    uint64_t graph_uid;  // identifies cached graph on server
+};
+
+static constexpr uint32_t RPC_UDP_MAGIC = 0x474D4C01;
+
+// Send a graph recompute command over UDP. Returns true if the frame was sent
+// over UDP, false if the caller should fall back to TCP. udp_port is the
+// remote UDP port (tcp_port + 1 by convention, resolved by the caller from
+// the endpoint). The UDP socket is created lazily on first call per socket.
+static bool rpc_udp_send_graph(const socket_ptr & sock,
+                               const rpc_udp_header & hdr,
+                               const uint32_t * devices, uint32_t n_devices,
+                               int udp_port) {
+    if (!rpc_udp_env_enabled()) {
+        return false;
+    }
+    // Lazy-init the UDP socket on first use.
+    if (!sock->udp_enabled()) {
+        if (udp_port <= 0 || udp_port > 65535) {
+            GGML_LOG_ERROR("[%s] invalid udp_port %d\n", __func__, udp_port);
+            return false;
+        }
+        sock->init_udp(udp_port);
+        if (!sock->udp_enabled()) {
+            GGML_LOG_WARN("[%s] UDP init failed on port %d, will use TCP\n", __func__, udp_port);
+            return false;
+        }
+        LOG_DBG("[%s] UDP enabled on port %d for graph submission\n", __func__, udp_port);
+    }
+
+    // Pack the datagram: header + optional device list.
+    const size_t hdr_sz = sizeof(rpc_udp_header);
+    const size_t dev_sz = static_cast<size_t>(n_devices) * sizeof(uint32_t);
+    std::vector<uint8_t> pkt(hdr_sz + dev_sz);
+    rpc_udp_header net_hdr = hdr;
+    net_hdr.magic = RPC_UDP_MAGIC;
+    net_hdr.seq = sock->udp_next_seq();
+    memcpy(pkt.data(), &net_hdr, hdr_sz);
+    if (dev_sz > 0 && devices) {
+        memcpy(pkt.data() + hdr_sz, devices, dev_sz);
+    }
+    bool sent = sock->send_udp(pkt.data(), pkt.size());
+    return sent;
 }
 
 bool ggml_backend_rpc_dual_socket(void) {
@@ -939,6 +1013,9 @@ struct ggml_backend_rpc_context {
     // D4.5: multi-device dispatch state
     uint32_t    n_devices_on_endpoint = 0;
     bool        is_multi_device_capable = false;
+    // UDP transport: TCP port of the remote RPC server, used to derive the
+    // UDP port (tcp_port + 1). Populated at backend init from the endpoint.
+    int         tcp_port = 0;
 };
 
 struct ggml_backend_rpc_buffer_context {
@@ -2589,18 +2666,32 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
         bool reuse = cgraph->uid != 0 && rpc_dev_ctx->seen_graph_uids.count(cgraph->uid);
         if (reuse) {
             // D4.5: fire-and-forget + EVENT_RECORD (matches existing GRAPH_COMPUTE pattern)
+            // UDP transport (opt-in): send GRAPH_RECOMPUTE_ALL over UDP for a
+            // true fire-and-forget submission with no TCP round-trip. Falls
+            // back to TCP if UDP is disabled or send fails.
             rpc_msg_graph_recompute_all_req req = {};
             req.n_devices = n_devices;
             memcpy(req.devices, devices, n_devices * sizeof(uint32_t));
             req.graph_hash = cgraph->uid;
             req.sync_mode = 0; // fire-and-forget (use EVENT_RECORD for sync)
             req.output_requested = 0;
-            bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_RECOMPUTE_ALL, &req, sizeof(req));
-            RPC_STATUS_ASSERT(status);
+            int udp_port = rpc_ctx->tcp_port > 0 ? rpc_ctx->tcp_port + 1 : 0;
+            rpc_udp_header udp_hdr = {};
+            udp_hdr.cmd = RPC_CMD_GRAPH_RECOMPUTE_ALL;
+            udp_hdr.device = rpc_ctx->device;
+            udp_hdr.graph_uid = cgraph->uid;
+            bool udp_sent = rpc_udp_send_graph(sock, udp_hdr, req.devices, req.n_devices,
+                                               udp_port);
+            if (!udp_sent) {
+                bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_RECOMPUTE_ALL, &req, sizeof(req));
+                RPC_STATUS_ASSERT(status);
+            }
 
             // Send EVENT_RECORD deferred: response drained later by event_wait
             // or at the next RPC operation on this socket. This avoids blocking
             // the scheduler's for-loop, allowing ROCm dispatch to overlap.
+            // EVENT_RECORD stays on TCP even when GRAPH_RECOMPUTE used UDP —
+            // it needs reliable ordering for synchronization.
             uint64_t tid = ggml_pipeline_trace_get_trace_id();
             rpc_msg_event_record_req ev_req = {0, rpc_ctx->device, tid};
             size_t ev_sz = sock->server_supports_trace_id ? sizeof(ev_req) : 12;
@@ -2650,10 +2741,21 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
     const auto t0 = std::chrono::steady_clock::now();
     bool reuse = cgraph->uid != 0 && rpc_dev_ctx->seen_graph_uids.count(cgraph->uid);
     if (reuse) {
-        rpc_msg_graph_recompute_req request;
-        request.device = rpc_ctx->device;
-        bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_RECOMPUTE, &request, sizeof(request));
-        RPC_STATUS_ASSERT(status);
+        // UDP transport (opt-in): send GRAPH_RECOMPUTE over UDP for a true
+        // fire-and-forget submission with no TCP round-trip. Falls back to
+        // TCP if UDP is disabled or send fails.
+        int udp_port = rpc_ctx->tcp_port > 0 ? rpc_ctx->tcp_port + 1 : 0;
+        rpc_udp_header udp_hdr = {};
+        udp_hdr.cmd = RPC_CMD_GRAPH_RECOMPUTE;
+        udp_hdr.device = rpc_ctx->device;
+        udp_hdr.graph_uid = cgraph->uid;
+        bool udp_sent = rpc_udp_send_graph(sock, udp_hdr, nullptr, 0, udp_port);
+        if (!udp_sent) {
+            rpc_msg_graph_recompute_req request;
+            request.device = rpc_ctx->device;
+            bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_RECOMPUTE, &request, sizeof(request));
+            RPC_STATUS_ASSERT(status);
+        }
 
         uint64_t tid = ggml_pipeline_trace_get_trace_id();
         rpc_msg_event_record_req ev_req = {0, rpc_ctx->device, tid};
@@ -2781,6 +2883,15 @@ ggml_backend_t ggml_backend_rpc_init(const char * endpoint, uint32_t device) {
         /* .device                 = */ device,
         /* .name                   = */ dev_name,
     };
+    // UDP transport: parse the TCP port from the endpoint so graph_compute
+    // can derive the UDP port (tcp_port + 1) for fire-and-forget submission.
+    {
+        std::string host;
+        int port = 0;
+        if (parse_endpoint(endpoint, host, port)) {
+            ctx->tcp_port = port;
+        }
+    }
     // D4.5: query endpoint device count for multi-device dispatch
     // NOTE: get_socket() calls negotiate_hello() synchronously before returning,
     // so server_supports_multi_device is guaranteed to be populated by this point.
@@ -4634,6 +4745,106 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
     }
 }
 
+// UDP listener for fire-and-forget graph submission. Runs a dedicated thread
+// that recvfrom()s datagrams on udp_port, parses the rpc_udp_header, and
+// enqueues GRAPH_RECOMPUTE / GRAPH_RECOMPUTE_ALL on the compute worker —
+// exactly like the TCP dispatch path does for these commands.
+//
+// Loss tolerance: if the magic or cmd is invalid, the frame is dropped
+// silently. Sequence gaps (detected via seq number) are logged at most once
+// per second. Out-of-order and duplicate frames are accepted — the server's
+// graph_recompute is idempotent and the next token's frame supersedes.
+static void rpc_udp_listener(rpc_server & server, int udp_port) {
+    if (udp_port <= 0 || udp_port > 65535) {
+        return;
+    }
+    auto sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        GGML_LOG_ERROR("[udp-listener] socket(SOCK_DGRAM) failed\n");
+        return;
+    }
+    int reuse = 1;
+    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse, sizeof(reuse));
+    sockaddr_in addr = {};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(static_cast<uint16_t>(udp_port));
+    if (bind(sockfd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0) {
+        GGML_LOG_ERROR("[udp-listener] bind(port %d) failed\n", udp_port);
+        close(sockfd);
+        return;
+    }
+    GGML_LOG_INFO("[udp-listener] listening on UDP port %d\n", udp_port);
+
+    // Track last-seen seq per remote so we can log gaps (rate-limited).
+    struct peer_state {
+        uint32_t last_seq = UINT32_MAX;
+        int64_t  last_gap_log_us = 0;
+    };
+    std::unordered_map<uint64_t, peer_state> peers; // key = (addr << 16) | port
+
+    std::vector<uint8_t> buf(1024); // max UDP datagram we expect
+    while (true) {
+        sockaddr_in from = {};
+        socklen_t from_len = sizeof(from);
+        ssize_t n = recvfrom(sockfd, reinterpret_cast<char *>(buf.data()), buf.size(), 0,
+                             reinterpret_cast<sockaddr *>(&from), &from_len);
+        if (n < 0) {
+            continue;
+        }
+        size_t got = static_cast<size_t>(n);
+        const size_t hdr_sz = sizeof(rpc_udp_header);
+        if (got < hdr_sz) {
+            continue; // too small
+        }
+        rpc_udp_header hdr;
+        memcpy(&hdr, buf.data(), hdr_sz);
+        if (hdr.magic != RPC_UDP_MAGIC) {
+            continue; // not our protocol
+        }
+        // Log sequence gaps (rate-limited to 1 Hz per peer).
+        uint64_t peer_key = (static_cast<uint64_t>(from.sin_addr.s_addr) << 16)
+                          | static_cast<uint64_t>(ntohs(from.sin_port));
+        auto & ps = peers[peer_key];
+        if (ps.last_seq != UINT32_MAX && hdr.seq != ps.last_seq + 1) {
+            const auto now_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            if (now_us - ps.last_gap_log_us > 1000000) {
+                GGML_LOG_WARN("[udp-listener] seq gap: expected %u, got %u (frame dropped)\n",
+                              ps.last_seq + 1, hdr.seq);
+                ps.last_gap_log_us = now_us;
+            }
+        }
+        ps.last_seq = hdr.seq;
+
+        if (hdr.cmd == RPC_CMD_GRAPH_RECOMPUTE) {
+            if (got != hdr_sz) {
+                continue;
+            }
+            rpc_msg_graph_recompute_req req = {};
+            req.device = hdr.device;
+            server.enqueue_graph_recompute(req);
+        } else if (hdr.cmd == RPC_CMD_GRAPH_RECOMPUTE_ALL) {
+            // Parse the device list that follows the header.
+            const uint32_t n_devices = (got > hdr_sz) ?
+                static_cast<uint32_t>((got - hdr_sz) / sizeof(uint32_t)) : 0;
+            rpc_msg_graph_recompute_all_req req = {};
+            req.graph_hash = hdr.graph_uid;
+            req.sync_mode = 0; // fire-and-forget
+            req.output_requested = 0;
+            for (uint32_t i = 0; i < n_devices && i < GGML_RPC_MAX_DEVICES; i++) {
+                uint32_t dev;
+                memcpy(&dev, buf.data() + hdr_sz + i * sizeof(uint32_t), sizeof(dev));
+                req.devices[i] = dev;
+                req.n_devices++;
+            }
+            server.enqueue_graph_recompute_all(req);
+        }
+        // Unknown cmd: drop silently.
+    }
+    close(sockfd);
+}
+
 void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir,
                                    size_t n_threads, size_t n_devices, ggml_backend_dev_t * devices) {
     if (n_devices == 0 || devices == nullptr) {
@@ -4689,6 +4900,17 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
         fprintf(stderr, "Failed to create server socket\n");
         return;
     }
+    // UDP transport (prototype): a connectionless UDP listener that receives
+    // fire-and-forget graph recompute frames. It uses its own rpc_server
+    // instance sharing the same backends. NOTE: because stored_graphs are
+    // per-rpc_server, UDP recompute requires the graph to have been submitted
+    // through this same UDP server instance. This is a known prototype
+    // limitation — production would use a shared server across connections.
+    // The shared_ptr keeps the UDP server alive even if the accept loop
+    // returns early (the listener thread captures the shared_ptr).
+    auto udp_server = std::make_shared<rpc_server>(backends, cache_dir ? cache_dir : "");
+    int udp_port = (port > 0 && port < 65535) ? port + 1 : 0;
+    std::thread([udp_server, udp_port]() { rpc_udp_listener(*udp_server, udp_port); }).detach();
     while (true) {
         auto client_socket = server_socket->accept();
         if (client_socket == nullptr) {

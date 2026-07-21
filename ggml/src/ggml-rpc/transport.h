@@ -19,6 +19,15 @@ struct socket_t {
     bool send_data(const void * data, size_t size);
     bool recv_data(void * data, size_t size);
 
+    // UDP transport for fire-and-forget graph submission (opt-in via GGML_RPC_UDP=1).
+    // init_udp() creates a UDP socket aimed at the remote's UDP port (tcp_port+1
+    // by default). send_udp() fires a single datagram — no ACK, no retransmit.
+    // Returns false if UDP was not initialized (caller falls back to TCP).
+    bool init_udp(int udp_port);
+    bool send_udp(const void * data, size_t size) const;
+    bool udp_enabled() const;
+    uint32_t udp_next_seq();
+
     socket_ptr accept();
 
     void get_caps(uint8_t * local_caps);
