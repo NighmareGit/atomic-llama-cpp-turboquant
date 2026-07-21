@@ -2953,8 +2953,11 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
         const auto compute_t0 = std::chrono::steady_clock::now();
         const int64_t t_compute_start_us = sched_trace_lvl() ? ggml_time_us() : 0;
         if (!sched->callback_eval) {
-            if (ggml_sched_per_node_timing_enabled()) {
+            if (ggml_sched_per_node_timing_enabled() && !ggml_backend_is_rpc_backend(split_backend)) {
                 // Per-node timing for placement-grade heatmaps (issue 12).
+                // Skip for RPC backends: graph_view resets uid to 0, defeating the
+                // RPC graph-compute reuse optimization. RPC per-node timing is handled
+                // server-side via rpc_node_sample_interval().
                 std::vector<sched_node_timing> node_timings;
                 uint64_t split_us = compute_split_per_node(split_backend, split->graph, node_timings);
                 sched_trace_emit_node_timings(split_id, split_backend_id, sched->cur_copy, split_us, node_timings);
