@@ -157,7 +157,8 @@ enum rpc_cmd {
     RPC_CMD_GRAPH_COMPUTE_ALL,    // Path C: submit full graph for server-side multi-GPU compute (value 21)
     RPC_CMD_GRAPH_RECOMPUTE_ALL,  // Path C: re-execute cached graph (value 22)
     RPC_CMD_GRAPH_COMPUTE_STAGE,  // D6.9: per-stage split filtering for GPipe + profiler (value 23)
-    RPC_CMD_COUNT,                 // updated from 22
+    RPC_CMD_ALLOC_BUFFER_SPLIT,   // Allocate a buffer for a tensor row slice on a specific device (value 24)
+    RPC_CMD_COUNT,                 // updated from 23
 };
 
 static_assert(RPC_CMD_HELLO == 14, "RPC_CMD_HELLO must be always 14");
@@ -501,6 +502,10 @@ static std::vector<std::weak_ptr<socket_t>> g_rpc_socket_registry;
 static std::mutex g_rpc_reg_map_mutex;
 static std::unordered_map<std::string, ggml_backend_reg_t> g_rpc_reg_map;
 static uint32_t g_rpc_dev_id = 0;
+
+// Map from global device ID to endpoint for split buffer type lookups
+static std::mutex g_rpc_dev_endpoint_mutex;
+static std::unordered_map<uint32_t, std::string> g_rpc_dev_endpoint_map;
 
 static void rpc_register_socket(const socket_ptr & sock) {
     if (!sock) {
@@ -865,6 +870,19 @@ struct rpc_msg_server_telemetry {
     uint64_t kv_write_times_us[RPC_TELEMETRY_MAX_SLOTS];
 };
 
+// Split buffer allocation: allocate memory for a tensor row slice on a specific device
+struct rpc_msg_alloc_buffer_split_req {
+    uint32_t   device;
+    rpc_tensor tensor;
+    int64_t    row_low;
+    int64_t    row_high;
+};
+
+struct rpc_msg_alloc_buffer_split_rsp {
+    uint64_t remote_ptr;
+    uint64_t remote_size;
+};
+
 #pragma pack(pop)
 
 // Path B: client-side event payload stored in ggml_backend_event::context
@@ -989,6 +1007,7 @@ static ggml_guid_t ggml_backend_rpc_guid() {
 struct ggml_backend_rpc_device_context {
     std::string endpoint;
     uint32_t    device;
+    uint32_t    global_index; // global rank across all backends (for split buffer)
     std::string name;
     std::string description;
     std::unordered_set<uint64_t> seen_graph_uids;
@@ -1049,6 +1068,60 @@ static uint64_t fnv_hash(const uint8_t * data, size_t len) {
     }
     return hash;
 }
+
+// ---- RPC split buffer helpers ----
+
+// Compute row range for a specific device in a tensor split.
+// tensor_split is an array of per-device non-normalized fractional weights
+// (e.g., {60, 40} for a 60/40 split). n_dev is the number of non-zero entries.
+// id is the device index within this split.
+static void rpc_get_row_split(int64_t * row_low, int64_t * row_high,
+                               const ggml_tensor * tensor,
+                               const float * tensor_split, int n_dev, int id) {
+    GGML_ASSERT(id >= 0 && id < n_dev);
+    const int64_t nrows = (int64_t) tensor->ne[1];
+
+    // Compute total split sum and cumulative fractions
+    float split_sum = 0.0f;
+    for (int i = 0; i < n_dev; i++) {
+        split_sum += tensor_split[i];
+    }
+    GGML_ASSERT(split_sum > 0.0f);
+
+    float cum_before = 0.0f;
+    for (int i = 0; i < id; i++) {
+        cum_before += tensor_split[i] / split_sum;
+    }
+    float cum_after = cum_before + tensor_split[id] / split_sum;
+
+    *row_low  = (int64_t)(cum_before * (float) nrows);
+    *row_high = (int64_t)(cum_after  * (float) nrows);
+
+    // Clamp to valid range
+    if (*row_low  < 0)     *row_low  = 0;
+    if (*row_high > nrows) *row_high = nrows;
+    if (*row_low  > *row_high) *row_low = *row_high;
+}
+
+// Compute byte size for nrows_split rows of a tensor.
+// Matches ggml_nbytes_split from ggml-cuda.cu.
+static size_t rpc_nbytes_split(const ggml_tensor * tensor, int64_t nrows_split) {
+    GGML_ASSERT(nrows_split <= (int64_t) tensor->ne[1]);
+    return (size_t) nrows_split * tensor->nb[1];
+}
+
+// Count the number of non-zero entries in a tensor_split array (up to max_dev).
+static int rpc_count_split_devices(const float * tensor_split, int max_dev) {
+    int n_dev = 0;
+    for (int i = 0; i < max_dev; i++) {
+        if (tensor_split[i] > 0.0f) {
+            n_dev = i + 1;
+        }
+    }
+    return n_dev;
+}
+
+// ---- end RPC split buffer helpers ----
 
 static bool send_msg(socket_ptr sock, const void * msg, size_t msg_size) {
     if (!sock->send_data(&msg_size, sizeof(msg_size))) {
@@ -2963,6 +3036,7 @@ public:
 
     void hello(rpc_msg_hello_rsp & response);
     bool alloc_buffer(const rpc_msg_alloc_buffer_req & request, rpc_msg_alloc_buffer_rsp & response);
+    bool alloc_buffer_split(const rpc_msg_alloc_buffer_split_req & request, rpc_msg_alloc_buffer_split_rsp & response);
     bool get_alignment(const rpc_msg_get_alignment_req & request, rpc_msg_get_alignment_rsp & response);
     bool get_max_size(const rpc_msg_get_max_size_req & request, rpc_msg_get_max_size_rsp & response);
     bool buffer_get_base(const rpc_msg_buffer_get_base_req & request, rpc_msg_buffer_get_base_rsp & response);
@@ -3104,6 +3178,54 @@ bool rpc_server::alloc_buffer(const rpc_msg_alloc_buffer_req & request, rpc_msg_
         buffers.insert(buffer);
     } else {
         LOG_DBG("[%s] device: %d, size: %" PRIu64 " -> failed\n", __func__, dev_id, request.size);
+    }
+    return true;
+}
+
+bool rpc_server::alloc_buffer_split(const rpc_msg_alloc_buffer_split_req & request, rpc_msg_alloc_buffer_split_rsp & response) {
+    uint32_t dev_id = request.device;
+    if (dev_id >= backends.size()) {
+        return false;
+    }
+
+    struct ggml_init_params params {
+        /*.mem_size   =*/ ggml_tensor_overhead(),
+        /*.mem_buffer =*/ NULL,
+        /*.no_alloc   =*/ true,
+    };
+    ggml_context_ptr ctx_ptr { ggml_init(params) };
+    GGML_ASSERT(ctx_ptr != nullptr);
+    ggml_context * ctx = ctx_ptr.get();
+
+    ggml_tensor * tensor = deserialize_tensor(ctx, &request.tensor);
+    if (tensor == nullptr) {
+        GGML_LOG_ERROR("[%s] error deserializing tensor\n", __func__);
+        return false;
+    }
+
+    int64_t nrows_split = request.row_high - request.row_low;
+    if (nrows_split <= 0) {
+        response.remote_ptr = 0;
+        response.remote_size = 0;
+        return true;
+    }
+
+    size_t alloc_size = rpc_nbytes_split(tensor, nrows_split);
+
+    ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(backends[dev_id]);
+    ggml_backend_buffer_t buffer = ggml_backend_buft_alloc_buffer(buft, alloc_size);
+
+    response.remote_ptr = 0;
+    response.remote_size = 0;
+    if (buffer != nullptr) {
+        response.remote_ptr = reinterpret_cast<uint64_t>(buffer);
+        response.remote_size = buffer->size;
+        LOG_DBG("[%s] device: %d, nrows_split: %" PRId64 ", alloc_size: %zu -> remote_ptr: %" PRIx64 ", remote_size: %" PRIu64 "\n",
+            __func__, dev_id, nrows_split, alloc_size, response.remote_ptr, response.remote_size);
+        buffers.insert(buffer);
+    } else {
+        LOG_DBG("[%s] device: %d, nrows_split: %" PRId64 ", alloc_size: %zu -> failed\n",
+            __func__, dev_id, nrows_split, alloc_size);
     }
     return true;
 }
@@ -4398,6 +4520,20 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 }
                 break;
             }
+            case RPC_CMD_ALLOC_BUFFER_SPLIT: {
+                rpc_msg_alloc_buffer_split_req request;
+                if (!recv_msg(sock, &request, sizeof(request))) {
+                    return;
+                }
+                rpc_msg_alloc_buffer_split_rsp response;
+                if (!server.alloc_buffer_split(request, response)) {
+                    return;
+                }
+                if (!send_response(sock, &response, sizeof(response))) {
+                    return;
+                }
+                break;
+            }
             case RPC_CMD_GET_ALLOC_SIZE: {
                 rpc_msg_get_alloc_size_req request;
                 if (!recv_msg(sock, &request, sizeof(request))) {
@@ -5070,6 +5206,313 @@ static ggml_backend_dev_t ggml_backend_rpc_reg_get_device(ggml_backend_reg_t reg
     }
 }
 
+// ---- RPC split buffer type (client-side) ----
+
+struct ggml_backend_rpc_split_buffer_type_context {
+    int         device;       // RPC-local device index
+    int         split_id;     // global split rank for this RPC device
+    int         n_dev;        // total number of devices in the split
+    float       tensor_split[GGML_RPC_MAX_DEVICES];
+    std::string name;
+    std::string endpoint;
+};
+
+struct ggml_backend_rpc_split_buffer_context {
+    ~ggml_backend_rpc_split_buffer_context() {
+        // Free each per-tensor allocation on the remote server
+        auto sock = get_socket(endpoint);
+        if (!sock) return;
+        for (const auto & slice : slices) {
+            if (slice.remote_ptr != 0) {
+                rpc_msg_free_buffer_req req = {slice.remote_ptr};
+                send_rpc_cmd(sock, RPC_CMD_FREE_BUFFER, &req, sizeof(req), nullptr, 0);
+            }
+        }
+    }
+
+    struct tensor_slice {
+        uint64_t remote_ptr;
+        uint64_t remote_size;
+        int64_t  row_low;
+        int64_t  row_high;
+    };
+
+    std::vector<tensor_slice> slices;
+    std::string endpoint;
+};
+
+static void ggml_backend_rpc_split_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+    ggml_backend_rpc_split_buffer_context * ctx = (ggml_backend_rpc_split_buffer_context *)buffer->context;
+    delete ctx;
+}
+
+static void * ggml_backend_rpc_split_buffer_get_base(ggml_backend_buffer_t buffer) {
+    // Return a dummy address (like CUDA split buffer does)
+    return (void *)0x2000;
+
+    GGML_UNUSED(buffer);
+}
+
+static enum ggml_status ggml_backend_rpc_split_buffer_init_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor) {
+    ggml_backend_rpc_split_buffer_context * buf_ctx = (ggml_backend_rpc_split_buffer_context *)buffer->context;
+    ggml_backend_rpc_split_buffer_type_context * buft_ctx = (ggml_backend_rpc_split_buffer_type_context *)buffer->buft->context;
+
+    GGML_ASSERT(tensor->view_src == nullptr); // views of split tensors are not supported
+    GGML_ASSERT(ggml_is_contiguous(tensor) && "split buffers only supported for contiguous tensors");
+
+    int64_t row_low, row_high;
+    rpc_get_row_split(&row_low, &row_high, tensor, buft_ctx->tensor_split, buft_ctx->n_dev, buft_ctx->split_id);
+
+    int64_t nrows_split = row_high - row_low;
+    if (nrows_split == 0) {
+        return GGML_STATUS_SUCCESS;
+    }
+
+    // Allocate remote buffer for this tensor slice
+    auto sock = get_socket(buft_ctx->endpoint);
+    if (!sock) {
+        GGML_LOG_ERROR("[%s] failed to connect to %s\n", __func__, buft_ctx->endpoint.c_str());
+        return GGML_STATUS_ABORTED;
+    }
+
+    rpc_msg_alloc_buffer_split_req request;
+    request.device = buft_ctx->device;
+    request.tensor = serialize_tensor(tensor);
+    request.tensor.buffer = 0; // No buffer context yet on server for this slice
+    request.tensor.data   = 0;
+    request.row_low  = row_low;
+    request.row_high = row_high;
+
+    rpc_msg_alloc_buffer_split_rsp response;
+    bool status = send_rpc_cmd(sock, RPC_CMD_ALLOC_BUFFER_SPLIT, &request, sizeof(request), &response, sizeof(response));
+    RPC_STATUS_ASSERT(status);
+
+    if (response.remote_ptr != 0) {
+        ggml_backend_rpc_split_buffer_context::tensor_slice slice;
+        slice.remote_ptr = response.remote_ptr;
+        slice.remote_size = response.remote_size;
+        slice.row_low  = row_low;
+        slice.row_high = row_high;
+        buf_ctx->slices.push_back(slice);
+    }
+
+    return GGML_STATUS_SUCCESS;
+}
+
+static void ggml_backend_rpc_split_buffer_set_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
+    // Split tensors must always be set in their entirety at once
+    GGML_ASSERT(offset == 0);
+    GGML_ASSERT(size == ggml_nbytes(tensor));
+    GGML_ASSERT(ggml_is_contiguous(tensor) && "split buffers only supported for contiguous tensors");
+
+    ggml_backend_rpc_split_buffer_context * buf_ctx = (ggml_backend_rpc_split_buffer_context *)buffer->context;
+    ggml_backend_rpc_split_buffer_type_context * buft_ctx = (ggml_backend_rpc_split_buffer_type_context *)buffer->buft->context;
+
+    if (buf_ctx->slices.empty()) {
+        return; // no data for this device
+    }
+
+    const size_t nb1 = tensor->nb[1];
+    auto sock = get_socket(buft_ctx->endpoint);
+    GGML_ASSERT(sock != nullptr);
+
+    for (const auto & slice : buf_ctx->slices) {
+        // Compute offset within the full tensor data for this device's rows
+        size_t slice_offset = (size_t) slice.row_low * nb1;
+        size_t slice_size = rpc_nbytes_split(tensor, slice.row_high - slice.row_low);
+
+        const uint8_t * slice_data = (const uint8_t *)data + slice_offset;
+
+        // Serialize tensor with the split buffer's remote_ptr
+        rpc_tensor rpc_t = serialize_tensor(tensor);
+        rpc_t.buffer = slice.remote_ptr;
+        rpc_t.data   = reinterpret_cast<uint64_t>(tensor->data);
+
+        rpc_issue_set_tensor_payload(sock, rpc_t, 0, slice_data, slice_size);
+    }
+}
+
+static void ggml_backend_rpc_split_buffer_get_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * tensor, void * data, size_t offset, size_t size) {
+    // Split tensors must always be retrieved in their entirety at once
+    GGML_ASSERT(offset == 0);
+    GGML_ASSERT(size == ggml_nbytes(tensor));
+    GGML_ASSERT(ggml_is_contiguous(tensor) && "split buffers only supported for contiguous tensors");
+
+    ggml_backend_rpc_split_buffer_context * buf_ctx = (ggml_backend_rpc_split_buffer_context *)buffer->context;
+    ggml_backend_rpc_split_buffer_type_context * buft_ctx = (ggml_backend_rpc_split_buffer_type_context *)buffer->buft->context;
+
+    if (buf_ctx->slices.empty()) {
+        return;
+    }
+
+    const size_t nb1 = tensor->nb[1];
+    auto sock = get_socket(buft_ctx->endpoint);
+    GGML_ASSERT(sock != nullptr);
+
+    for (const auto & slice : buf_ctx->slices) {
+        size_t slice_offset = (size_t) slice.row_low * nb1;
+        size_t slice_size = rpc_nbytes_split(tensor, slice.row_high - slice.row_low);
+
+        uint8_t * slice_data = (uint8_t *)data + slice_offset;
+
+        rpc_msg_get_tensor_req request;
+        request.tensor = serialize_tensor(tensor);
+        request.tensor.buffer = slice.remote_ptr;
+        request.tensor.data   = reinterpret_cast<uint64_t>(tensor->data);
+        request.offset = 0;
+        request.size = slice_size;
+
+        bool status = send_rpc_cmd(sock, RPC_CMD_GET_TENSOR, &request, sizeof(request), slice_data, slice_size);
+        RPC_STATUS_ASSERT(status);
+    }
+}
+
+static void ggml_backend_rpc_split_buffer_clear(ggml_backend_buffer_t buffer, uint8_t value) {
+    // No-op for split buffers (consistent with CUDA split buffer)
+    GGML_UNUSED(buffer);
+    GGML_UNUSED(value);
+}
+
+static const ggml_backend_buffer_i ggml_backend_rpc_split_buffer_interface = {
+    /* .free_buffer     = */ ggml_backend_rpc_split_buffer_free_buffer,
+    /* .get_base        = */ ggml_backend_rpc_split_buffer_get_base,
+    /* .init_tensor     = */ ggml_backend_rpc_split_buffer_init_tensor,
+    /* .memset_tensor   = */ NULL,
+    /* .set_tensor      = */ ggml_backend_rpc_split_buffer_set_tensor,
+    /* .get_tensor      = */ ggml_backend_rpc_split_buffer_get_tensor,
+    /* .set_tensor_2d   = */ NULL,
+    /* .get_tensor_2d   = */ NULL,
+    /* .cpy_tensor      = */ NULL,
+    /* .clear           = */ ggml_backend_rpc_split_buffer_clear,
+    /* .reset           = */ NULL,
+};
+
+// RPC split buffer type
+
+static const char * ggml_backend_rpc_split_buffer_type_get_name(ggml_backend_buffer_type_t buft) {
+    ggml_backend_rpc_split_buffer_type_context * ctx = (ggml_backend_rpc_split_buffer_type_context *)buft->context;
+    return ctx->name.c_str();
+}
+
+static ggml_backend_buffer_t ggml_backend_rpc_split_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
+    // We don't know the exact split after rounding, so allocate the device buffers
+    // for each tensor separately in init_tensor. However, the size still represents
+    // the maximum cumulative size as returned by get_alloc_size.
+    ggml_backend_rpc_split_buffer_context * ctx = new ggml_backend_rpc_split_buffer_context();
+    ctx->endpoint = ((ggml_backend_rpc_split_buffer_type_context *)buft->context)->endpoint;
+    return ggml_backend_buffer_init(buft, ggml_backend_rpc_split_buffer_interface, ctx, size);
+}
+
+static size_t ggml_backend_rpc_split_buffer_type_get_alignment(ggml_backend_buffer_type_t buft) {
+    return 128;
+    GGML_UNUSED(buft);
+}
+
+static size_t ggml_backend_rpc_split_buffer_type_get_alloc_size(ggml_backend_buffer_type_t buft, const ggml_tensor * tensor) {
+    ggml_backend_rpc_split_buffer_type_context * ctx = (ggml_backend_rpc_split_buffer_type_context *)buft->context;
+    GGML_ASSERT(ggml_is_contiguous(tensor) && "split buffers only supported for contiguous tensors");
+
+    int64_t row_low, row_high;
+    rpc_get_row_split(&row_low, &row_high, tensor, ctx->tensor_split, ctx->n_dev, ctx->split_id);
+
+    int64_t nrows_split = row_high - row_low;
+    if (nrows_split == 0) {
+        return 0;
+    }
+
+    return rpc_nbytes_split(tensor, nrows_split);
+}
+
+static bool ggml_backend_rpc_split_buffer_type_is_host(ggml_backend_buffer_type_t buft) {
+    return false;
+    GGML_UNUSED(buft);
+}
+
+static const ggml_backend_buffer_type_i ggml_backend_rpc_split_buffer_type_interface = {
+    /* .get_name         = */ ggml_backend_rpc_split_buffer_type_get_name,
+    /* .alloc_buffer     = */ ggml_backend_rpc_split_buffer_type_alloc_buffer,
+    /* .get_alignment    = */ ggml_backend_rpc_split_buffer_type_get_alignment,
+    /* .get_max_size     = */ NULL, // defaults to SIZE_MAX
+    /* .get_alloc_size   = */ ggml_backend_rpc_split_buffer_type_get_alloc_size,
+    /* .is_host          = */ ggml_backend_rpc_split_buffer_type_is_host,
+};
+
+// Factory function for the RPC split buffer type.
+// tensor_split is an array of per-device fractional weights (e.g., {60, 40} for 60/40).
+// device is the RPC-local device index on the remote server.
+// The factory computes the global split position by counting non-zero entries
+// in tensor_split and assuming RPC devices occupy the last positions.
+static ggml_backend_buffer_type_t ggml_backend_rpc_split_buffer_type(
+    int device, const float * tensor_split) {
+
+    int n_dev = rpc_count_split_devices(tensor_split, GGML_RPC_MAX_DEVICES);
+
+    // Count total RPC devices registered so far to determine the base offset.
+    // RPC devices occupy the last n_rpc positions in the tensor_split array.
+    // The first RPC device is at split_id = n_dev - n_rpc, the last at n_dev - 1.
+    int n_rpc_total = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_rpc_reg_map_mutex);
+        for (const auto & pair : g_rpc_reg_map) {
+            ggml_backend_rpc_reg_context * rctx = (ggml_backend_rpc_reg_context *)pair.second->context;
+            n_rpc_total += (int) rctx->devices.size();
+        }
+    }
+
+    // This device's global split position
+    int split_id = n_dev - n_rpc_total + device;
+    if (split_id < 0 || split_id >= n_dev) {
+        GGML_LOG_ERROR("[%s] invalid split_id=%d for device=%d, n_dev=%d, n_rpc=%d\n",
+                       __func__, split_id, device, n_dev, n_rpc_total);
+        // Fallback: use device as split_id
+        split_id = device;
+    }
+
+    ggml_backend_rpc_split_buffer_type_context * ctx = new ggml_backend_rpc_split_buffer_type_context;
+    ctx->device     = device;
+    ctx->split_id   = split_id;
+    ctx->n_dev      = n_dev;
+    ctx->name       = "RPC" + std::to_string(device) + "_Split";
+
+    // Copy tensor_split
+    for (int i = 0; i < GGML_RPC_MAX_DEVICES && i < n_dev; i++) {
+        ctx->tensor_split[i] = tensor_split ? tensor_split[i] : 0.0f;
+    }
+
+    // Find endpoint from the global device-to-endpoint map
+    {
+        std::lock_guard<std::mutex> lock(g_rpc_reg_map_mutex);
+        for (const auto & pair : g_rpc_reg_map) {
+            ggml_backend_rpc_reg_context * rctx = (ggml_backend_rpc_reg_context *)pair.second->context;
+            for (auto * dev : rctx->devices) {
+                ggml_backend_rpc_device_context * dctx = (ggml_backend_rpc_device_context *)dev->context;
+                if (dctx->device == (uint32_t) device) {
+                    ctx->endpoint = dctx->endpoint;
+                    break;
+                }
+            }
+            if (!ctx->endpoint.empty()) break;
+        }
+    }
+
+    if (ctx->endpoint.empty()) {
+        GGML_LOG_WARN("[%s] no endpoint found for device %d\n", __func__, device);
+        delete ctx;
+        return nullptr;
+    }
+
+    struct ggml_backend_buffer_type buft;
+    buft.iface   = ggml_backend_rpc_split_buffer_type_interface;
+    buft.device  = nullptr; // Will be resolved by the caller
+    buft.context = ctx;
+
+    // Allocate the buffer type on the heap (caller manages lifetime)
+    ggml_backend_buffer_type_t result = new ggml_backend_buffer_type(buft);
+    return result;
+}
+
+// ---- end RPC split buffer type ----
+
 static void * ggml_backend_rpc_get_proc_address(ggml_backend_reg_t reg, const char * name) {
     if (std::strcmp(name, "ggml_backend_rpc_add_server") == 0) {
         return (void *)ggml_backend_rpc_add_server;
@@ -5079,6 +5522,9 @@ static void * ggml_backend_rpc_get_proc_address(ggml_backend_reg_t reg, const ch
     }
     if (std::strcmp(name, "ggml_backend_rpc_get_device_memory") == 0) {
         return (void *)ggml_backend_rpc_get_device_memory;
+    }
+    if (std::strcmp(name, "ggml_backend_split_buffer_type") == 0) {
+        return (void *)ggml_backend_rpc_split_buffer_type;
     }
     return NULL;
 
@@ -5146,10 +5592,11 @@ ggml_backend_reg_t ggml_backend_rpc_add_server(const char * endpoint) {
         std::string dev_name = "RPC" + std::to_string(g_rpc_dev_id);
         std::string dev_desc = std::string(endpoint);
         ggml_backend_rpc_device_context * dev_ctx = new ggml_backend_rpc_device_context {
-            /* .endpoint    = */    endpoint,
-            /* .device      = */    ind,
-            /* .name        = */    dev_name,
-            /* .description = */    dev_desc,
+            /* .endpoint     = */    endpoint,
+            /* .device       = */    ind,
+            /* .global_index = */    g_rpc_dev_id,
+            /* .name         = */    dev_name,
+            /* .description  = */    dev_desc,
             // seen_graph_uids default-constructs empty
         };
 
@@ -5159,6 +5606,10 @@ ggml_backend_reg_t ggml_backend_rpc_add_server(const char * endpoint) {
             /* .context = */ dev_ctx,
         };
         ctx->devices.push_back(dev);
+        {
+            std::lock_guard<std::mutex> ep_lock(g_rpc_dev_endpoint_mutex);
+            g_rpc_dev_endpoint_map[g_rpc_dev_id] = std::string(endpoint);
+        }
         g_rpc_dev_id++;
     }
     ggml_backend_reg_t reg = new ggml_backend_reg {
