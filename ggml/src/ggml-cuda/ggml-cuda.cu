@@ -593,10 +593,6 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
         // all deallocations must be in reverse order of the allocations
         GGML_ASSERT(ptr == (void *) ((char *)(pool_addr) + pool_used));
     }
-
-    void clear_pool() override {
-        pool_used = 0;
-    }
 };
 #endif // defined(GGML_USE_VMM)
 
@@ -3643,16 +3639,6 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
     GGML_UNUSED(backend);
 }
 
-static void ggml_backend_cuda_release_cached_memory(ggml_backend_t backend) {
-    ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
-
-    for (auto & pool : cuda_ctx->pools) {
-        if (pool) {
-            pool->clear_pool();
-        }
-    }
-}
-
 #ifdef USE_CUDA_GRAPH
 static bool ggml_cuda_graph_check_compability(ggml_cgraph * cgraph) {
 
@@ -5205,7 +5191,6 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
     /* .get_tensor_2d_async     = */ ggml_backend_cuda_get_tensor_2d_async,
     /* .cpy_tensor_async        = */ ggml_backend_cuda_cpy_tensor_async,
     /* .synchronize             = */ ggml_backend_cuda_synchronize,
-    /* .release_cached_memory   = */ ggml_backend_cuda_release_cached_memory,
     /* .graph_plan_create       = */ NULL,
     /* .graph_plan_free         = */ NULL,
     /* .graph_plan_update       = */ NULL,
@@ -5223,6 +5208,42 @@ static ggml_guid_t ggml_backend_cuda_guid() {
 
 bool ggml_backend_is_cuda(ggml_backend_t backend) {
     return backend != NULL && ggml_guid_matches(backend->guid, ggml_backend_cuda_guid());
+}
+
+// B+16: record an event on the backend's CUDA stream and export its IPC handle.
+// The caller must ensure CUDA is loaded and the backend is a CUDA backend.
+bool ggml_backend_cuda_get_ipc_event_handle(ggml_backend_t backend, uint8_t * ipc_handle) {
+    if (!ggml_backend_is_cuda(backend)) {
+        return false;
+    }
+    ggml_backend_cuda_context * ctx = (ggml_backend_cuda_context *) backend->context;
+    cudaEvent_t event;
+    // cudaEventDisableTiming: faster, no timing overhead (we only need ordering)
+    // cudaEventInterprocess: required for cudaIpcGetEventHandle
+    cudaError_t err = cudaEventCreate(&event, cudaEventInterprocess | cudaEventDisableTiming);
+    if (err != cudaSuccess) {
+        GGML_LOG_ERROR("[%s] cudaEventCreate failed: %s\n", __func__, cudaGetErrorString(err));
+        return false;
+    }
+    err = cudaEventRecord(event, ctx->stream());
+    if (err != cudaSuccess) {
+        GGML_LOG_ERROR("[%s] cudaEventRecord failed: %s\n", __func__, cudaGetErrorString(err));
+        cudaEventDestroy(event);
+        return false;
+    }
+    cudaIpcEventHandle_t handle;
+    err = cudaIpcGetEventHandle(&handle, event);
+    if (err != cudaSuccess) {
+        GGML_LOG_ERROR("[%s] cudaIpcGetEventHandle failed: %s\n", __func__, cudaGetErrorString(err));
+        cudaEventDestroy(event);
+        return false;
+    }
+    // Per CUDA docs, the event must remain alive until all peers have opened it.
+    // We destroy it here for simplicity; the handle remains valid for already-
+    // recorded events on the same stream. For a production server, pool these.
+    cudaEventDestroy(event);
+    memcpy(ipc_handle, &handle, sizeof(handle));
+    return true;
 }
 
 int ggml_backend_cuda_get_device_count() {

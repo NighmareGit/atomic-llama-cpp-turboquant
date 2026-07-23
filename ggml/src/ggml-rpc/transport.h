@@ -12,6 +12,7 @@ static constexpr size_t RPC_CONN_CAPS_SIZE = 24;
 static constexpr uint8_t  RPC_CAP_TRACE_ID        = 1u << 0; // for trace_id in EVENT_RECORD (proto patch 3+)
 static constexpr uint8_t  RPC_CAP_MULTI_DEVICE    = 1u << 1; // Path C: server-side multi-GPU scheduling
 static constexpr uint8_t  RPC_CAP_SERVER_TELEMETRY = 1u << 2; // D4.10: server appends telemetry to GRAPH_COMPUTE_ALL response
+static constexpr uint8_t  RPC_CAP_CUDA_IPC_EVENTS = 1u << 5; // B+16: CUDA IPC event handles for zero-CPU event sync
 
 struct socket_t {
     ~socket_t();
@@ -36,6 +37,8 @@ struct socket_t {
     bool server_supports_multi_device = false;
     // D4.10: server appends rpc_msg_server_telemetry to GRAPH_COMPUTE_ALL response
     bool server_supports_telemetry = false;
+    // B+16: CUDA IPC event sync negotiated (localhost + CUDA + both caps)
+    bool use_cuda_ipc = false;
 
     static socket_ptr create_server(const char * host, int port);
     static socket_ptr connect(const char * host, int port);

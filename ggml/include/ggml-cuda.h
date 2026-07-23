@@ -45,6 +45,11 @@ GGML_BACKEND_API void ggml_backend_cuda_unregister_host_buffer(void * buffer);
 
 GGML_BACKEND_API ggml_backend_reg_t ggml_backend_cuda_reg(void);
 
+// B+16: record a CUDA event on the backend's stream and return its IPC handle
+// Returns true on success, false if backend is not CUDA or IPC call fails.
+// The event is created with cudaEventInterprocess | cudaEventDisableTiming.
+GGML_BACKEND_API bool ggml_backend_cuda_get_ipc_event_handle(ggml_backend_t backend, uint8_t * ipc_handle);
+
 #ifdef  __cplusplus
 }
 #endif
