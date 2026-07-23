@@ -2997,6 +2997,7 @@ public:
 
     struct stored_graph {
         std::vector<uint8_t>   buffer;
+        ggml_context_ptr       ctx;
         ggml_cgraph          * graph;
     };
 
@@ -3693,6 +3694,7 @@ bool rpc_server::graph_compute(const std::vector<uint8_t> & input) {
     }
     GGML_ASSERT(status == GGML_STATUS_SUCCESS && "Unsuccessful graph computations are not supported with RPC");
     rpc_trace_emit("rpc_server::graph_compute", "server_compute", RPC_CMD_GRAPH_COMPUTE, input.size(), true, us);
+    stored_graphs[device].ctx = std::move(ctx_ptr);
     stored_graphs[device].graph = graph;
     // issue 12: emit per-node timings for this sampled decode.
     if (sample_nodes && !node_timings.empty()) {
