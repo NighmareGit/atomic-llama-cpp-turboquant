@@ -3646,9 +3646,11 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
 static void ggml_backend_cuda_release_cached_memory(ggml_backend_t backend) {
     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
 
-    for (auto & pool : cuda_ctx->pools) {
-        if (pool) {
-            pool->clear_pool();
+    for (auto & dev_pools : cuda_ctx->pools) {
+        for (auto & pool : dev_pools) {
+            if (pool) {
+                pool->clear_pool();
+            }
         }
     }
 }
@@ -5205,7 +5207,6 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
     /* .get_tensor_2d_async     = */ ggml_backend_cuda_get_tensor_2d_async,
     /* .cpy_tensor_async        = */ ggml_backend_cuda_cpy_tensor_async,
     /* .synchronize             = */ ggml_backend_cuda_synchronize,
-    /* .release_cached_memory   = */ ggml_backend_cuda_release_cached_memory,
     /* .graph_plan_create       = */ NULL,
     /* .graph_plan_free         = */ NULL,
     /* .graph_plan_update       = */ NULL,
@@ -5214,6 +5215,7 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
     /* .event_record            = */ ggml_backend_cuda_event_record,
     /* .event_wait              = */ ggml_backend_cuda_event_wait,
     /* .graph_optimize          = */ ggml_backend_cuda_graph_optimize,
+    /* .release_cached_memory   = */ ggml_backend_cuda_release_cached_memory,
 };
 
 static ggml_guid_t ggml_backend_cuda_guid() {
