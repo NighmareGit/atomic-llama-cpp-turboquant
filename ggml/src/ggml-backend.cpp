@@ -1000,6 +1000,13 @@ ggml_backend_dev_t ggml_backend_get_device(ggml_backend_t backend) {
     return backend->device;
 }
 
+
+void ggml_backend_release_cached_memory(ggml_backend_t backend) {
+    if (backend->iface.release_cached_memory) {
+        backend->iface.release_cached_memory(backend);
+    }
+}
+
 // backend copy
 
 void ggml_backend_tensor_copy(const struct ggml_tensor * src, struct ggml_tensor * dst) {

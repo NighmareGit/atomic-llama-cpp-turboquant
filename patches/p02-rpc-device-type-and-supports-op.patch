@@ -1,0 +1,66 @@
+diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
+index 4ec4b6258..375d82edd 100644
+--- a/ggml/src/ggml-rpc/ggml-rpc.cpp
++++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
+@@ -3566,13 +3566,12 @@ static const char * ggml_backend_rpc_device_get_description(ggml_backend_dev_t d
+ 
+ static void ggml_backend_rpc_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total) {
+     ggml_backend_rpc_device_context * ctx = (ggml_backend_rpc_device_context *)dev->context;
+-
+     ggml_backend_rpc_get_device_memory(ctx->endpoint.c_str(), ctx->device, free, total);
+ }
+ 
+ static enum ggml_backend_dev_type ggml_backend_rpc_device_get_type(ggml_backend_dev_t dev) {
+     // TODO: obtain value from the server
+-    return GGML_BACKEND_DEVICE_TYPE_GPU;
++    return GGML_BACKEND_DEVICE_TYPE_CPU;
+ 
+     GGML_UNUSED(dev);
+ }
+@@ -3608,9 +3607,43 @@ static ggml_backend_buffer_type_t ggml_backend_rpc_device_get_buffer_type(ggml_b
+ 
+ static bool ggml_backend_rpc_device_supports_op(ggml_backend_dev_t dev, const struct ggml_tensor * op) {
+     GGML_UNUSED(dev);
+-    GGML_UNUSED(op);
+-    //TODO: call the remote backend and cache the results
+-    return true;
++
++    // Data tensors and view-like ops need no actual computation on any backend.
++    switch (op->op) {
++        case GGML_OP_NONE:
++        case GGML_OP_RESHAPE:
++        case GGML_OP_VIEW:
++        case GGML_OP_PERMUTE:
++        case GGML_OP_TRANSPOSE:
++            return true;
++        default:
++            break;
++    }
++
++    // Helper: check if a tensor (or its view_src) is backed by an RPC buffer.
++    auto tensor_is_rpc = [](const struct ggml_tensor * t) -> bool {
++        if (!t) return false;
++        ggml_backend_buffer_t buf = t->view_src ? t->view_src->buffer : t->buffer;
++        return buf && buf->buft && buf->buft->iface.get_name == ggml_backend_rpc_buffer_type_name;
++    };
++
++    // Claim support if at least one source tensor is already on an RPC buffer,
++    // including through view_src chains (view tensors created during graph
++    // building may have buffer==NULL even when their view_src is in an RPC buffer).
++    for (int i = 0; i < GGML_MAX_SRC; i++) {
++        if (tensor_is_rpc(op->src[i])) {
++            return true;
++        }
++    }
++
++    // Claim support if the op's own result is already pre-allocated in an RPC
++    // buffer (e.g. KV-cache SCALE operations). Without this, the scheduler
++    // hits GGML_ABORT because no backend supports RPC buft + the operation.
++    if (tensor_is_rpc(op)) {
++        return true;
++    }
++
++    return false;
+ }
+ 
+ static bool ggml_backend_rpc_device_supports_buft(ggml_backend_dev_t dev, ggml_backend_buffer_type_t buft) {

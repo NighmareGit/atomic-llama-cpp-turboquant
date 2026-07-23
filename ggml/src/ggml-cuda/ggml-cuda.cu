@@ -593,6 +593,10 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
         // all deallocations must be in reverse order of the allocations
         GGML_ASSERT(ptr == (void *) ((char *)(pool_addr) + pool_used));
     }
+
+    void clear_pool() override {
+        pool_used = 0;
+    }
 };
 #endif // defined(GGML_USE_VMM)
 
@@ -3639,6 +3643,16 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
     GGML_UNUSED(backend);
 }
 
+static void ggml_backend_cuda_release_cached_memory(ggml_backend_t backend) {
+    ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
+
+    for (auto & pool : cuda_ctx->pools) {
+        if (pool) {
+            pool->clear_pool();
+        }
+    }
+}
+
 #ifdef USE_CUDA_GRAPH
 static bool ggml_cuda_graph_check_compability(ggml_cgraph * cgraph) {
 
@@ -5191,6 +5205,7 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
     /* .get_tensor_2d_async     = */ ggml_backend_cuda_get_tensor_2d_async,
     /* .cpy_tensor_async        = */ ggml_backend_cuda_cpy_tensor_async,
     /* .synchronize             = */ ggml_backend_cuda_synchronize,
+    /* .release_cached_memory   = */ ggml_backend_cuda_release_cached_memory,
     /* .graph_plan_create       = */ NULL,
     /* .graph_plan_free         = */ NULL,
     /* .graph_plan_update       = */ NULL,

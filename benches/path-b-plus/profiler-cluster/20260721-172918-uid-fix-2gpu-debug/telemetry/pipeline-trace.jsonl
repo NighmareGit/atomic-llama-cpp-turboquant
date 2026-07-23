@@ -1,0 +1,14 @@
+{"ts_us":249646173017,"event":"pipeline_barrier","decode_id":3,"trace_id":3,"copy_from":0,"copy_to":1,"n_copies":4,"elapsed_us":3}
+{"event":"pipeline_barrier_mask","copy_to":1,"wait_mask":1,"src_mask":5,"pending_mask":3,"wavefront_inflight":1,"wavefront_depth":4,"wf_cross":1,"ev_slot":1}
+{"ts_us":249650504527,"event":"pipeline_barrier","decode_id":4,"trace_id":4,"copy_from":0,"copy_to":2,"n_copies":4,"elapsed_us":0}
+{"event":"pipeline_barrier_mask","copy_to":2,"wait_mask":1,"src_mask":5,"pending_mask":3,"wavefront_inflight":2,"wavefront_depth":4,"wf_cross":1,"ev_slot":2}
+{"ts_us":249654847815,"event":"pipeline_barrier","decode_id":5,"trace_id":5,"copy_from":0,"copy_to":3,"n_copies":4,"elapsed_us":0}
+{"event":"pipeline_barrier_mask","copy_to":3,"wait_mask":1,"src_mask":5,"pending_mask":3,"wavefront_inflight":3,"wavefront_depth":4,"wf_cross":1,"ev_slot":3}
+{"ts_us":249659104788,"event":"pipeline_barrier","decode_id":6,"trace_id":6,"copy_from":0,"copy_to":0,"n_copies":4,"elapsed_us":0}
+{"event":"pipeline_barrier_mask","copy_to":0,"wait_mask":1,"src_mask":5,"pending_mask":3,"wavefront_inflight":4,"wavefront_depth":4,"wf_cross":1,"ev_slot":0}
+{"ts_us":249663465846,"event":"wavefront_depth_release","decode_id":7,"trace_id":7,"copy_from":1,"copy_to":1,"n_copies":4,"elapsed_us":0}
+{"ts_us":249663465849,"event":"pipeline_barrier","decode_id":7,"trace_id":7,"copy_from":0,"copy_to":1,"n_copies":4,"elapsed_us":11}
+{"event":"pipeline_barrier_mask","copy_to":1,"wait_mask":1,"src_mask":5,"pending_mask":3,"wavefront_inflight":4,"wavefront_depth":4,"wf_cross":1,"ev_slot":1}
+{"ts_us":249667855347,"event":"wavefront_depth_release","decode_id":8,"trace_id":8,"copy_from":2,"copy_to":2,"n_copies":4,"elapsed_us":0}
+{"ts_us":249667855350,"event":"pipeline_barrier","decode_id":8,"trace_id":8,"copy_from":0,"copy_to":2,"n_copies":4,"elapsed_us":8}
+{"event":"pipeline_barrier_mask","copy_to":2,"wait_mask":1,"src_mask":5,"pending_mask":3,"wavefront_inflight":4,"wavefront_depth":4,"wf_cross":1,"ev_slot":2}

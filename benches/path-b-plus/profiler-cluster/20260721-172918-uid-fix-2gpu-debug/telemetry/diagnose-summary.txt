@@ -1,0 +1,6 @@
+=== llama-pipeline-diagnose ===
+diagnose.json -> /tmp/agent-uid-fix/benches/path-b-plus/profiler-cluster/20260721-172918-uid-fix-2gpu-debug/telemetry/diagnose.json
+gate_s5=PASS gate_b6=PASS overlap_pct=14.1
+stall_ratio=0.002 straggler=backend0 (4299.52 ms/tok)
+overlap_efficiency=0.999900
+gpu_smells=none

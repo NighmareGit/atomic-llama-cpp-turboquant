@@ -1164,6 +1164,9 @@ struct ggml_cuda_pool {
 
     virtual void * alloc(size_t size, size_t * actual_size) = 0;
     virtual void free(void * ptr, size_t size) = 0;
+
+    // release all cached allocations so that cudaMemGetInfo reports accurate free memory
+    virtual void clear_pool() {}
 };
 
 template<typename T>

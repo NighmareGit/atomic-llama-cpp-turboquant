@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "trace_dir": "benches/path-b-plus/profiler-cluster/20260721-uid-fix-full/telemetry",
+  "gen_only": true,
+  "gen_tokens_est": 384,
+  "G_tps": 26.9792,
+  "overlap_efficiency": 0.9978,
+  "drain_flush_ms": 0.0,
+  "blocking_ms": 8914.47,
+  "gate_s5": "PASS",
+  "gate_b6": "FAIL",
+  "assembly_overlap_count": 769,
+  "overlap_pct": 0.2,
+  "overlap_target_pct": 5.0,
+  "split_ms_per_token": 36.986,
+  "stall_ratio": 0.3624,
+  "stall_ms": 5147.21,
+  "compute_ms": 8909.02,
+  "backends_ms_per_token": {
+    "0": 12.665,
+    "1": 24.308,
+    "2": 0.014
+  },
+  "straggler_backend": "1",
+  "straggler_ms_per_token": 24.308,
+  "topology_class": "client_split",
+  "rpc_rtt_per_token": 4.09,
+  "graph_submit_count": 771,
+  "blocking_rpc_count": 1570,
+  "fire_and_forget_count": 2334,
+  "gpu_smell_flags": [
+    "ORCHESTRATION_STALL",
+    "LOW_DUTY_CYCLE"
+  ],
+  "path_c_reserved": {
+    "cross_endpoint_copy_count": null,
+    "server_local_copy_count": null
+  }
+}

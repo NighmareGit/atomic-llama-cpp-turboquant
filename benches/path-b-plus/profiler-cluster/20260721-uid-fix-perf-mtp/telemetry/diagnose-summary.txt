@@ -1,0 +1,6 @@
+=== llama-pipeline-diagnose ===
+diagnose.json -> benches/path-b-plus/profiler-cluster/20260721-uid-fix-perf-mtp/telemetry/diagnose.json
+gate_s5=PASS gate_b6=FAIL overlap_pct=0.2
+stall_ratio=0.3657 straggler=backend1 (24.102 ms/tok)
+overlap_efficiency=0.997800
+gpu_smells=ORCHESTRATION_STALL,LOW_DUTY_CYCLE

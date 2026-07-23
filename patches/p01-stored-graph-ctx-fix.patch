@@ -1,0 +1,20 @@
+diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
+index a7a147b7f..efb6c6e83 100644
+--- a/ggml/src/ggml-rpc/ggml-rpc.cpp
++++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
+@@ -2995,6 +2995,7 @@ public:
+ 
+     struct stored_graph {
+         std::vector<uint8_t>   buffer;
++        ggml_context_ptr       ctx;
+         ggml_cgraph          * graph;
+     };
+ 
+@@ -3691,6 +3692,7 @@ bool rpc_server::graph_compute(const std::vector<uint8_t> & input) {
+     }
+     GGML_ASSERT(status == GGML_STATUS_SUCCESS && "Unsuccessful graph computations are not supported with RPC");
+     rpc_trace_emit("rpc_server::graph_compute", "server_compute", RPC_CMD_GRAPH_COMPUTE, input.size(), true, us);
++    stored_graphs[device].ctx = std::move(ctx_ptr);
+     stored_graphs[device].graph = graph;
+     // issue 12: emit per-node timings for this sampled decode.
+     if (sample_nodes && !node_timings.empty()) {

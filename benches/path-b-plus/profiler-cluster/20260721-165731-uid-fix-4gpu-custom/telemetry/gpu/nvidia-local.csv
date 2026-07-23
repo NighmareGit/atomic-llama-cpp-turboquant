@@ -1,0 +1,3 @@
+timestamp_utc,power_w,util_gpu_pct,util_mem_pct,sm_clock_mhz,mem_clock_mhz,mem_used_mib,mem_total_mib,pcie_rx_mbs,pcie_tx_mbs
+2026-07-21T16:57:31Z,16.29,0,0,210,405,3127,8192,0,0
+2026-07-21T16:57:32Z,16.26,0,0,210,405,3127,8192,0,0
