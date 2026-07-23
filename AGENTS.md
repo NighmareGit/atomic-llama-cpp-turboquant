@@ -234,3 +234,62 @@ Chat template and parser:
 - [PEG parser](docs/development/parsing.md) - alternative to regex that llama.cpp uses to parse model's output
 - [Auto parser](docs/autoparser.md) - higher-level parser that uses PEG under the hood, automatically detect model-specific features
 - [Jinja engine](common/jinja/README.md)
+
+---
+
+## Repo structure (worktree layout)
+
+This repo is the **Path-D fork** of `atomic-llama-cpp-turboquant`. All branches live in one bare-like repo at `~/projects/path-d-gpipeline-assembly-line`, with git worktrees providing separate working directories.
+
+### Remotes
+
+| Remote | URL | Content |
+|--------|-----|---------|
+| `gitea` | `http://192.168.8.108:3005/hunter/path-d-gpipeline-assembly-line` | Private fork (20 commits ahead of canonical) |
+| `gitea-alt` | `http://192.168.8.108:3005/hunter/atomic-llama-cpp-turboquant` | Canonical upstream (romulus/gitea) |
+| `origin` | `https://github.com/NighmareGit/atomic-llama-cpp-turboquant` | GitHub mirror of canonical |
+
+### Branch lineage
+
+```
+v0.1-good-milestone (tag, 331a4b534 -- canonical stable base)
+  |
+  └─ Path-D-Gpipeline-Assembly-Line (6ba8b8fb9, fork parent, 20 commits ahead)
+       |
+       └─ good-prototype (6a22d9227, active working branch)
+            |
+            ├─ agent/transport-udp (35dd0c339, rebased + ctx fix)
+            |
+            └─ experiment/cuda-ipc-events (e89ee2194, B+16 CUDA IPC)
+```
+
+### Worktrees and folders
+
+| Location | Branch | Purpose |
+|----------|--------|---------|
+| `~/projects/path-d-gpipeline-assembly-line` | `good-prototype` | Main checkout. Active development. |
+| `~/scratch/parent/` | `Path-D-Gpipeline-Assembly-Line` | Stable fork parent (worktree). |
+| `~/scratch/transport-udp/` | `agent/transport-udp` | UDP transport prototype (worktree). |
+| `~/scratch/ipc-events/` | `experiment/cuda-ipc-events` | CUDA IPC events branch (worktree). |
+| `~/scratch/orphan/` | -- | Archived old clones (tar.gz). |
+
+### Key changes on the fork (20 commits past v0.1)
+
+- Pipeline barrier double-sync fix (originally the canonical base)
+- Wavefront pipeline overlap fix (`wavefront_wslot`)
+- Weak symbol workaround for RPC buffer detection in async copy
+- Deferred EVENT_RECORD in graph_compute for async pipeline dispatch
+- Per-socket FIFO queue fix for deferred EVENT_RECORD drain race
+- Per-split graph UID tracking for interleaved placement reuse
+- MTP head layer GPU pinning + plan placement fixes
+- Diagnostics: rocprof profiling, per-node telemetry, trace compression
+- Pipeline stage count vs overlap analysis (Exps Q through W)
+
+### Archived old clones
+
+The old messy clones from the `path-d-good` era are compressed in `~/scratch/orphan/`:
+- `prototype-repo.tar.gz` -- original `path-d-good` scratch clone
+- `agent-uid-fix.tar.gz` -- original uid-fix clone (benches + regression data)
+- `agent-transport-udp.tar.gz` -- original transport-udp clone with uncommitted ctx fix
+
+All unique changes have been ported to `good-prototype` branches.
