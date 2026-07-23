@@ -5,6 +5,12 @@
 #include "ggml-cpp.h"
 #include "transport.h"
 
+// B+16: CUDA runtime API for client-side IPC stream / event handling
+#ifdef GGML_USE_CUDA
+#include "ggml-cuda.h"
+#include <cuda_runtime.h>
+#endif
+
 #include <array>
 #include <cinttypes>
 #include <optional>
@@ -719,6 +725,9 @@ struct rpc_msg_event_record_rsp {
     uint64_t event_id;
     uint32_t result;  // 0 = success
     uint64_t trace_id;
+    // B+16: CUDA IPC event handle for zero-CPU event sync (when has_ipc_event == 1)
+    uint8_t  has_ipc_event;  // 0 = legacy TCP, 1 = ipc_handle is valid
+    uint8_t  ipc_handle[64]; // cudaIpcEventHandle_t (opaque, 64 bytes)
 };
 
 // Path C: server-side multi-GPU scheduling
@@ -828,6 +837,31 @@ static void drain_pending_copy_response(const socket_ptr & sock) {
     }
 }
 
+// B+16: client-side — import the server's IPC event handle and wait on it via GPU.
+// This makes the client's CUDA stream wait until the server's GPU compute finishes,
+// eliminating the CPU-side TCP block.
+static void rpc_client_ipc_wait(ggml_backend_rpc_device_context * rpc_dev_ctx,
+                                const uint8_t * ipc_handle, size_t handle_size) {
+#ifdef GGML_USE_CUDA
+    if (!rpc_dev_ctx || !ipc_handle || handle_size < sizeof(cudaIpcEventHandle_t)) {
+        return;
+    }
+    cudaEvent_t server_done;
+    cudaError_t err = cudaIpcOpenEventHandle(&server_done, *(const cudaIpcEventHandle_t *)ipc_handle);
+    if (err != cudaSuccess) {
+        GGML_LOG_WARN("[%s] cudaIpcOpenEventHandle failed: %s — server compute may not be synced\n",
+                       __func__, cudaGetErrorString(err));
+        return;
+    }
+    cudaStreamWaitEvent((cudaStream_t)rpc_dev_ctx->cuda_stream, server_done, 0);
+    cudaEventDestroy(server_done);
+#else
+    GGML_UNUSED(rpc_dev_ctx);
+    GGML_UNUSED(ipc_handle);
+    GGML_UNUSED(handle_size);
+#endif
+}
+
 static void rpc_socket_queue_push(const socket_ptr & sock, rpc_deferred_entry entry) {
     std::lock_guard<std::mutex> lock(g_rpc_sockets_mutex);
     g_rpc_sockets[sock].queue.push_back(std::move(entry));
@@ -853,6 +887,13 @@ static void rpc_socket_drain(const socket_ptr & sock) {
             entry.event->response_pending = false;
         }
     }
+}
+
+// B+16: detect localhost endpoints (IPC only works on localhost)
+static bool rpc_is_localhost(const char * host) {
+    return strcmp(host, "127.0.0.1") == 0
+        || strcmp(host, "localhost") == 0
+        || strcmp(host, "::1") == 0;
 }
 
 static std::string rpc_endpoint_host(const std::string & endpoint) {
@@ -917,6 +958,8 @@ struct ggml_backend_rpc_device_context {
     std::string name;
     std::string description;
     std::unordered_set<uint64_t> seen_graph_uids;
+    // B+16: CUDA stream for GPU-side wait on server IPC events (NULL if not used)
+    void *      cuda_stream = nullptr;
 };
 
 struct ggml_backend_rpc_buffer_type_context {
@@ -1232,10 +1275,25 @@ static bool negotiate_hello(const std::shared_ptr<socket_t> & sock, const char *
     sock->server_supports_trace_id = (response.patch >= 3) || (response.conn_caps[0] & RPC_CAP_TRACE_ID);
     sock->server_supports_multi_device = (response.conn_caps[0] & RPC_CAP_MULTI_DEVICE) != 0;
     sock->server_supports_telemetry = (response.conn_caps[0] & RPC_CAP_SERVER_TELEMETRY) != 0;
+    // B+16: CUDA IPC events — both sides must support it, and endpoint must be localhost
+    {
+        bool server_advertises_ipc = (response.conn_caps[0] & RPC_CAP_CUDA_IPC_EVENTS) != 0;
+        bool client_has_cuda = false;
+#ifdef GGML_USE_CUDA
+        client_has_cuda = true;
+#endif
+        std::string host;
+        int port = 0;
+        parse_endpoint(endpoint, host, port);
+        if (server_advertises_ipc && client_has_cuda && rpc_is_localhost(host.c_str())) {
+            sock->use_cuda_ipc = true;
+        }
+    }
     // D4.10 debug
-    GGML_LOG_INFO("RPC %s: telemetry=%d conn_caps[0]=%d\n", endpoint,
+    GGML_LOG_INFO("RPC %s: telemetry=%d conn_caps[0]=%d cuda_ipc=%d\n", endpoint,
                   sock->server_supports_telemetry ? 1 : 0,
-                  response.conn_caps[0]);
+                  response.conn_caps[0],
+                  sock->use_cuda_ipc ? 1 : 0);
     sock->update_caps(response.conn_caps);
 
     if (request.dual_socket && response.minor >= 4 && (response.flags & 1) && response.session_id != 0) {
@@ -2559,21 +2617,32 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
             bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_RECOMPUTE_ALL, &req, sizeof(req));
             RPC_STATUS_ASSERT(status);
 
-            // Send EVENT_RECORD deferred: response drained later by event_wait
+            // Send EVENT_RECORD: response drained later by event_wait
             // or at the next RPC operation on this socket. This avoids blocking
             // the scheduler's for-loop, allowing ROCm dispatch to overlap.
             uint64_t tid = ggml_pipeline_trace_get_trace_id();
             rpc_msg_event_record_req ev_req = {0, rpc_ctx->device, tid};
             size_t ev_sz = sock->server_supports_trace_id ? sizeof(ev_req) : 12;
-            send_rpc_cmd_deferred(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz);
-            rpc_ctx->last_compute_sent_event = true;
-            // B+15: queue the deferred EVENT_RECORD response instead of using
-            // the thread-local single slot. event_record links the event.
-            rpc_deferred_entry de;
-            de.cmd_type = RPC_CMD_EVENT_RECORD;
-            de.rsp.resize(ev_sz);
-            de.event = nullptr;
-            rpc_socket_queue_push(sock, std::move(de));
+            if (sock->use_cuda_ipc) {
+                // B+16: blocking EVENT_RECORD to read IPC handle for GPU-side wait
+                rpc_msg_event_record_rsp ev_rsp = {};
+                status = send_rpc_cmd(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz, &ev_rsp, sizeof(ev_rsp));
+                RPC_STATUS_ASSERT(status);
+                if (ev_rsp.has_ipc_event) {
+                    rpc_client_ipc_wait(rpc_dev_ctx, ev_rsp.ipc_handle, sizeof(ev_rsp.ipc_handle));
+                }
+            } else {
+                // B+15: deferred EVENT_RECORD (existing path)
+                send_rpc_cmd_deferred(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz);
+                rpc_ctx->last_compute_sent_event = true;
+                // B+15: queue the deferred EVENT_RECORD response instead of using
+                // the thread-local single slot. event_record links the event.
+                rpc_deferred_entry de;
+                de.cmd_type = RPC_CMD_EVENT_RECORD;
+                de.rsp.resize(ev_sz);
+                de.event = nullptr;
+                rpc_socket_queue_push(sock, std::move(de));
+            }
             const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - t0).count();
             rpc_trace_emit(__func__, "graph_recompute_all", RPC_CMD_GRAPH_RECOMPUTE_ALL, sizeof(req), false, us);
@@ -2618,21 +2687,31 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
         uint64_t tid = ggml_pipeline_trace_get_trace_id();
         rpc_msg_event_record_req ev_req = {0, rpc_ctx->device, tid};
         size_t ev_sz = sock->server_supports_trace_id ? sizeof(ev_req) : 12;
-        // Defer the EVENT_RECORD response: the scheduler's event_record
-        // already has a last_compute_sent_event fast-path, and the response
-        // drains at event_wait/event_synchronize or at the next RPC op.
-        // This makes graph_compute_async truly async (<50us TCP send only),
-        // letting the scheduler dispatch ROCm splits while the RPC event
-        // response is in-flight.
-        send_rpc_cmd_deferred(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz);
-        rpc_ctx->last_compute_sent_event = true;
-        // B+15: queue the deferred EVENT_RECORD response instead of using
-        // the thread-local single slot. event_record links the event.
-        rpc_deferred_entry de;
-        de.cmd_type = RPC_CMD_EVENT_RECORD;
-        de.rsp.resize(ev_sz);
-        de.event = nullptr;
-        rpc_socket_queue_push(sock, std::move(de));
+        if (sock->use_cuda_ipc) {
+            // B+16: blocking EVENT_RECORD to read IPC handle for GPU-side wait
+            rpc_msg_event_record_rsp ev_rsp = {};
+            status = send_rpc_cmd(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz, &ev_rsp, sizeof(ev_rsp));
+            RPC_STATUS_ASSERT(status);
+            if (ev_rsp.has_ipc_event) {
+                rpc_client_ipc_wait(rpc_dev_ctx, ev_rsp.ipc_handle, sizeof(ev_rsp.ipc_handle));
+            }
+        } else {
+            // Defer the EVENT_RECORD response: the scheduler's event_record
+            // already has a last_compute_sent_event fast-path, and the response
+            // drains at event_wait/event_synchronize or at the next RPC op.
+            // This makes graph_compute_async truly async (<50us TCP send only),
+            // letting the scheduler dispatch ROCm splits while the RPC event
+            // response is in-flight.
+            send_rpc_cmd_deferred(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz);
+            rpc_ctx->last_compute_sent_event = true;
+            // B+15: queue the deferred EVENT_RECORD response instead of using
+            // the thread-local single slot. event_record links the event.
+            rpc_deferred_entry de;
+            de.cmd_type = RPC_CMD_EVENT_RECORD;
+            de.rsp.resize(ev_sz);
+            de.event = nullptr;
+            rpc_socket_queue_push(sock, std::move(de));
+        }
         const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - t0).count();
         rpc_trace_emit(__func__, "graph_recompute", RPC_CMD_GRAPH_RECOMPUTE, sizeof(request), false, us);
@@ -2841,6 +2920,12 @@ public:
     void collect_telemetry(const uint32_t * devices, uint32_t n_devices,
                            const int64_t * per_device_us);
     bool get_last_telemetry(rpc_msg_server_telemetry & out) const;
+    // B+16: record a CUDA IPC event on the given backend's stream (call after graph compute)
+    void record_ipc_event(uint32_t device);
+    // B+16: wait for the IPC event handle to be ready, then copy it out
+    bool wait_ipc_event_handle(uint8_t * out_handle, size_t handle_size);
+    // B+16: enable/disable CUDA IPC for this connection (set after handshake)
+    void set_cuda_ipc_enabled(bool enabled) { cuda_ipc_enabled = enabled; }
 
     struct stored_graph {
         std::vector<uint8_t>   buffer;
@@ -2885,6 +2970,13 @@ private:
     std::atomic<uint64_t>     telemetry_decode_count{0};
     // issue 12: sampled per-node timing (node_timings events). Bounded overhead.
     std::atomic<uint64_t>     telemetry_node_sample_count{0};
+
+    // B+16: CUDA IPC event state (set by compute worker, read by EVENT_RECORD handler)
+    bool                cuda_ipc_enabled = false;
+    bool                ipc_event_ready = false;
+    uint8_t             ipc_event_handle[64];
+    std::mutex          ipc_mtx;
+    std::condition_variable ipc_cv;
 };
 
 void rpc_server::hello(rpc_msg_hello_rsp & response) {
@@ -3541,6 +3633,8 @@ bool rpc_server::graph_compute(const std::vector<uint8_t> & input) {
     GGML_ASSERT(status == GGML_STATUS_SUCCESS && "Unsuccessful graph computations are not supported with RPC");
     rpc_trace_emit("rpc_server::graph_compute", "server_compute", RPC_CMD_GRAPH_COMPUTE, input.size(), true, us);
     stored_graphs[device].graph = graph;
+    // B+16: record CUDA IPC event so the client can wait on it via GPU
+    record_ipc_event(device);
     // issue 12: emit per-node timings for this sampled decode.
     if (sample_nodes && !node_timings.empty()) {
         rpc_write_node_timings_jsonl(node_timings);
@@ -3584,6 +3678,8 @@ bool rpc_server::graph_recompute(const rpc_msg_graph_recompute_req & request) {
     }
     GGML_ASSERT(status == GGML_STATUS_SUCCESS && "Unsuccessful graph computations are not supported with RPC");
     rpc_trace_emit("rpc_server::graph_recompute", "server_compute", RPC_CMD_GRAPH_RECOMPUTE, 0, true, us);
+    // B+16: record CUDA IPC event so the client can wait on it via GPU
+    record_ipc_event(device);
     // issue 12: emit per-node timings for this sampled decode.
     if (sample_nodes && !node_timings.empty()) {
         rpc_write_node_timings_jsonl(node_timings);
@@ -3989,6 +4085,46 @@ void rpc_server::wait_compute_idle() {
     });
 }
 
+// B+16: record a CUDA IPC event on the given backend's stream.
+// Called by the compute worker immediately after graph compute so the event
+// is enqueued on the GPU stream right behind the compute work.
+void rpc_server::record_ipc_event(uint32_t device) {
+    if (!cuda_ipc_enabled || device >= backends.size()) {
+        return;
+    }
+#ifdef GGML_USE_CUDA
+    if (!ggml_backend_is_cuda(backends[device])) {
+        return;
+    }
+    if (!ggml_backend_cuda_get_ipc_event_handle(backends[device], ipc_event_handle)) {
+        GGML_LOG_WARN("[%s] CUDA IPC event export failed for device %u\n", __func__, device);
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(ipc_mtx);
+        ipc_event_ready = true;
+    }
+    ipc_cv.notify_one();
+#else
+    GGML_UNUSED(device);
+#endif
+}
+
+// B+16: wait for the IPC event handle to be ready, then copy it out.
+// Returns false if CUDA IPC is not enabled or no event was recorded.
+bool rpc_server::wait_ipc_event_handle(uint8_t * out_handle, size_t handle_size) {
+    if (!cuda_ipc_enabled) {
+        return false;
+    }
+    std::unique_lock<std::mutex> lock(ipc_mtx);
+    ipc_cv.wait(lock, [this] { return ipc_event_ready; });
+    if (handle_size < sizeof(ipc_event_handle)) {
+        return false;
+    }
+    memcpy(out_handle, ipc_event_handle, sizeof(ipc_event_handle));
+    return true;
+}
+
 // D4.10: sample every Nth decode to keep overhead <1%
 static constexpr int TELEMETRY_SAMPLE_INTERVAL = 1;
 
@@ -4205,6 +4341,23 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
 
     // Activate transport upgrade using client's caps
     sock->update_caps(req.conn_caps);
+    // B+16: enable CUDA IPC on the server if client advertised it and we have CUDA backends
+    {
+        bool client_advertises_ipc = (req.conn_caps[0] & RPC_CAP_CUDA_IPC_EVENTS) != 0;
+        bool has_cuda = false;
+#ifdef GGML_USE_CUDA
+        for (size_t i = 0; i < backends.size(); i++) {
+            if (ggml_backend_is_cuda(backends[i])) {
+                has_cuda = true;
+                break;
+            }
+        }
+#endif
+        if (client_advertises_ipc && has_cuda) {
+            server.set_cuda_ipc_enabled(true);
+            LOG_DBG("[%s] CUDA IPC events enabled for this connection\n", __func__);
+        }
+    }
     uint8_t cmd = 0;
     while (true) {
         if (!sock->recv_data(&cmd, 1)) {
@@ -4500,14 +4653,23 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!recv_msg(sock, &request, req_sz)) {
                     return;
                 }
-                server.wait_compute_idle();
+                bool client_advertises_ipc = (req.conn_caps[0] & RPC_CAP_CUDA_IPC_EVENTS) != 0;
                 rpc_msg_event_record_rsp response = {request.event_id, 0, request.trace_id};
+                if (client_advertises_ipc && server.wait_ipc_event_handle(response.ipc_handle, sizeof(response.ipc_handle))) {
+                    // B+16: IPC event handle exported — client will wait via GPU
+                    response.has_ipc_event = 1;
+                } else {
+                    // Legacy path: block until GPU compute finishes
+                    server.wait_compute_idle();
+                    response.has_ipc_event = 0;
+                }
                 size_t rsp_sz = sock->server_supports_trace_id ? sizeof(response) : 12;
                 if (!send_response(sock, &response, rsp_sz)) {
                     return;
                 }
-                LOG_DBG("[%s] RPC_CMD_EVENT_RECORD: event_id=%lu, device=%u, trace_id=%llu\n",
-                        __func__, (unsigned long)request.event_id, request.device, (unsigned long long)request.trace_id);
+                LOG_DBG("[%s] RPC_CMD_EVENT_RECORD: event_id=%lu, device=%u, trace_id=%llu has_ipc=%u\n",
+                        __func__, (unsigned long)request.event_id, request.device, (unsigned long long)request.trace_id,
+                        response.has_ipc_event);
                 break;
             }
             case RPC_CMD_GET_DEVICE_MEMORY: {
