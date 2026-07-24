@@ -1004,6 +1004,11 @@ static ggml_guid_t ggml_backend_rpc_guid() {
     return &guid;
 }
 
+// Global generation counter — incremented on every buffer alloc/free.
+// Used to invalidate device memory caches (the memory is invariant during
+// generation but changes during model load when buffers are allocated).
+static std::atomic<uint64_t> g_memory_cache_gen{0};
+
 struct ggml_backend_rpc_device_context {
     std::string endpoint;
     uint32_t    device;
@@ -1011,6 +1016,10 @@ struct ggml_backend_rpc_device_context {
     std::string name;
     std::string description;
     std::unordered_set<uint64_t> seen_graph_uids;
+    // Cached device memory — invariant during generation, saves ~60 ms/token RPC
+    uint64_t cached_gen  = 0;          // generation when cached
+    size_t   cached_free  = 0;
+    size_t   cached_total = 0;
 };
 
 struct ggml_backend_rpc_buffer_type_context {
@@ -1489,7 +1498,24 @@ static std::shared_ptr<socket_t> get_socket(const std::string & endpoint) {
     return sock;
 }
 
+// Split buffer context — data members needed early for serialize_tensor
+struct ggml_backend_rpc_split_buffer_context {
+    struct tensor_slice {
+        uint64_t remote_ptr;
+        uint64_t remote_size;
+        int64_t  row_low;
+        int64_t  row_high;
+    };
+    std::unordered_map<ggml_tensor*, tensor_slice> slices;
+    std::shared_ptr<socket_t> sock;
+    std::string endpoint;
+
+    ~ggml_backend_rpc_split_buffer_context(); // defined later
+};
+static void ggml_backend_rpc_split_buffer_free_buffer(ggml_backend_buffer_t buffer);
+
 static void ggml_backend_rpc_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+    g_memory_cache_gen.fetch_add(1, std::memory_order_release);
     ggml_backend_rpc_buffer_context * ctx = (ggml_backend_rpc_buffer_context *)buffer->context;
     rpc_msg_free_buffer_req request = {ctx->remote_ptr};
     bool status = send_rpc_cmd(ctx->sock, RPC_CMD_FREE_BUFFER, &request, sizeof(request), nullptr, 0);
@@ -1530,6 +1556,22 @@ static rpc_tensor serialize_tensor(const ggml_tensor * tensor) {
         ggml_backend_buffer_t buffer = tensor->buffer;
         ggml_backend_rpc_buffer_context * ctx = (ggml_backend_rpc_buffer_context *)buffer->context;
         result.buffer = ctx != nullptr ? ctx->remote_ptr : 0;
+        result.data = reinterpret_cast<uint64_t>(tensor->data);
+    } else if (tensor->buffer && tensor->buffer->iface.free_buffer == ggml_backend_rpc_split_buffer_free_buffer) {
+        // Split buffer: look up the per-tensor slice remote_ptr and adjust
+        // dimensions to the row slice so the server allocates only the needed
+        // rows and computes with correct dimensions (no zeroed-row corruption).
+        ggml_backend_rpc_split_buffer_context * buf_ctx = (ggml_backend_rpc_split_buffer_context *)tensor->buffer->context;
+        auto it = buf_ctx->slices.find(const_cast<ggml_tensor*>(tensor));
+        if (it != buf_ctx->slices.end()) {
+            result.buffer = it->second.remote_ptr;
+            int64_t nrows_split = it->second.row_high - it->second.row_low;
+            result.ne[1] = nrows_split;
+            result.nb[2] = result.ne[1] * result.nb[1];
+            result.nb[3] = result.ne[2] * result.nb[2];
+        } else {
+            result.buffer = 0;
+        }
         result.data = reinterpret_cast<uint64_t>(tensor->data);
     } else {
         result.buffer = 0;
@@ -2158,6 +2200,7 @@ static const char * ggml_backend_rpc_buffer_type_name(ggml_backend_buffer_type_t
 }
 
 static ggml_backend_buffer_t ggml_backend_rpc_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
+    g_memory_cache_gen.fetch_add(1, std::memory_order_release);
     ggml_backend_rpc_buffer_type_context * buft_ctx = (ggml_backend_rpc_buffer_type_context *)buft->context;
     rpc_msg_alloc_buffer_req request = {buft_ctx->device, size};
     rpc_msg_alloc_buffer_rsp response;
@@ -3096,6 +3139,19 @@ private:
     std::vector<ggml_backend_t> backends;
     const char * cache_dir;
     std::unordered_set<ggml_backend_buffer_t> buffers;
+    std::mutex buffers_mtx; // protects buffers from concurrent access
+
+    // Split buffer metadata: stores original tensor dimensions for buffers
+    // allocated via ALLOC_BUFFER_SPLIT, so deserialize_tensor can adjust ne[]
+    // to match the actual buffer size during graph_compute.
+    struct split_buffer_meta {
+        int64_t ne[GGML_MAX_DIMS]; // original (full, unsplit) tensor dimensions
+        int64_t nrows_split;       // ne[0] for this device's row slice
+        int64_t row_low;
+        int64_t row_high;
+    };
+    std::unordered_map<ggml_backend_buffer_t, split_buffer_meta> split_buffer_metas;
+
     // store the last computed graph for each backend
     std::vector<stored_graph> stored_graphs;
     // D4.5: dedicated storage for ALL-mode graph (separate from per-device stored_graphs)
@@ -3182,7 +3238,10 @@ bool rpc_server::alloc_buffer(const rpc_msg_alloc_buffer_req & request, rpc_msg_
         response.remote_size = buffer->size;
         LOG_DBG("[%s] device: %d, size: %" PRIu64 " -> remote_ptr: %" PRIx64 ", remote_size: %" PRIu64 "\n",
             __func__, dev_id, request.size, response.remote_ptr, response.remote_size);
-        buffers.insert(buffer);
+        {
+            std::lock_guard<std::mutex> lock(buffers_mtx);
+            buffers.insert(buffer);
+        }
     } else {
         LOG_DBG("[%s] device: %d, size: %" PRIu64 " -> failed\n", __func__, dev_id, request.size);
     }
@@ -3191,9 +3250,6 @@ bool rpc_server::alloc_buffer(const rpc_msg_alloc_buffer_req & request, rpc_msg_
 
 bool rpc_server::alloc_buffer_split(const rpc_msg_alloc_buffer_split_req & request, rpc_msg_alloc_buffer_split_rsp & response) {
     uint32_t dev_id = request.device;
-    fprintf(stderr, "[alloc_buffer_split] ENTER: dev_id=%u, backends.size=%zu, req.row_low=%" PRId64 ", req.row_high=%" PRId64 ", nrows=%" PRId64 "\n",
-            dev_id, backends.size(), request.row_low, request.row_high, request.row_high - request.row_low);
-    fflush(stderr);
     if (dev_id >= backends.size()) {
         return false;
     }
@@ -3220,7 +3276,10 @@ bool rpc_server::alloc_buffer_split(const rpc_msg_alloc_buffer_split_req & reque
         return true;
     }
 
-    size_t alloc_size = rpc_nbytes_split(tensor, nrows_split);
+    // Allocate based on the tensor dimensions received from the client.
+    // For split buffers, serialize_tensor adjusts ne[1] to nrows_split,
+    // so ggml_nbytes(tensor) computes the exact slice size.
+    size_t alloc_size = ggml_nbytes(tensor);
 
     ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(backends[dev_id]);
     ggml_backend_buffer_t buffer = ggml_backend_buft_alloc_buffer(buft, alloc_size);
@@ -3228,14 +3287,25 @@ bool rpc_server::alloc_buffer_split(const rpc_msg_alloc_buffer_split_req & reque
     response.remote_ptr = 0;
     response.remote_size = 0;
     if (buffer != nullptr) {
+        // Zero the full-size buffer to prevent uninitialized memory
+        // in rows outside [row_low, row_high) from corrupting computation.
+        ggml_backend_buffer_clear(buffer, 0);
         response.remote_ptr = reinterpret_cast<uint64_t>(buffer);
         response.remote_size = buffer->size;
-        fprintf(stderr, "[alloc_buffer_split] SUCCESS: remote_ptr=%p (0x%" PRIx64 "), alloc_size=%zu, buffers.size BEFORE=%zu\n",
-                (void*)buffer, response.remote_ptr, alloc_size, buffers.size());
-        fflush(stderr);
-        buffers.insert(buffer);
-        fprintf(stderr, "[alloc_buffer_split] AFTER INSERT: buffers.size=%zu\n", buffers.size());
-        fflush(stderr);
+        {
+            std::lock_guard<std::mutex> lock(buffers_mtx);
+            buffers.insert(buffer);
+            // Store split metadata for deserialize_tensor
+            split_buffer_meta meta;
+            for (int i = 0; i < GGML_MAX_DIMS; i++) {
+                meta.ne[i] = tensor->ne[i];
+            }
+            meta.nrows_split = nrows_split;
+            meta.row_low  = request.row_low;
+            meta.row_high = request.row_high;
+            split_buffer_metas[buffer] = meta;
+            split_buffer_metas[buffer] = meta;
+        }
     } else {
         LOG_DBG("[%s] device: %d, nrows_split: %" PRId64 ", alloc_size: %zu -> failed\n",
             __func__, dev_id, nrows_split, alloc_size);
@@ -3270,9 +3340,12 @@ bool rpc_server::get_max_size(const rpc_msg_get_max_size_req & request, rpc_msg_
 bool rpc_server::buffer_get_base(const rpc_msg_buffer_get_base_req & request, rpc_msg_buffer_get_base_rsp & response) {
     LOG_DBG("[%s] remote_ptr: %" PRIx64 "\n", __func__, request.remote_ptr);
     ggml_backend_buffer_t buffer = reinterpret_cast<ggml_backend_buffer_t>(request.remote_ptr);
-    if (buffers.find(buffer) == buffers.end()) {
-        GGML_LOG_ERROR("[%s] buffer not found\n", __func__);
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(buffers_mtx);
+        if (buffers.find(buffer) == buffers.end()) {
+            GGML_LOG_ERROR("[%s] buffer not found\n", __func__);
+            return false;
+        }
     }
     void * base = ggml_backend_buffer_get_base(buffer);
     response.base_ptr = reinterpret_cast<uint64_t>(base);
@@ -3282,21 +3355,31 @@ bool rpc_server::buffer_get_base(const rpc_msg_buffer_get_base_req & request, rp
 bool rpc_server::free_buffer(const rpc_msg_free_buffer_req & request) {
     LOG_DBG("[%s] remote_ptr: %" PRIx64 "\n", __func__, request.remote_ptr);
     ggml_backend_buffer_t buffer = reinterpret_cast<ggml_backend_buffer_t>(request.remote_ptr);
-    if (buffers.find(buffer) == buffers.end()) {
-        GGML_LOG_ERROR("[%s] buffer not found\n", __func__);
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(buffers_mtx);
+        if (buffers.find(buffer) == buffers.end()) {
+            GGML_LOG_ERROR("[%s] buffer not found\n", __func__);
+            return false;
+        }
     }
     ggml_backend_buffer_free(buffer);
-    buffers.erase(buffer);
+    {
+        std::lock_guard<std::mutex> lock(buffers_mtx);
+        buffers.erase(buffer);
+        split_buffer_metas.erase(buffer); // clean up split metadata if present
+    }
     return true;
 }
 
 bool rpc_server::buffer_clear(const rpc_msg_buffer_clear_req & request) {
     LOG_DBG("[%s] remote_ptr: %" PRIx64 ", value: %u\n", __func__, request.remote_ptr, request.value);
     ggml_backend_buffer_t buffer = reinterpret_cast<ggml_backend_buffer_t>(request.remote_ptr);
-    if (buffers.find(buffer) == buffers.end()) {
-        GGML_LOG_ERROR("[%s] buffer not found\n", __func__);
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(buffers_mtx);
+        if (buffers.find(buffer) == buffers.end()) {
+            GGML_LOG_ERROR("[%s] buffer not found\n", __func__);
+            return false;
+        }
     }
     ggml_backend_buffer_clear(buffer, request.value);
     return true;
@@ -3328,22 +3411,34 @@ ggml_tensor * rpc_server::deserialize_tensor(struct ggml_context * ctx, const rp
         result->nb[i] = tensor->nb[i];
     }
     result->buffer = reinterpret_cast<ggml_backend_buffer_t>(tensor->buffer);
-    if (result->buffer && buffers.find(result->buffer) == buffers.end()) {
-        static std::atomic<int> warn_count{0};
-        if (warn_count.fetch_add(1, std::memory_order_relaxed) < 5) {
-            GGML_LOG_WARN("[%s] buffer %p not found in server buffer set (%zu buffers registered)\n",
-                __func__, (void*)result->buffer, buffers.size());
+    bool is_split = false;
+    split_buffer_meta split_meta;
+    if (result->buffer) {
+        std::lock_guard<std::mutex> lock(buffers_mtx);
+        if (buffers.find(result->buffer) == buffers.end()) {
+            static std::atomic<int> warn_count{0};
+            if (warn_count.fetch_add(1, std::memory_order_relaxed) < 5) {
+                GGML_LOG_WARN("[%s] buffer %p not found in server buffer set (%zu buffers registered)\n",
+                    __func__, (void*)result->buffer, buffers.size());
+            }
+            result->buffer = nullptr;
+        } else {
+            // Check if this buffer has split metadata
+            auto meta_it = split_buffer_metas.find(result->buffer);
+            if (meta_it != split_buffer_metas.end()) {
+                is_split = true;
+                split_meta = meta_it->second;
+            }
         }
-        result->buffer = nullptr;
     }
 
-    if (result->buffer) {
-        // require that the tensor data does not go beyond the buffer end
-        uint64_t tensor_size = (uint64_t) ggml_nbytes(result);
-        GGML_ASSERT(tensor->data + tensor_size >= tensor->data); // check for overflow
-        // NOTE: tensor->data is a client-side address that may not be valid in the server's address space
-        // (e.g. ROCm client -> CUDA server). The actual offset is sent separately and validated
-        // in set_tensor(). Skip cross-address-space bounds comparison here.
+    if (is_split) {
+        // Split buffer: client-side serialize_tensor has already adjusted
+        // ne[1] to nrows_split, so the serialized dimensions are correct.
+        // Set data pointer to server-side buffer base — no ne[] changes needed.
+        result->data = ggml_backend_buffer_get_base(result->buffer);
+    } else {
+        result->data = reinterpret_cast<void *>(tensor->data);
     }
 
     result->op = (ggml_op) tensor->op;
@@ -3351,7 +3446,6 @@ ggml_tensor * rpc_server::deserialize_tensor(struct ggml_context * ctx, const rp
         result->op_params[i] = tensor->op_params[i];
     }
     result->flags = tensor->flags;
-    result->data = reinterpret_cast<void *>(tensor->data);
     ggml_set_name(result, tensor->name);
     return result;
 }
@@ -3367,10 +3461,6 @@ bool rpc_server::set_tensor(const std::vector<uint8_t> & input) {
     memcpy(&offset, input.data() + sizeof(rpc_tensor), sizeof(offset));
     const size_t size = input.size() - sizeof(rpc_tensor) - sizeof(offset);
 
-    fprintf(stderr, "[set_tensor] ENTER: buffers.size=%zu, tensor.buffer=0x%" PRIx64 ", size=%zu\n",
-            buffers.size(), in_tensor->buffer, size);
-    fflush(stderr);
-
     struct ggml_init_params params {
         /*.mem_size   =*/ ggml_tensor_overhead(),
         /*.mem_buffer =*/ NULL,
@@ -3381,39 +3471,40 @@ bool rpc_server::set_tensor(const std::vector<uint8_t> & input) {
     ggml_context * ctx = ctx_ptr.get();
     ggml_tensor * tensor = deserialize_tensor(ctx, in_tensor);
     if (tensor == nullptr || tensor->buffer == nullptr) {
-        fprintf(stderr, "[set_tensor] FAILED: tensor=%p, buffer=%p, buffers.size=%zu, in_tensor->buffer=0x%" PRIx64 "\n",
-                (void*)tensor, tensor ? (void*)tensor->buffer : nullptr, buffers.size(), in_tensor->buffer);
-        fflush(stderr);
         GGML_LOG_ERROR("[%s] error deserializing tensor\n", __func__);
         return false;
     }
     LOG_DBG("[%s] buffer: %p, data: %p, offset: %" PRIu64 ", size: %zu\n", __func__, (void*)tensor->buffer, tensor->data, offset, size);
 
-    // sanitize offset + size against buffer size
-    // NOTE: in_tensor->data is a client-side address - do not use it for server-side bounds checking
-    // (e.g. ROCm client -> CUDA server). Validate using offset and size only.
-    {
-        const size_t buf_size = ggml_backend_buffer_get_size(tensor->buffer);
-
-        if (offset + size > buf_size) {
-            GGML_LOG_ERROR("[%s] tensor data region (offset=%" PRIu64 ", size=%zu) exceeds buffer size %zu\n",
-                           __func__, offset, size, buf_size);
-            return false;
-        }
-    }
-
     const void * data = input.data() + sizeof(rpc_tensor) + sizeof(offset);
+
+    // Cache I/O outside the lock — does not touch tensor->buffer.
     if (cache_dir && size > HASH_THRESHOLD) {
         uint64_t hash = fnv_hash((const uint8_t*)data, size);
         char hash_str[17];
         snprintf(hash_str, sizeof(hash_str), "%016" PRIx64, hash);
-        // save to cache_dir/hash_str
         fs::path cache_file = fs::path(cache_dir) / hash_str;
         std::ofstream ofs(cache_file, std::ios::binary);
         ofs.write((const char *)data, size);
         GGML_LOG_INFO("[%s] saved to '%s'\n", __func__, cache_file.string().c_str());
     }
-    ggml_backend_tensor_set(tensor, data, offset, size);
+
+    // Verify buffer and bounds under lock, then set.
+    {
+        std::lock_guard<std::mutex> lock(buffers_mtx);
+        if (buffers.find(tensor->buffer) == buffers.end()) {
+            GGML_LOG_ERROR("[%s] buffer %p not found in server buffer set\n",
+                __func__, (void*)tensor->buffer);
+            return false;
+        }
+        const size_t buf_size = ggml_backend_buffer_get_size(tensor->buffer);
+        if (offset + size > buf_size) {
+            GGML_LOG_ERROR("[%s] tensor data region (offset=%" PRIu64 ", size=%zu) exceeds buffer size %zu\n",
+                           __func__, offset, size, buf_size);
+            return false;
+        }
+        ggml_backend_tensor_set(tensor, data, offset, size);
+    }
     return true;
 }
 
@@ -5098,7 +5189,22 @@ static const char * ggml_backend_rpc_device_get_description(ggml_backend_dev_t d
 static void ggml_backend_rpc_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total) {
     ggml_backend_rpc_device_context * ctx = (ggml_backend_rpc_device_context *)dev->context;
 
+    // Return cached values if the generation hasn't changed.
+    // Device memory is invariant during generation (no buffers allocated/freed),
+    // and this function is called ~30×/token, accounting for 71% of blocking RPC time.
+    uint64_t gen = g_memory_cache_gen.load(std::memory_order_acquire);
+    if (ctx->cached_gen == gen && gen > 0) {
+        *free  = ctx->cached_free;
+        *total = ctx->cached_total;
+        return;
+    }
+
     ggml_backend_rpc_get_device_memory(ctx->endpoint.c_str(), ctx->device, free, total);
+
+    // Populate cache
+    ctx->cached_free  = *free;
+    ctx->cached_total = *total;
+    ctx->cached_gen   = gen;
 }
 
 static enum ggml_backend_dev_type ggml_backend_rpc_device_get_type(ggml_backend_dev_t dev) {
@@ -5137,6 +5243,19 @@ static ggml_backend_buffer_type_t ggml_backend_rpc_device_get_buffer_type(ggml_b
     GGML_UNUSED(dev);
 }
 
+// Forward declaration for split buffer type (defined later)
+static const char * ggml_backend_rpc_split_buffer_type_get_name(ggml_backend_buffer_type_t buft);
+
+// Split buffer type context — needed by supports_buft for scheduler routing
+struct ggml_backend_rpc_split_buffer_type_context {
+    int         device;       // RPC-local device index
+    int         split_id;     // global split rank for this RPC device
+    int         n_dev;        // total number of devices in the split
+    float       tensor_split[GGML_RPC_MAX_DEVICES];
+    std::string name;
+    std::string endpoint;
+};
+
 static bool ggml_backend_rpc_device_supports_op(ggml_backend_dev_t dev, const struct ggml_tensor * op) {
     GGML_UNUSED(dev);
     GGML_UNUSED(op);
@@ -5145,12 +5264,22 @@ static bool ggml_backend_rpc_device_supports_op(ggml_backend_dev_t dev, const st
 }
 
 static bool ggml_backend_rpc_device_supports_buft(ggml_backend_dev_t dev, ggml_backend_buffer_type_t buft) {
-    if (!buft || buft->iface.get_name != ggml_backend_rpc_buffer_type_name) {
+    if (!buft) {
         return false;
     }
-    ggml_backend_rpc_buffer_type_context * buft_ctx = (ggml_backend_rpc_buffer_type_context *)buft->context;
     ggml_backend_rpc_device_context * dev_ctx = (ggml_backend_rpc_device_context *)dev->context;
-    return buft_ctx->endpoint == dev_ctx->endpoint && buft_ctx->device == dev_ctx->device;
+
+    if (buft->iface.get_name == ggml_backend_rpc_buffer_type_name) {
+        ggml_backend_rpc_buffer_type_context * buft_ctx = (ggml_backend_rpc_buffer_type_context *)buft->context;
+        return buft_ctx->endpoint == dev_ctx->endpoint && buft_ctx->device == dev_ctx->device;
+    }
+
+    if (buft->iface.get_name == ggml_backend_rpc_split_buffer_type_get_name) {
+        ggml_backend_rpc_split_buffer_type_context * buft_ctx = (ggml_backend_rpc_split_buffer_type_context *)buft->context;
+        return buft_ctx->endpoint == dev_ctx->endpoint && buft_ctx->device == dev_ctx->device;
+    }
+
+    return false;
 }
 
 static ggml_backend_event_t rpc_event_new(ggml_backend_dev_t device) {
@@ -5228,40 +5357,20 @@ static ggml_backend_dev_t ggml_backend_rpc_reg_get_device(ggml_backend_reg_t reg
 
 // ---- RPC split buffer type (client-side) ----
 
-struct ggml_backend_rpc_split_buffer_type_context {
-    int         device;       // RPC-local device index
-    int         split_id;     // global split rank for this RPC device
-    int         n_dev;        // total number of devices in the split
-    float       tensor_split[GGML_RPC_MAX_DEVICES];
-    std::string name;
-    std::string endpoint;
-};
-
-struct ggml_backend_rpc_split_buffer_context {
-    ~ggml_backend_rpc_split_buffer_context() {
-        // Free each per-tensor allocation on the remote server
-        if (!sock) return;
-        for (const auto & slice : slices) {
-            if (slice.remote_ptr != 0) {
-                rpc_msg_free_buffer_req req = {slice.remote_ptr};
-                send_rpc_cmd(sock, RPC_CMD_FREE_BUFFER, &req, sizeof(req), nullptr, 0);
-            }
+ggml_backend_rpc_split_buffer_context::~ggml_backend_rpc_split_buffer_context() {
+    // Free each per-tensor allocation on the remote server
+    g_memory_cache_gen.fetch_add(1, std::memory_order_release);
+    if (!sock) return;
+    for (const auto & kv : slices) {
+        if (kv.second.remote_ptr != 0) {
+            rpc_msg_free_buffer_req req = {kv.second.remote_ptr};
+            send_rpc_cmd(sock, RPC_CMD_FREE_BUFFER, &req, sizeof(req), nullptr, 0);
         }
     }
-
-    struct tensor_slice {
-        uint64_t remote_ptr;
-        uint64_t remote_size;
-        int64_t  row_low;
-        int64_t  row_high;
-    };
-
-    std::vector<tensor_slice> slices;
-    socket_ptr sock;  // keep-alive reference so the same rpc_server handles alloc and set_tensor
-    std::string endpoint;
-};
+}
 
 static void ggml_backend_rpc_split_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+    g_memory_cache_gen.fetch_add(1, std::memory_order_release);
     ggml_backend_rpc_split_buffer_context * ctx = (ggml_backend_rpc_split_buffer_context *)buffer->context;
     delete ctx;
 }
@@ -5274,6 +5383,7 @@ static void * ggml_backend_rpc_split_buffer_get_base(ggml_backend_buffer_t buffe
 }
 
 static enum ggml_status ggml_backend_rpc_split_buffer_init_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor) {
+    g_memory_cache_gen.fetch_add(1, std::memory_order_release);
     ggml_backend_rpc_split_buffer_context * buf_ctx = (ggml_backend_rpc_split_buffer_context *)buffer->context;
     ggml_backend_rpc_split_buffer_type_context * buft_ctx = (ggml_backend_rpc_split_buffer_type_context *)buffer->buft->context;
 
@@ -5300,6 +5410,17 @@ static enum ggml_status ggml_backend_rpc_split_buffer_init_tensor(ggml_backend_b
         buf_ctx->sock = sock;
     }
 
+    // Store slice metadata early so serialize_tensor can adjust ne[1] for the
+    // ALLOC_BUFFER_SPLIT request (server allocates based on serialized dimensions).
+    {
+        ggml_backend_rpc_split_buffer_context::tensor_slice early_slice;
+        early_slice.remote_ptr = 0;
+        early_slice.remote_size = 0;
+        early_slice.row_low  = row_low;
+        early_slice.row_high = row_high;
+        buf_ctx->slices[tensor] = early_slice;
+    }
+
     rpc_msg_alloc_buffer_split_req request;
     request.device = buft_ctx->device;
     request.tensor = serialize_tensor(tensor);
@@ -5313,12 +5434,9 @@ static enum ggml_status ggml_backend_rpc_split_buffer_init_tensor(ggml_backend_b
     RPC_STATUS_ASSERT(status);
 
     if (response.remote_ptr != 0) {
-        ggml_backend_rpc_split_buffer_context::tensor_slice slice;
-        slice.remote_ptr = response.remote_ptr;
-        slice.remote_size = response.remote_size;
-        slice.row_low  = row_low;
-        slice.row_high = row_high;
-        buf_ctx->slices.push_back(slice);
+        // Update the early slice with server's remote_ptr
+        buf_ctx->slices[tensor].remote_ptr = response.remote_ptr;
+        buf_ctx->slices[tensor].remote_size = response.remote_size;
     }
 
     return GGML_STATUS_SUCCESS;
@@ -5333,28 +5451,27 @@ static void ggml_backend_rpc_split_buffer_set_tensor(ggml_backend_buffer_t buffe
     ggml_backend_rpc_split_buffer_context * buf_ctx = (ggml_backend_rpc_split_buffer_context *)buffer->context;
     ggml_backend_rpc_split_buffer_type_context * buft_ctx = (ggml_backend_rpc_split_buffer_type_context *)buffer->buft->context;
 
-    if (buf_ctx->slices.empty()) {
+    auto it = buf_ctx->slices.find(tensor);
+    if (it == buf_ctx->slices.end()) {
         return; // no data for this device
     }
 
-    const size_t nb1 = tensor->nb[1];
+    const auto & slice = it->second;
     socket_ptr sock = buf_ctx->sock ? buf_ctx->sock : get_socket(buft_ctx->endpoint);
     GGML_ASSERT(sock != nullptr);
 
-    for (const auto & slice : buf_ctx->slices) {
-        // Compute offset within the full tensor data for this device's rows
-        size_t slice_offset = (size_t) slice.row_low * nb1;
-        size_t slice_size = rpc_nbytes_split(tensor, slice.row_high - slice.row_low);
+    // Compute offset within the full tensor data for this device's rows.
+    // The server buffer is full-size, so data goes at row_low * nb[1].
+    size_t slice_size = rpc_nbytes_split(tensor, slice.row_high - slice.row_low);
+    size_t slice_offset = (size_t) slice.row_low * tensor->nb[1];
+    const uint8_t * slice_data = (const uint8_t *)data + slice_offset;
 
-        const uint8_t * slice_data = (const uint8_t *)data + slice_offset;
+    // Serialize tensor with the split buffer's remote_ptr
+    rpc_tensor rpc_t = serialize_tensor(tensor);
+    rpc_t.buffer = slice.remote_ptr;
+    rpc_t.data   = reinterpret_cast<uint64_t>(tensor->data);
 
-        // Serialize tensor with the split buffer's remote_ptr
-        rpc_tensor rpc_t = serialize_tensor(tensor);
-        rpc_t.buffer = slice.remote_ptr;
-        rpc_t.data   = reinterpret_cast<uint64_t>(tensor->data);
-
-        rpc_issue_set_tensor_payload(sock, rpc_t, 0, slice_data, slice_size);
-    }
+    rpc_issue_set_tensor_payload(sock, rpc_t, 0, slice_data, slice_size);
 }
 
 static void ggml_backend_rpc_split_buffer_get_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * tensor, void * data, size_t offset, size_t size) {
@@ -5366,30 +5483,28 @@ static void ggml_backend_rpc_split_buffer_get_tensor(ggml_backend_buffer_t buffe
     ggml_backend_rpc_split_buffer_context * buf_ctx = (ggml_backend_rpc_split_buffer_context *)buffer->context;
     ggml_backend_rpc_split_buffer_type_context * buft_ctx = (ggml_backend_rpc_split_buffer_type_context *)buffer->buft->context;
 
-    if (buf_ctx->slices.empty()) {
+    auto it = buf_ctx->slices.find(const_cast<ggml_tensor*>(tensor));
+    if (it == buf_ctx->slices.end()) {
         return;
     }
 
-    const size_t nb1 = tensor->nb[1];
+    const auto & slice = it->second;
     socket_ptr sock = buf_ctx->sock ? buf_ctx->sock : get_socket(buft_ctx->endpoint);
     GGML_ASSERT(sock != nullptr);
 
-    for (const auto & slice : buf_ctx->slices) {
-        size_t slice_offset = (size_t) slice.row_low * nb1;
-        size_t slice_size = rpc_nbytes_split(tensor, slice.row_high - slice.row_low);
+    size_t slice_size = rpc_nbytes_split(tensor, slice.row_high - slice.row_low);
+    size_t slice_offset = (size_t) slice.row_low * tensor->nb[1];
+    uint8_t * slice_data = (uint8_t *)data + slice_offset;
 
-        uint8_t * slice_data = (uint8_t *)data + slice_offset;
+    rpc_msg_get_tensor_req request;
+    request.tensor = serialize_tensor(tensor);
+    request.tensor.buffer = slice.remote_ptr;
+    request.tensor.data   = reinterpret_cast<uint64_t>(tensor->data);
+    request.offset = 0;
+    request.size = slice_size;
 
-        rpc_msg_get_tensor_req request;
-        request.tensor = serialize_tensor(tensor);
-        request.tensor.buffer = slice.remote_ptr;
-        request.tensor.data   = reinterpret_cast<uint64_t>(tensor->data);
-        request.offset = 0;
-        request.size = slice_size;
-
-        bool status = send_rpc_cmd(sock, RPC_CMD_GET_TENSOR, &request, sizeof(request), slice_data, slice_size);
-        RPC_STATUS_ASSERT(status);
-    }
+    bool status = send_rpc_cmd(sock, RPC_CMD_GET_TENSOR, &request, sizeof(request), slice_data, slice_size);
+    RPC_STATUS_ASSERT(status);
 }
 
 static void ggml_backend_rpc_split_buffer_clear(ggml_backend_buffer_t buffer, uint8_t value) {
