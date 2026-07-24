@@ -407,15 +407,17 @@ static bool rpc_server_telemetry_env_enabled() {
     return v != 0;
 }
 
-// UDP transport for fire-and-forget graph submission. Opt-in via GGML_RPC_UDP=1.
-// When enabled, the reuse paths in graph_compute send GRAPH_RECOMPUTE over UDP
-// instead of TCP. EVENT_RECORD stays on TCP (it needs reliable ordering for
-// synchronization). Falls back to TCP if UDP is not initialized or send fails.
+// UDP transport for fire-and-forget graph submission. On by default since
+// Wayfinder Loop 5 (2026-07-24): +56% throughput vs TCP-only by eliminating
+// TCP stream contention between GET_TENSOR and GRAPH_RECOMPUTE.
+// Opt-out via GGML_RPC_UDP=0.
+// EVENT_RECORD stays on TCP (needs reliable ordering for synchronization).
+// Falls back to TCP if UDP is not initialized or send fails.
 static bool rpc_udp_env_enabled() {
     static int v = -1;
     if (v < 0) {
         const char * e = getenv("GGML_RPC_UDP");
-        v = e ? atoi(e) : 0;
+        v = e ? atoi(e) : 1; // default ON (was 0 before Loop 5)
     }
     return v != 0;
 }
