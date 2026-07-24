@@ -5810,6 +5810,11 @@ static ggml_backend_buffer_type_t ggml_backend_rpc_split_buffer_type(
 
     int n_dev = rpc_count_split_devices(tensor_split, GGML_RPC_MAX_DEVICES);
 
+    if (n_dev == 0) {
+        GGML_LOG_ERROR("[%s] tensor_split has no non-zero entries; cannot create split buffer type\n", __func__);
+        return nullptr;
+    }
+
     // Count total RPC devices registered so far to determine the base offset.
     // RPC devices occupy the last n_rpc positions in the tensor_split array.
     // The first RPC device is at split_id = n_dev - n_rpc, the last at n_dev - 1.

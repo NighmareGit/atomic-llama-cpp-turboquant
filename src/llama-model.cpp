@@ -1225,22 +1225,23 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
 
     // build a list of buffer types for the CPU and GPU devices
     pimpl->cpu_buft_list = make_cpu_buft_list(devices, params.use_extra_bufts, params.no_host);
-    for (const auto & dev : devices) {
-        buft_list_t buft_list = make_gpu_buft_list(dev.dev, split_mode, tensor_split);
-        // add CPU buffer types as a fallback
-        buft_list.insert(buft_list.end(), pimpl->cpu_buft_list.begin(), pimpl->cpu_buft_list.end());
-        pimpl->gpu_buft_list.emplace(dev.dev, std::move(buft_list));
-    }
+
+    // Compute effective tensor_split BEFORE building GPU buffer types.
+    // When -ts is not specified, derive non-normalized fractional weights
+    // from free memory across all backends (local GPUs + RPC). This is
+    // required for row-split mode: the split buffer type factory (RPC, CUDA,
+    // SYCL) needs valid non-zero weights to compute slice IDs. With an
+    // all-zero array the factory counts n_dev == 0 and crashes downstream.
+    std::vector<float> effective_tensor_split(llama_max_devices(), 0.0f);
+    bool tensor_split_all_zero = tensor_split == nullptr ||
+        std::all_of(tensor_split, tensor_split + n_devices(), [](float x) { return x == 0.0f; });
 
     ggml_backend_dev_t cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
     if (cpu_dev == nullptr) {
         throw std::runtime_error(format("%s: no CPU backend found", __func__));
     }
 
-    // calculate the split points
-    bool all_zero = tensor_split == nullptr || std::all_of(tensor_split, tensor_split + n_devices(), [](float x) { return x == 0.0f; });
-    std::vector<float> splits(n_devices());
-    if (all_zero) {
+    if (tensor_split_all_zero) {
         // default split, by free memory
         for (size_t i = 0; i < n_devices(); ++i) {
             ggml_backend_dev_t dev = devices[i].dev;
@@ -1265,11 +1266,22 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
                 }
             }
 
-            splits[i] = free;
+            effective_tensor_split[i] = (float)free;
         }
-    } else {
-        std::copy(tensor_split, tensor_split + n_devices(), splits.begin());
+    } else if (tensor_split != nullptr) {
+        std::copy(tensor_split, tensor_split + n_devices(), effective_tensor_split.begin());
     }
+
+    for (const auto & dev : devices) {
+        buft_list_t buft_list = make_gpu_buft_list(dev.dev, split_mode, effective_tensor_split.data());
+        // add CPU buffer types as a fallback
+        buft_list.insert(buft_list.end(), pimpl->cpu_buft_list.begin(), pimpl->cpu_buft_list.end());
+        pimpl->gpu_buft_list.emplace(dev.dev, std::move(buft_list));
+    }
+
+    // calculate the split points
+    std::vector<float> splits(n_devices());
+    std::copy(effective_tensor_split.begin(), effective_tensor_split.begin() + n_devices(), splits.begin());
 
     // sum and normalize the splits to get the split points
     float split_sum = 0.0f;
@@ -1277,8 +1289,15 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
         split_sum += splits[i];
         splits[i] = split_sum;
     }
-    for (size_t i = 0; i < n_devices(); ++i) {
-        splits[i] /= split_sum;
+    if (split_sum == 0.0f) {
+        // all devices reported zero free memory: fall back to a uniform split
+        for (size_t i = 0; i < n_devices(); ++i) {
+            splits[i] = (float)(i + 1) / n_devices();
+        }
+    } else {
+        for (size_t i = 0; i < n_devices(); ++i) {
+            splits[i] /= split_sum;
+        }
     }
 
     const int i_gpu_start = std::max(n_layer_all + 1 - n_gpu_layers, 0);
@@ -1300,7 +1319,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             }
             // ensure buft list exists even if device was not in model->devices prep
             if (pimpl->gpu_buft_list.find(mapped) == pimpl->gpu_buft_list.end()) {
-                buft_list_t buft_list = make_gpu_buft_list(mapped, split_mode, tensor_split);
+                buft_list_t buft_list = make_gpu_buft_list(mapped, split_mode, effective_tensor_split.data());
                 buft_list.insert(buft_list.end(), pimpl->cpu_buft_list.begin(), pimpl->cpu_buft_list.end());
                 pimpl->gpu_buft_list.emplace(mapped, std::move(buft_list));
             }
