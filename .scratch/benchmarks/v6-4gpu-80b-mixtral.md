@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-24  
 **Build:** 83605ae27 (10202)  
-**Status:** 4-GPU 80B COMPLETE; 5-GPU Mixtral BLOCKED
+**Status:** 4-GPU 80B COMPLETE; 5-GPU Mixtral → see `v6-5gpu-80b-mixtral.md`
 
 ## 4-GPU 80B MoE (7900 XTX + 3090 + 5060 Ti + 3070)
 
