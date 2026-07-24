@@ -77,9 +77,17 @@ For **models that fit on a single GPU**, multi-GPU layer-split adds overhead wit
 ## Next Steps
 
 - [x] 7900 XTX kernel profile complete
-- [ ] 5060 Ti kernel profile (requires root ncu permissions on remus)
-- [ ] Experiment with forced layer-split ratios (20/8, 15/13)
-- [ ] V6 5-GPU Mixtral stress test (72 GiB model — doesn't fit on any single GPU)
+- [x] 5060 Ti kernel profile attempted — **BLOCKED**: ncu 2022.4.1.0 only supports up to Ada Lovelace (sm_89). RTX 5060 Ti is Blackwell (sm_120). Requires ncu 2025.x+.
+- [ ] Experiment with forced layer-split ratios (20/8, 15/13) — low priority since 2-GPU is inherently imbalanced
+- [x] V6 5-GPU Mixtral stress test — BLOCKED by Docker 3060 Ti NVML mismatch (requires reboot)
+- [ ] V5 MTP self-speculation — can amortize RPC overhead with 2-3 tokens/decode
+
+## 5060 Ti Profiling Attempt (2026-07-24)
+
+**Method:** `sudo ncu --set full -o /tmp/ncu-5060-sudo ./bin/rpc-server --host 0.0.0.0 --port 50051`
+**Result:** `==ERROR== Profiling is not supported on device 0.`
+**Root cause:** ncu version 2022.4.1.0 supports chips: ad102-ad107, ga100-ga107, gv100, tu102-tu117. The RTX 5060 Ti (Blackwell, sm_120) is unsupported.
+**Fix:** Upgrade ncu to 2025.x or later on remus. Alternatively, use `nsys` (NVIDIA Nsight Systems) for timeline profiling.
 
 ## References
 
