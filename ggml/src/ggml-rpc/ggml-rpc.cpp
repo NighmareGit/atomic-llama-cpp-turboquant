@@ -158,7 +158,8 @@ enum rpc_cmd {
     RPC_CMD_GRAPH_RECOMPUTE_ALL,  // Path C: re-execute cached graph (value 22)
     RPC_CMD_GRAPH_COMPUTE_STAGE,  // D6.9: per-stage split filtering for GPipe + profiler (value 23)
     RPC_CMD_ALLOC_BUFFER_SPLIT,   // Allocate a buffer for a tensor row slice on a specific device (value 24)
-    RPC_CMD_COUNT,                 // updated from 23
+    RPC_CMD_GET_TENSOR_BATCH,    // V1b: batch GET_TENSOR requests (value 25)
+    RPC_CMD_COUNT,               // updated from 24
 };
 
 static_assert(RPC_CMD_HELLO == 14, "RPC_CMD_HELLO must be always 14");
@@ -293,6 +294,7 @@ static bool rpc_pending_relay_matches_dst(const rpc_pending_relay & pr,
                                           const ggml_tensor * const * dst, size_t n_dst);
 static void flush_pending_relays_for_dst(const ggml_tensor * const * dst, size_t n_dst);
 static void flush_set_tensor_batch();
+static void flush_get_tensor_batch();     // V1b: batch GET_TENSOR flush
 static void rpc_register_socket(const socket_ptr & sock);
 static void rpc_drain_all_endpoints_pending();
 void ggml_backend_rpc_flush_pending_downloads(void);
@@ -761,6 +763,48 @@ struct rpc_msg_get_tensor_req {
     uint64_t size;
 };
 
+// V1b: batch GET_TENSOR accumulator (Wayfinder Loop 5)
+struct get_tensor_batch_entry {
+    rpc_msg_get_tensor_req req;
+    void * data;
+    size_t size;
+};
+static thread_local std::vector<get_tensor_batch_entry> tls_get_batch;
+static thread_local socket_ptr tls_get_batch_sock;
+
+static void get_tensor_batch_append(const socket_ptr & sock,
+                                     const rpc_msg_get_tensor_req & req,
+                                     void * data, size_t size) {
+    if (tls_get_batch_sock && tls_get_batch_sock != sock) {
+        flush_get_tensor_batch();
+    }
+    tls_get_batch_sock = sock;
+    tls_get_batch.push_back({req, data, size});
+}
+
+void flush_get_tensor_batch() {
+    if (tls_get_batch.empty() || !tls_get_batch_sock) { return; }
+    auto sock = tls_get_batch_sock;
+    uint32_t count = (uint32_t)tls_get_batch.size();
+    const size_t payload_size = sizeof(uint32_t) + count * sizeof(rpc_msg_get_tensor_req);
+    const size_t msg_size = 1 + sizeof(uint64_t) + payload_size;
+    std::vector<uint8_t> msg(msg_size);
+    uint8_t * p = msg.data();
+    *p++ = (uint8_t)RPC_CMD_GET_TENSOR_BATCH;
+    uint64_t net_payload = payload_size;
+    memcpy(p, &net_payload, sizeof(net_payload)); p += sizeof(net_payload);
+    memcpy(p, &count, sizeof(count)); p += sizeof(count);
+    for (const auto & entry : tls_get_batch) {
+        memcpy(p, &entry.req, sizeof(entry.req)); p += sizeof(entry.req);
+    }
+    sock->send_data(msg.data(), msg.size());
+    for (const auto & entry : tls_get_batch) {
+        tls_pending_get_tensor.push_back({sock, entry.data, entry.size});
+    }
+    tls_get_batch.clear();
+    tls_get_batch_sock.reset();
+}
+
 struct rpc_msg_copy_tensor_req {
     rpc_tensor src;
     rpc_tensor dst;
@@ -1199,6 +1243,7 @@ static bool send_rpc_cmd(socket_ptr sock, enum rpc_cmd cmd, const void * input, 
         flush_pending_hash_all();
     }
     flush_set_tensor_batch();
+    flush_get_tensor_batch();  // V1b
     // send header + data in one go to avoid TCP buffering issues on small packets
     std::vector<uint8_t> buf(1 + sizeof(uint64_t) + input_size);
     buf[0] = (uint8_t)cmd;
@@ -1232,6 +1277,7 @@ static bool send_rpc_cmd(socket_ptr sock, enum rpc_cmd cmd, const void * input, 
         flush_pending_get_tensor_for_socket(sock);
         flush_pending_hash_for_socket(sock);
         flush_set_tensor_batch();
+        flush_get_tensor_batch();  // V1b
     }
     if (!send_rpc_cmd(sock, cmd, input, input_size)) {
         return false;
@@ -1695,6 +1741,15 @@ static void ggml_backend_rpc_buffer_get_tensor_async(ggml_backend_buffer_t buffe
     request.tensor.data   = reinterpret_cast<uint64_t>(tensor->data);
     request.offset = offset;
     request.size = size;
+
+    // V1b: when batching is enabled, accumulate instead of sending immediately.
+    // This eliminates per-call TCP overhead and server dispatch cost.
+    if (batch_send) {
+        get_tensor_batch_append(sock, request, data, size);
+        return;
+    }
+
+    // Non-batched path (unchanged): send immediately, defer receive
     uint8_t cmd_byte = RPC_CMD_GET_TENSOR;
     sock->send_data(&cmd_byte, sizeof(cmd_byte));
     uint64_t input_size = sizeof(rpc_msg_get_tensor_req);
@@ -1723,6 +1778,7 @@ static void ggml_backend_rpc_buffer_get_tensor(ggml_backend_buffer_t buffer, con
     flush_pending_get_tensor_for_socket(sock);
     flush_pending_hash_for_socket(sock);
     flush_set_tensor_batch();
+    flush_get_tensor_batch();  // V1b
     rpc_msg_get_tensor_req request;
     request.tensor = serialize_tensor(tensor);
     // Always use known RPC buffer context (same reason as set_tensor)
@@ -4777,6 +4833,43 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 }
                 if (!send_response(sock, response.data(), response.size())) {
                     return;
+                }
+                break;
+            }
+            case RPC_CMD_GET_TENSOR_BATCH: {
+                // V1b: batched GET_TENSOR (Wayfinder Loop 5)
+                // Payload: count (4 bytes) + N × rpc_msg_get_tensor_req
+                std::vector<uint8_t> input;
+                if (!recv_msg(sock, input)) {
+                    return;
+                }
+                if (input.size() < sizeof(uint32_t)) {
+                    GGML_LOG_ERROR("[%s] RPC_CMD_GET_TENSOR_BATCH: message too small (%zu)\n", __func__, input.size());
+                    return;
+                }
+
+                uint32_t count;
+                memcpy(&count, input.data(), sizeof(count));
+                size_t pos = sizeof(count);
+
+                for (uint32_t i = 0; i < count; i++) {
+                    if (pos + sizeof(rpc_msg_get_tensor_req) > input.size()) {
+                        GGML_LOG_ERROR("[%s] RPC_CMD_GET_TENSOR_BATCH: truncated entry %u\n", __func__, i);
+                        return;
+                    }
+
+                    rpc_msg_get_tensor_req request;
+                    memcpy(&request, input.data() + pos, sizeof(request));
+                    pos += sizeof(request);
+
+                    std::vector<uint8_t> response;
+                    if (!server.get_tensor(request, response)) {
+                        return;
+                    }
+                    // Send individual response on response socket
+                    if (!send_response(sock, response.data(), response.size())) {
+                        return;
+                    }
                 }
                 break;
             }
