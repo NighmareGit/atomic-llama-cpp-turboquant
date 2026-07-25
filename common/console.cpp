@@ -89,6 +89,13 @@ namespace console {
     void init(bool use_simple_io, bool use_advanced_display) {
         advanced_display = use_advanced_display;
         simple_io = use_simple_io;
+#if !defined(_WIN32)
+        // Auto-detect: if stdin is not a terminal, force simple_io
+        // This prevents spinner and interactive prompts in automated/pipe usage
+        if (!isatty(STDIN_FILENO)) {
+            simple_io = true;
+        }
+#endif
 #if defined(_WIN32)
         // Windows-specific console initialization
         DWORD dwMode = 0;
@@ -1064,14 +1071,17 @@ namespace console {
         }
 #endif
         if (!line.empty()) {
-            char last = line.back();
-            if (last == '/') { // Always return control on '/' symbol
-                line.pop_back();
-                return false;
-            }
-            if (last == '\\') { // '\\' changes the default action
-                line.pop_back();
-                multiline_input = !multiline_input;
+            // Only process continuation chars in interactive (TTY) mode
+            if (isatty(STDIN_FILENO)) {
+                char last = line.back();
+                if (last == '/') { // Always return control on '/' symbol
+                    line.pop_back();
+                    return false;
+                }
+                if (last == '\\') { // '\\' changes the default action
+                    line.pop_back();
+                    multiline_input = !multiline_input;
+                }
             }
         }
         line += '\n';
