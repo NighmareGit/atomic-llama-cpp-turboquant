@@ -355,6 +355,13 @@ void llm_graph_input_rs::set_input(const llama_ubatch * ubatch) {
             data[i] = mctx->s_copy(i);
         }
     }
+
+    // Store rs_idx for can_reuse() check — must capture after s_copy() resets it.
+    // rs_idx is indexed by seq_id (size = n_seq_max), not by cell position.
+    rs_idx.resize(mctx->get_n_seq_max());
+    for (uint32_t i = 0; i < mctx->get_n_seq_max(); ++i) {
+        rs_idx[i] = mctx->get_rs_idx(i);
+    }
 }
 
 bool llm_graph_input_rs::can_reuse(const llm_graph_params & params) {
@@ -371,6 +378,12 @@ bool llm_graph_input_rs::can_reuse(const llm_graph_params & params) {
 
     res &= head == mctx->get_head();
     res &= rs_z == mctx->get_rs_z();
+
+    // rs_idx must match for correct recurrent state rollback during MTP draft rejection
+    res &= rs_idx.size() == mctx->get_n_seq_max();
+    for (uint32_t i = 0; i < rs_idx.size() && res; ++i) {
+        res &= rs_idx[i] == mctx->get_rs_idx(i);
+    }
 
     return res;
 }
@@ -690,6 +703,13 @@ void llm_graph_input_mem_hybrid::set_input(const llama_ubatch * ubatch) {
             data[i] = mctx->get_recr()->s_copy(i);
         }
     }
+
+    // Store rs_idx for can_reuse() check — must capture after s_copy() resets it.
+    // rs_idx is indexed by seq_id (size = n_seq_max), not by cell position.
+    inp_rs->rs_idx.resize(mctx->get_recr()->get_n_seq_max());
+    for (uint32_t i = 0; i < mctx->get_recr()->get_n_seq_max(); ++i) {
+        inp_rs->rs_idx[i] = mctx->get_recr()->get_rs_idx(i);
+    }
 }
 
 bool llm_graph_input_mem_hybrid::can_reuse(const llm_graph_params & params) {
@@ -711,6 +731,12 @@ bool llm_graph_input_mem_hybrid::can_reuse(const llm_graph_params & params) {
 
     res &= inp_rs->head == mctx->get_recr()->get_head();
     res &= inp_rs->rs_z == mctx->get_recr()->get_rs_z();
+
+    // rs_idx must match for correct recurrent state rollback during MTP draft rejection
+    res &= inp_rs->rs_idx.size() == mctx->get_recr()->get_n_seq_max();
+    for (uint32_t i = 0; i < inp_rs->rs_idx.size() && res; ++i) {
+        res &= inp_rs->rs_idx[i] == mctx->get_recr()->get_rs_idx(i);
+    }
 
     return res;
 }
@@ -734,6 +760,13 @@ void llm_graph_input_mem_hybrid_k::set_input(const llama_ubatch * ubatch) {
             data[i] = mctx->get_recr()->s_copy(i);
         }
     }
+
+    // Store rs_idx for can_reuse() check — must capture after s_copy() resets it.
+    // rs_idx is indexed by seq_id (size = n_seq_max), not by cell position.
+    inp_rs->rs_idx.resize(mctx->get_recr()->get_n_seq_max());
+    for (uint32_t i = 0; i < mctx->get_recr()->get_n_seq_max(); ++i) {
+        inp_rs->rs_idx[i] = mctx->get_recr()->get_rs_idx(i);
+    }
 }
 
 bool llm_graph_input_mem_hybrid_k::can_reuse(const llm_graph_params & params) {
@@ -754,6 +787,12 @@ bool llm_graph_input_mem_hybrid_k::can_reuse(const llm_graph_params & params) {
 
     res &= inp_rs->head == mctx->get_recr()->get_head();
     res &= inp_rs->rs_z == mctx->get_recr()->get_rs_z();
+
+    // rs_idx must match for correct recurrent state rollback during MTP draft rejection
+    res &= inp_rs->rs_idx.size() == mctx->get_recr()->get_n_seq_max();
+    for (uint32_t i = 0; i < inp_rs->rs_idx.size() && res; ++i) {
+        res &= inp_rs->rs_idx[i] == mctx->get_recr()->get_rs_idx(i);
+    }
 
     return res;
 }
@@ -808,6 +847,13 @@ void llm_graph_input_mem_hybrid_iswa::set_input(const llama_ubatch * ubatch) {
             data[i] = mctx->get_recr()->s_copy(i);
         }
     }
+
+    // Store rs_idx for can_reuse() check — must capture after s_copy() resets it.
+    // rs_idx is indexed by seq_id (size = n_seq_max), not by cell position.
+    inp_rs->rs_idx.resize(mctx->get_recr()->get_n_seq_max());
+    for (uint32_t i = 0; i < mctx->get_recr()->get_n_seq_max(); ++i) {
+        inp_rs->rs_idx[i] = mctx->get_recr()->get_rs_idx(i);
+    }
 }
 
 bool llm_graph_input_mem_hybrid_iswa::can_reuse(const llm_graph_params & params) {
@@ -842,6 +888,12 @@ bool llm_graph_input_mem_hybrid_iswa::can_reuse(const llm_graph_params & params)
 
     res &= inp_rs->head == mctx->get_recr()->get_head();
     res &= inp_rs->rs_z == mctx->get_recr()->get_rs_z();
+
+    // rs_idx must match for correct recurrent state rollback during MTP draft rejection
+    res &= inp_rs->rs_idx.size() == mctx->get_recr()->get_n_seq_max();
+    for (uint32_t i = 0; i < inp_rs->rs_idx.size() && res; ++i) {
+        res &= inp_rs->rs_idx[i] == mctx->get_recr()->get_rs_idx(i);
+    }
 
     return res;
 }

@@ -264,6 +264,7 @@ public:
     // used in view offsets, need to match for valid graph reuse
     uint32_t head;
     int32_t rs_z;
+    std::vector<uint32_t> rs_idx; // stored for can_reuse() check (indexed by seq_id)
 };
 
 class llm_graph_input_cross_embd : public llm_graph_input_i {

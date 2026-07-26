@@ -69,6 +69,7 @@ public:
     uint32_t head = 0; // the location where the batch will be placed in the cache (see find_slot())
     uint32_t size = 0; // total number of cells, shared across all sequences
     uint32_t used = 0; // used cells (i.e. at least one seq_id)
+    uint32_t n_seq_max = 1; // maximum number of sequences
 
     // number of recurrent-state snapshots per seq for rollback; tensors are widened to (1 + n_rs_seq) groups
     uint32_t n_rs_seq = 0;
@@ -77,6 +78,7 @@ public:
     std::vector<uint32_t> rs_idx;
 
     void set_rs_idx(llama_seq_id seq_id, uint32_t idx);
+    uint32_t get_rs_idx(llama_seq_id seq_id) const;
 
     // computed before each graph build
     uint32_t n = 0;
@@ -115,8 +117,6 @@ public:
 private:
     //const llama_model & model;
     const llama_hparams & hparams;
-
-    const uint32_t n_seq_max = 1;
 
     // ggml contexts for the KV cache along with the allocated backend buffers:
     std::vector<std::pair<ggml_context_ptr, ggml_backend_buffer_ptr>> ctxs_bufs;
@@ -164,8 +164,10 @@ public:
     //
 
     uint32_t get_n_rs() const;
+    uint32_t get_n_seq_max() const;
     uint32_t get_head() const;
     int32_t  get_rs_z() const;
+    uint32_t get_rs_idx(llama_seq_id seq_id) const { return mem->get_rs_idx(seq_id); }
     uint32_t get_size() const;
 
     ggml_tensor * get_r_l(int32_t il) const;
