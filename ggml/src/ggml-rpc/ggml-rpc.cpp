@@ -6,6 +6,13 @@
 #include "transport.h"
 #include "rpc-async-audit.h"
 
+// For server-side CUDA split buffer type allocation (V0 row-split fix).
+// ggml_backend_buft_is_cuda_split() is static in ggml-cuda.cu, so we
+// detect CUDA split buffers by name suffix "_Split" (see rpc_buft_is_cuda_split).
+#if defined(GGML_USE_CUDA) || defined(GGML_USE_HIP)
+#  include "ggml-cuda.h"
+#endif
+
 #include <array>
 #include <cinttypes>
 #include <optional>
@@ -107,6 +114,34 @@ namespace fs = std::filesystem;
 
 // macro for nicer error messages on server crash
 #define RPC_STATUS_ASSERT(x) if (!(x)) GGML_ABORT("Remote RPC server crashed or returned malformed response")
+
+// Detect whether a buffer type is a native CUDA/HIP split buffer type.
+// ggml_backend_buft_is_cuda_split() is static in ggml-cuda.cu and thus not
+// linkable here. The CUDA split buffer type names are of the form
+// "<BACKEND_NAME><dev>_Split" (e.g. "ROCm0_Split", "CUDA0_Split"), so we
+// detect by suffix. This is only available when CUDA/HIP is compiled in.
+static bool rpc_buft_is_cuda_split(ggml_backend_buffer_type_t buft) {
+#if defined(GGML_USE_CUDA) || defined(GGML_USE_HIP)
+    if (!buft || !buft->iface.get_name) {
+        return false;
+    }
+    const char * name = buft->iface.get_name(buft);
+    if (!name) {
+        return false;
+    }
+    // Match the "_Split" suffix used by ggml_backend_cuda_split_buffer_type
+    const char * suffix = "_Split";
+    const size_t suffix_len = 6;
+    size_t len = strlen(name);
+    if (len < suffix_len) {
+        return false;
+    }
+    return strcmp(name + len - suffix_len, suffix) == 0;
+#else
+    GGML_UNUSED(buft);
+    return false;
+#endif
+}
 
 // all RPC structures must be packed
 #pragma pack(push, 1)
@@ -1613,6 +1648,10 @@ static rpc_tensor serialize_tensor(const ggml_tensor * tensor) {
         auto it = buf_ctx->slices.find(const_cast<ggml_tensor*>(tensor));
         if (it != buf_ctx->slices.end()) {
             result.buffer = it->second.remote_ptr;
+            int64_t nrows_split = it->second.row_high - it->second.row_low;
+            result.ne[1] = nrows_split;
+            result.nb[2] = result.ne[1] * result.nb[1];
+            result.nb[3] = result.ne[2] * result.nb[2];
         } else {
             result.buffer = 0;
         }
@@ -1624,6 +1663,18 @@ static rpc_tensor serialize_tensor(const ggml_tensor * tensor) {
     for (uint32_t i = 0; i < GGML_MAX_DIMS; i++) {
         result.ne[i] = tensor->ne[i];
         result.nb[i] = tensor->nb[i];
+    }
+    // Re-apply split-buffer dimension adjustment after the unconditional overwrite
+    // above (which clobbers the ne[1]/nb[2]/nb[3] values set in the split branch).
+    if (tensor->buffer && tensor->buffer->iface.free_buffer == ggml_backend_rpc_split_buffer_free_buffer) {
+        ggml_backend_rpc_split_buffer_context * buf_ctx = (ggml_backend_rpc_split_buffer_context *)tensor->buffer->context;
+        auto it = buf_ctx->slices.find(const_cast<ggml_tensor*>(tensor));
+        if (it != buf_ctx->slices.end()) {
+            int64_t nrows_split = it->second.row_high - it->second.row_low;
+            result.ne[1] = nrows_split;
+            result.nb[2] = result.ne[1] * result.nb[1];
+            result.nb[3] = result.ne[2] * result.nb[2];
+        }
     }
     result.op = tensor->op;
     for (uint32_t i = 0; i < GGML_MAX_OP_PARAMS / sizeof(int32_t); i++) {
@@ -3330,36 +3381,64 @@ bool rpc_server::alloc_buffer_split(const rpc_msg_alloc_buffer_split_req & reque
         return true;
     }
 
-    // Allocate a full-size buffer. The client sends ne[1] = full rows
-    // (not adjusted to nrows_split), so ggml_nbytes(tensor) computes the
-    // full tensor size. The client places its slice data at row_low * nb[1]
-    // offset, leaving other rows at allocation state (do NOT zero them).
+    // Allocate based on the tensor dimensions received from the client.
+    // For split buffers, serialize_tensor adjusts ne[1] to nrows_split,
+    // so ggml_nbytes(tensor) computes the exact slice size.
     size_t alloc_size = ggml_nbytes(tensor);
 
-    ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(backends[dev_id]);
-    ggml_backend_buffer_t buffer = ggml_backend_buft_alloc_buffer(buft, alloc_size);
+    // V0 row-split fix: use the native CUDA/HIP split buffer type so that
+    // mul_mat on the server uses the correct row_low/row_high path for both
+    // weights AND activations (via tensor->extra->data_device[id]).
+    // The server has a single GPU (dev_id); build a tensor_split array where
+    // that GPU owns 100% of the rows. The CUDA split buffer's init_tensor
+    // allocates per-device memory lazily and populates tensor->extra.
+    ggml_backend_buffer_t buffer = nullptr;
+#if defined(GGML_USE_CUDA) || defined(GGML_USE_HIP)
+    {
+        float tensor_split[GGML_CUDA_MAX_DEVICES] = {};
+        tensor_split[dev_id] = 1.0f;
+        ggml_backend_buffer_type_t split_buft = ggml_backend_cuda_split_buffer_type((int)dev_id, tensor_split);
+        if (split_buft) {
+            // The CUDA split buffer type's alloc_buffer ignores the size
+            // parameter (it just creates the context); init_tensor allocates
+            // device memory lazily. Pass full tensor size for safety.
+            buffer = ggml_backend_buft_alloc_buffer(split_buft, alloc_size);
+        }
+    }
+#endif
+    if (buffer == nullptr) {
+        // Fallback: plain default buffer type (non-split path)
+        ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(backends[dev_id]);
+        buffer = ggml_backend_buft_alloc_buffer(buft, alloc_size);
+    }
 
     response.remote_ptr = 0;
     response.remote_size = 0;
     if (buffer != nullptr) {
-        // Do NOT call buffer_clear. The buffer contains full-size allocation.
-        // The client sends only rows [row_low, row_high). Other rows are left
-        // at allocation state. For dense models (no MoE), garbage in unowned
-        // rows doesn't affect correctness because: (a) matmul only reads from
-        // rows where data was written; (b) client only reads [row_low, row_high).
+        // For CUDA split buffers, do NOT call buffer_clear — the split buffer
+        // type's clear is a no-op and init_tensor handles zeroing padding.
+        // Only zero for the fallback (non-split) path.
+        if (!rpc_buft_is_cuda_split(buffer->buft)) {
+            ggml_backend_buffer_clear(buffer, 0);
+        }
         response.remote_ptr = reinterpret_cast<uint64_t>(buffer);
         response.remote_size = buffer->size;
         {
             std::lock_guard<std::mutex> lock(buffers_mtx);
             buffers.insert(buffer);
-            split_buffer_meta meta;
-            for (int i = 0; i < GGML_MAX_DIMS; i++) {
-                meta.ne[i] = tensor->ne[i];
+            // Store split metadata for deserialize_tensor (fallback path only).
+            // CUDA split buffers carry their own row_low/row_high context
+            // in tensor->extra, so no metadata is needed for them.
+            if (!rpc_buft_is_cuda_split(buffer->buft)) {
+                split_buffer_meta meta;
+                for (int i = 0; i < GGML_MAX_DIMS; i++) {
+                    meta.ne[i] = tensor->ne[i];
+                }
+                meta.nrows_split = nrows_split;
+                meta.row_low  = request.row_low;
+                meta.row_high = request.row_high;
+                split_buffer_metas[buffer] = meta;
             }
-            meta.nrows_split = nrows_split;
-            meta.row_low  = request.row_low;
-            meta.row_high = request.row_high;
-            split_buffer_metas[buffer] = meta;
         }
     } else {
         LOG_DBG("[%s] device: %d, nrows_split: %" PRId64 ", alloc_size: %zu -> failed\n",
@@ -3467,6 +3546,7 @@ ggml_tensor * rpc_server::deserialize_tensor(struct ggml_context * ctx, const rp
     }
     result->buffer = reinterpret_cast<ggml_backend_buffer_t>(tensor->buffer);
     bool is_split = false;
+    bool is_cuda_split = false;
     split_buffer_meta split_meta;
     if (result->buffer) {
         std::lock_guard<std::mutex> lock(buffers_mtx);
@@ -3478,6 +3558,9 @@ ggml_tensor * rpc_server::deserialize_tensor(struct ggml_context * ctx, const rp
             }
             result->buffer = nullptr;
         } else {
+            // Check if this is a native CUDA split buffer (V0 row-split fix)
+            is_cuda_split = rpc_buft_is_cuda_split(result->buffer->buft);
+            // Check if this buffer has split metadata (fallback path)
             auto meta_it = split_buffer_metas.find(result->buffer);
             if (meta_it != split_buffer_metas.end()) {
                 is_split = true;
@@ -3486,7 +3569,23 @@ ggml_tensor * rpc_server::deserialize_tensor(struct ggml_context * ctx, const rp
         }
     }
 
-    result->data = reinterpret_cast<void *>(tensor->data);
+    if (is_cuda_split) {
+        // V0 row-split fix: CUDA split buffer's get_base returns dummy 0x1000.
+        // The real device pointers are in tensor->extra->data_device[id],
+        // populated by init_tensor. Call it now (once per tensor) to allocate
+        // device memory and set extra. Do NOT set result->data to the dummy.
+        if (result->extra == nullptr && result->buffer->iface.init_tensor) {
+            result->buffer->iface.init_tensor(result->buffer, result);
+        }
+        result->data = nullptr; // real pointers are in extra->data_device
+    } else if (is_split) {
+        // Split buffer: client-side serialize_tensor has already adjusted
+        // ne[1] to nrows_split, so the serialized dimensions are correct.
+        // Set data pointer to server-side buffer base — no ne[] changes needed.
+        result->data = ggml_backend_buffer_get_base(result->buffer);
+    } else {
+        result->data = reinterpret_cast<void *>(tensor->data);
+    }
 
     result->op = (ggml_op) tensor->op;
     for (uint32_t i = 0; i < GGML_MAX_OP_PARAMS / sizeof(int32_t); i++) {
@@ -3544,13 +3643,22 @@ bool rpc_server::set_tensor(const std::vector<uint8_t> & input) {
                 __func__, (void*)tensor->buffer);
             return false;
         }
-        const size_t buf_size = ggml_backend_buffer_get_size(tensor->buffer);
-        if (offset + size > buf_size) {
-            GGML_LOG_ERROR("[%s] tensor data region (offset=%" PRIu64 ", size=%zu) exceeds buffer size %zu\n",
-                           __func__, offset, size, buf_size);
-            return false;
+        // V0 row-split fix: CUDA split buffers store device pointers in
+        // tensor->extra->data_device[id], not in tensor->data (which is null).
+        // Use the buffer's own set_tensor interface, which handles the split.
+        // The CUDA split buffer set_tensor asserts offset==0 and
+        // size==ggml_nbytes(tensor), so skip the standard bounds check.
+        if (rpc_buft_is_cuda_split(tensor->buffer->buft)) {
+            tensor->buffer->iface.set_tensor(tensor->buffer, tensor, data, offset, size);
+        } else {
+            const size_t buf_size = ggml_backend_buffer_get_size(tensor->buffer);
+            if (offset + size > buf_size) {
+                GGML_LOG_ERROR("[%s] tensor data region (offset=%" PRIu64 ", size=%zu) exceeds buffer size %zu\n",
+                               __func__, offset, size, buf_size);
+                return false;
+            }
+            ggml_backend_tensor_set(tensor, data, offset, size);
         }
-        ggml_backend_tensor_set(tensor, data, offset, size);
     }
     return true;
 }
@@ -3599,6 +3707,14 @@ bool rpc_server::set_tensor_hash(const rpc_msg_set_tensor_hash_req & request, rp
     LOG_DBG("[%s] buffer: %p, data: %p, offset: %" PRIu64 ", size: %zu, hash: %" PRIx64 "\n",
             __func__, (void*)tensor->buffer, tensor->data, request.offset, size, request.hash);
 
+    // V0 row-split fix: CUDA split buffers store device pointers in
+    // tensor->extra->data_device[id]. Use the buffer's own set_tensor.
+    if (rpc_buft_is_cuda_split(tensor->buffer->buft)) {
+        tensor->buffer->iface.set_tensor(tensor->buffer, tensor, cached_file.data(), request.offset, size);
+        response.result = 1;
+        return true;
+    }
+
     // sanitize tensor->data
     {
         const size_t p0 = (size_t) ggml_backend_buffer_get_base(tensor->buffer);
@@ -3643,8 +3759,13 @@ bool rpc_server::init_tensor(const rpc_msg_init_tensor_req & request) {
     }
 
     if (tensor->extra != nullptr) {
-        GGML_LOG_ERROR("tensor->extra populated by the backend, this is currently unsupported.\n");
-        return false;
+        // V0 row-split fix: CUDA split buffer's init_tensor populates
+        // tensor->extra with device pointers (data_device[id]). This is
+        // expected and correct for split buffers — do not reject.
+        if (!rpc_buft_is_cuda_split(buffer->buft)) {
+            GGML_LOG_ERROR("tensor->extra populated by the backend, this is currently unsupported.\n");
+            return false;
+        }
     }
 
     return true;
@@ -3665,6 +3786,17 @@ bool rpc_server::get_tensor(const rpc_msg_get_tensor_req & request, std::vector<
         return false;
     }
     LOG_DBG("[%s] buffer: %p, data: %p, offset: %" PRIu64 ", size: %" PRIu64 "\n", __func__, (void*)tensor->buffer, tensor->data, request.offset, request.size);
+
+    // V0 row-split fix: CUDA split buffers store device pointers in
+    // tensor->extra->data_device[id], not in tensor->data. Use the buffer's
+    // own get_tensor interface, which handles the split. The CUDA split buffer
+    // get_tensor asserts offset==0 and size==ggml_nbytes(tensor), so skip the
+    // standard bounds check (which uses the dummy 0x1000 base pointer).
+    if (rpc_buft_is_cuda_split(tensor->buffer->buft)) {
+        response.resize(request.size, 0);
+        tensor->buffer->iface.get_tensor(tensor->buffer, tensor, response.data(), request.offset, request.size);
+        return true;
+    }
 
     // sanitize tensor->data
     {
@@ -5527,8 +5659,7 @@ static enum ggml_status ggml_backend_rpc_split_buffer_init_tensor(ggml_backend_b
 static void ggml_backend_rpc_split_buffer_set_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
     // Split tensors must always be set in their entirety at once
     GGML_ASSERT(offset == 0);
-    // size is the transmitted payload (slice_size), not full tensor bytes
-    // (since serialize_tensor no longer adjusts ne[1])
+    GGML_ASSERT(size == ggml_nbytes(tensor));
     GGML_ASSERT(ggml_is_contiguous(tensor) && "split buffers only supported for contiguous tensors");
 
     ggml_backend_rpc_split_buffer_context * buf_ctx = (ggml_backend_rpc_split_buffer_context *)buffer->context;
@@ -5560,7 +5691,7 @@ static void ggml_backend_rpc_split_buffer_set_tensor(ggml_backend_buffer_t buffe
 static void ggml_backend_rpc_split_buffer_get_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * tensor, void * data, size_t offset, size_t size) {
     // Split tensors must always be retrieved in their entirety at once
     GGML_ASSERT(offset == 0);
-    // size is the slice payload, not full tensor bytes
+    GGML_ASSERT(size == ggml_nbytes(tensor));
     GGML_ASSERT(ggml_is_contiguous(tensor) && "split buffers only supported for contiguous tensors");
 
     ggml_backend_rpc_split_buffer_context * buf_ctx = (ggml_backend_rpc_split_buffer_context *)buffer->context;
