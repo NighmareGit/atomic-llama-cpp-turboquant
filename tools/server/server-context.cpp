@@ -4557,7 +4557,44 @@ void server_routes::init_routes() {
     this->post_completions_oai = [this](const server_http_req & req) {
         auto res = create_response();
         std::vector<raw_buffer> files; // dummy
-        const json body = json::parse(req.body);
+        json body = json::parse(req.body);
+
+        // Apply chat template to base completion if available
+        // This provides the context tokens (e.g., <think>) needed for chat-tuned
+        // bilingual models to produce correct English output instead of defaulting
+        // to Chinese text continuation for English prompts
+        if (params.completion_auto_template && meta->chat_params.tmpls) {
+            try {
+                const auto & prompt_val = body["prompt"];
+                if (prompt_val.is_string() && !prompt_val.get<std::string>().empty()) {
+                    auto msgs = common_chat_msgs_parse_oaicompat(
+                        nlohmann::ordered_json::array({
+                            nlohmann::ordered_json::object({
+                                {"role", "user"},
+                                {"content", prompt_val.get<std::string>()}
+                            })
+                        })
+                    );
+                    common_chat_templates_inputs inputs;
+                    inputs.messages             = std::move(msgs);
+                    inputs.use_jinja            = meta->chat_params.use_jinja;
+                    inputs.enable_thinking      = meta->chat_params.enable_thinking;
+                    inputs.reasoning_format     = meta->chat_params.reasoning_format;
+                    inputs.chat_template_kwargs = meta->chat_params.chat_template_kwargs;
+                    inputs.now                  = std::chrono::system_clock::now();
+
+                    auto result = common_chat_templates_apply(meta->chat_params.tmpls.get(), inputs);
+                    body["prompt"] = result.prompt;
+                    if (!result.generation_prompt.empty()) {
+                        body["generation_prompt"] = result.generation_prompt;
+                    }
+                }
+            } catch (const std::exception & e) {
+                SRV_WRN("%s: failed to apply chat template to base completion: %s\n", __func__, e.what());
+                // Fall through with original prompt
+            }
+        }
+
         return handle_completions_impl(
             req,
             SERVER_TASK_TYPE_COMPLETION,
