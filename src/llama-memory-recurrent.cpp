@@ -396,6 +396,11 @@ void llama_memory_recurrent::set_rs_idx(llama_seq_id seq_id, uint32_t idx) {
     rs_idx[seq_id] = (idx > n_rs_seq) ? n_rs_seq : idx;
 }
 
+uint32_t llama_memory_recurrent::get_rs_idx(llama_seq_id seq_id) const {
+    if (seq_id < 0 || (size_t) seq_id >= rs_idx.size()) return 0;
+    return rs_idx[seq_id];
+}
+
 std::map<ggml_backend_buffer_type_t, size_t> llama_memory_recurrent::memory_breakdown() const {
     std::map<ggml_backend_buffer_type_t, size_t> ret;
     for (const auto & [_, buf] : ctxs_bufs) {
@@ -1216,6 +1221,10 @@ const llama_ubatch & llama_memory_recurrent_context::get_ubatch() const {
 
 uint32_t llama_memory_recurrent_context::get_n_rs() const {
     return is_full ? mem->size : mem->n;
+}
+
+uint32_t llama_memory_recurrent_context::get_n_seq_max() const {
+    return mem->n_seq_max;
 }
 
 uint32_t llama_memory_recurrent_context::get_head() const {
