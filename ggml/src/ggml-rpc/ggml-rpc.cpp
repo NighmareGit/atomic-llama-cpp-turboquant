@@ -3486,11 +3486,7 @@ ggml_tensor * rpc_server::deserialize_tensor(struct ggml_context * ctx, const rp
         }
     }
 
-    if (is_split) {
-        result->data = ggml_backend_buffer_get_base(result->buffer);
-    } else {
-        result->data = reinterpret_cast<void *>(tensor->data);
-    }
+    result->data = reinterpret_cast<void *>(tensor->data);
 
     result->op = (ggml_op) tensor->op;
     for (uint32_t i = 0; i < GGML_MAX_OP_PARAMS / sizeof(int32_t); i++) {
