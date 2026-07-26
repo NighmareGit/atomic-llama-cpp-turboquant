@@ -3468,36 +3468,6 @@ static void ggml_backend_cuda_free(ggml_backend_t backend) {
     delete backend;
 }
 
-// Pageable host -> device cudaMemcpyAsync can block the host until the stream drains.
-static void * ggml_cuda_pin_host_staging(size_t nbytes) {
-    static thread_local struct {
-        void * ptr = nullptr;
-        size_t cap = 0;
-    } pin;
-    if (nbytes > pin.cap) {
-        if (pin.ptr != nullptr) {
-            CUDA_CHECK(cudaFreeHost(pin.ptr));
-        }
-        CUDA_CHECK(cudaMallocHost(&pin.ptr, nbytes));
-        pin.cap = nbytes;
-    }
-    return pin.ptr;
-}
-
-// Issue pinned H2D on a side stream so the host does not block on a busy graph/compute stream.
-static void ggml_cuda_issue_pinned_h2d_async(ggml_backend_cuda_context * cuda_ctx, void * dst, const void * src, size_t nbytes) {
-    void * pin = ggml_cuda_pin_host_staging(nbytes);
-    memcpy(pin, src, nbytes);
-    cudaStream_t stream = cuda_ctx->stream();
-    CUDA_CHECK(cudaMemcpyAsync(dst, pin, nbytes, cudaMemcpyHostToDevice, cudaStreamPerThread));
-    // B+17: per-call event to avoid overwriting prior copies (was: single copy_event)
-    cudaEvent_t ev;
-    CUDA_CHECK(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming));
-    CUDA_CHECK(cudaEventRecord(ev, cudaStreamPerThread));
-    CUDA_CHECK(cudaStreamWaitEvent(stream, ev, 0));
-    cuda_ctx->pending_copy_events.push_back(ev);
-}
-
 static void ggml_backend_cuda_set_tensor_async(ggml_backend_t backend, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backend->context;
     ggml_backend_buffer_t buf = tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
@@ -3559,7 +3529,10 @@ static bool ggml_backend_cuda_cpy_tensor_async(ggml_backend_t backend_src, ggml_
         }
         ggml_backend_cuda_context * cuda_ctx_dst = (ggml_backend_cuda_context *) backend_dst->context;
         ggml_cuda_set_device(cuda_ctx_dst->device);
-        ggml_cuda_issue_pinned_h2d_async(cuda_ctx_dst, dst->data, src->data, nbytes);
+        // CPU-FALLBACK-FIX: direct cudaMemcpyAsync avoids thread_local pinned staging
+        // buffer race — two concurrent CPU→GPU copies overwrite each other's staging
+        // buffer before the async DMA completes (same root cause as GDN fix).
+        CUDA_CHECK(cudaMemcpyAsync(dst->data, src->data, nbytes, cudaMemcpyHostToDevice, cuda_ctx_dst->stream()));
         return true;
     }
     if (cuda_src && ggml_backend_buffer_is_host(buf_dst)) {
