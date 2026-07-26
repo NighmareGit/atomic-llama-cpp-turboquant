@@ -3585,6 +3585,17 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_PREFILL_ASSISTANT"));
     add_opt(common_arg(
+        {"--completion-auto-template"},
+        {"--no-completion-auto-template"},
+        string_format(
+            "whether to apply the chat template to /v1/completions prompts for chat-tuned models (default: disabled)\n"
+            "enable this if base completion produces Chinese text for English prompts (e.g., Qwen bilingual models)\n"
+        ),
+        [](common_params & params, bool value) {
+            params.completion_auto_template = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_COMPLETION_AUTO_TEMPLATE"));
+    add_opt(common_arg(
         {"-sps", "--slot-prompt-similarity"}, "SIMILARITY",
         string_format("how much the prompt of a request must match the prompt of a slot in order to use that slot (default: %.2f, 0.0 = disabled)\n", params.slot_prompt_similarity),
         [](common_params & params, const std::string & value) {
