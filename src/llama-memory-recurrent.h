@@ -69,7 +69,7 @@ public:
     uint32_t head = 0; // the location where the batch will be placed in the cache (see find_slot())
     uint32_t size = 0; // total number of cells, shared across all sequences
     uint32_t used = 0; // used cells (i.e. at least one seq_id)
-    uint32_t n_seq_max = 1; // maximum number of sequences
+    uint32_t n_seq_max = 1; // maximum number of sequences (logically const-after-init)
 
     // number of recurrent-state snapshots per seq for rollback; tensors are widened to (1 + n_rs_seq) groups
     uint32_t n_rs_seq = 0;

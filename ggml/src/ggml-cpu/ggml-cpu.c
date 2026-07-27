@@ -3005,7 +3005,9 @@ struct ggml_cplan ggml_graph_plan(
                         const int64_t per_thread = S_v + (K > 1 ? S_v * S_v : 0);
                         // The kernel offsets per-thread data by CACHE_LINE_SIZE_F32 to
                         // avoid false sharing; the allocation must account for this.
-                        cur = (per_thread + CACHE_LINE_SIZE_F32) * sizeof(float) * n_tasks;
+                        // cur = (per_thread + CACHE_LINE_SIZE_F32) * n_tasks would over-allocate
+                        // by (n_tasks-1)*CACHE_LINE_SIZE_F32. We allocate exactly what's needed:
+                        cur = (per_thread * n_tasks + CACHE_LINE_SIZE_F32) * sizeof(float);
                     } break;
                 case GGML_OP_TURBO_WHT:
                     {

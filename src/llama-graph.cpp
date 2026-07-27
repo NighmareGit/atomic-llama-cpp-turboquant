@@ -379,7 +379,9 @@ bool llm_graph_input_rs::can_reuse(const llm_graph_params & params) {
     res &= head == mctx->get_head();
     res &= rs_z == mctx->get_rs_z();
 
-    // rs_idx must match for correct recurrent state rollback during MTP draft rejection
+    // rs_idx must match for correct recurrent state rollback during MTP draft rejection.
+    // DEPENDENCY: s_copy() resets rs_idx[seq]=0 in set_input(). The rs_idx captured there
+    // is the post-reset value. If s_copy() changes behavior, this comparison breaks.
     res &= rs_idx.size() == mctx->get_n_seq_max();
     for (uint32_t i = 0; i < rs_idx.size() && res; ++i) {
         res &= rs_idx[i] == mctx->get_rs_idx(i);
@@ -732,7 +734,8 @@ bool llm_graph_input_mem_hybrid::can_reuse(const llm_graph_params & params) {
     res &= inp_rs->head == mctx->get_recr()->get_head();
     res &= inp_rs->rs_z == mctx->get_recr()->get_rs_z();
 
-    // rs_idx must match for correct recurrent state rollback during MTP draft rejection
+    // rs_idx must match for correct recurrent state rollback during MTP draft rejection.
+    // DEPENDENCY: s_copy() resets rs_idx[seq]=0 in set_input(). See comment at set_input() site.
     res &= inp_rs->rs_idx.size() == mctx->get_recr()->get_n_seq_max();
     for (uint32_t i = 0; i < inp_rs->rs_idx.size() && res; ++i) {
         res &= inp_rs->rs_idx[i] == mctx->get_recr()->get_rs_idx(i);
@@ -788,7 +791,8 @@ bool llm_graph_input_mem_hybrid_k::can_reuse(const llm_graph_params & params) {
     res &= inp_rs->head == mctx->get_recr()->get_head();
     res &= inp_rs->rs_z == mctx->get_recr()->get_rs_z();
 
-    // rs_idx must match for correct recurrent state rollback during MTP draft rejection
+    // rs_idx must match for correct recurrent state rollback during MTP draft rejection.
+    // DEPENDENCY: s_copy() resets rs_idx[seq]=0 in set_input(). See comment at set_input() site.
     res &= inp_rs->rs_idx.size() == mctx->get_recr()->get_n_seq_max();
     for (uint32_t i = 0; i < inp_rs->rs_idx.size() && res; ++i) {
         res &= inp_rs->rs_idx[i] == mctx->get_recr()->get_rs_idx(i);
@@ -889,7 +893,8 @@ bool llm_graph_input_mem_hybrid_iswa::can_reuse(const llm_graph_params & params)
     res &= inp_rs->head == mctx->get_recr()->get_head();
     res &= inp_rs->rs_z == mctx->get_recr()->get_rs_z();
 
-    // rs_idx must match for correct recurrent state rollback during MTP draft rejection
+    // rs_idx must match for correct recurrent state rollback during MTP draft rejection.
+    // DEPENDENCY: s_copy() resets rs_idx[seq]=0 in set_input(). See comment at set_input() site.
     res &= inp_rs->rs_idx.size() == mctx->get_recr()->get_n_seq_max();
     for (uint32_t i = 0; i < inp_rs->rs_idx.size() && res; ++i) {
         res &= inp_rs->rs_idx[i] == mctx->get_recr()->get_rs_idx(i);
