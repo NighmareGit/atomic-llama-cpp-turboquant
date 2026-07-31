@@ -1,0 +1,17 @@
+﻿# Path-B trace matrix summary (updated 2026-06-27)
+
+## Windows client
+PASS trace-f-2gpu-plus
+PASS trace-f-3gpu-plus
+FAIL trace-g-4gpu-plus (legacy 6600; slot-init hang)
+
+## Romulus client - 4-GPU primary STABLE
+PASS trace-g-4gpu-primary (G~43, load 85s)
+PASS trace-g-4gpu-primary-r2 (G~38)
+PASS trace-g-4gpu-primary-r3 (G~43)
+TRACE trace-g-4gpu-primary-trace (20.7 ms/tok)
+PASS trace-g-3gpu-primary-r1
+PASS trace-g-3gpu-primary-r3
+HANG trace-g-4gpu-romulus-q8-pp1 (legacy 6600)
+
+See CLUSTER-4GPU-PRIMARY.md

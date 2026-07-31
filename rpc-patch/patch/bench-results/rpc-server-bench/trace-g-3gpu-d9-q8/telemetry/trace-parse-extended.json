@@ -1,0 +1,20 @@
+{
+  "dir": "/home/hunter/projects/path-d-gpipeline-assembly-line/rpc-patch/patch/bench-results/rpc-server-bench/trace-g-3gpu-d9-q8/telemetry",
+  "rpc_events": 13928,
+  "sched_events": 23030,
+  "rpc_rtt": {
+    "count": 2520,
+    "total_ms": 21951.78
+  },
+  "input_wait_copy": 918.2,
+  "graph_compute_async": 6755.94,
+  "event_record": 30.41,
+  "sync_copy_fallback": 430.38,
+  "copy_async_ok_count": 5088,
+  "c_full_trace": true,
+  "assembly_overlap": {
+    "count": 905,
+    "pairs": 2426976,
+    "overlap_pct": 0.0
+  }
+}

@@ -1,0 +1,30 @@
+﻿=== trace summary ===
+dir=D:\projects\atomic-llama-cpp-5070ti\atomic-llama-cpp-turboquant\docs\cuda-windows-5070ti\benchmarks\trace-f-2gpu\telemetry
+
+[rpc] events=5288
+  cmd0 count=8 total_ms=540.26 avg_us=67532
+  cmd1 count=2 total_ms=0.43 avg_us=216
+  cmd10 count=8 total_ms=16.56 avg_us=2070
+  cmd11 count=8 total_ms=167.42 avg_us=20928
+  GRAPH_RECOMPUTE count=4352 total_ms=4526.65 avg_us=1040
+  cmd14 count=12 total_ms=3.07 avg_us=256
+  cmd15 count=2 total_ms=0.43 avg_us=215
+  cmd16 count=252 total_ms=5.56 avg_us=22
+  EVENT_RECORD count=130 total_ms=1776.14 avg_us=13663
+  cmd2 count=2 total_ms=0.32 avg_us=158
+  cmd3 count=8 total_ms=41.29 avg_us=5162
+  SET_TENSOR_HASH count=12 total_ms=2.96 avg_us=247
+  COPY_TENSOR count=168 total_ms=47407.18 avg_us=282186
+  GRAPH_COMPUTE count=324 total_ms=263.3 avg_us=813
+  blocking_events=2579 blocking_ms=36192.37
+  drain_flush_ms=1776.14
+
+[sched] events=1560
+  split_total_count=390
+  split_total_ms_sum=2117.37 avg_us=5429
+    backend2 splits=130 ms=7.47
+    backend0 splits=130 ms=30.13
+    backend1 splits=130 ms=2079.77
+  input_wait_copy_ms=1878.09
+  graph_compute_async_ms=223.03
+  event_record_ms=0.78

@@ -1,0 +1,11 @@
+{"ts_us":15703839590,"decode_id":1,"trace_id":1,"split":0,"backend":3,"copy":0,"phase":"input_wait_copy","elapsed_us":5}
+{"ts_us":15703839615,"decode_id":1,"trace_id":1,"split":0,"backend":3,"copy":0,"phase":"rpc_defer_flush","elapsed_us":2}
+{"ts_us":15703840940,"decode_id":1,"trace_id":1,"split":0,"backend":3,"copy":0,"phase":"graph_compute_async","elapsed_us":1312}
+{"ts_us":15703840948,"decode_id":1,"trace_id":1,"split":0,"backend":3,"copy":0,"phase":"event_record","elapsed_us":0}
+{"ts_us":15703840953,"decode_id":1,"trace_id":1,"split":0,"backend":3,"copy":0,"phase":"split_total","elapsed_us":1401}
+{"ts_us":15703840961,"decode_id":1,"trace_id":1,"split":1,"backend":0,"copy":0,"phase":"event_wait_slot","elapsed_us":1}
+{"ts_us":15703841029,"decode_id":1,"trace_id":1,"split":1,"backend":0,"copy":0,"phase":"copy_async_ok","elapsed_us":0}
+{"ts_us":15703841036,"decode_id":1,"trace_id":1,"split":1,"backend":0,"copy":0,"phase":"input_copy_slow","elapsed_us":60,"tensor":"model.input_embed","nbytes":16384,"view":0,"src_buft":"CPU","dst_buft":"RPC0[192.168.8.22:50051]","input_backend":"CPU","split_backend":"RPC0[192.168.8.22:50051]","host_src":1,"host_dst":0,"rpc_src":0,"rpc_dst":1,"reject":"rpc_upload_defer"}
+{"ts_us":15703841059,"decode_id":1,"trace_id":1,"split":1,"backend":0,"copy":0,"phase":"copy_async_ok","elapsed_us":0}
+{"ts_us":15703841065,"decode_id":1,"trace_id":1,"split":1,"backend":0,"copy":0,"phase":"copy_async_ok","elapsed_us":0}
+{"ts_us":15703841073,"decode_id":1,"trace_id":1,"split":1,"backend":0,"copy":0,"phase":"input_wait_copy","elapsed_us":113}

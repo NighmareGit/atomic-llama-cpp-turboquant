@@ -1,0 +1,6 @@
+ggml_cuda_init: found 2 CUDA devices (Total VRAM: 31962 MiB):
+  Device 0: NVIDIA GeForce RTX 3090, compute capability 8.6, VMM: yes, VRAM: 24123 MiB
+  Device 1: NVIDIA GeForce RTX 3070, compute capability 8.6, VMM: yes, VRAM: 7839 MiB
+Available devices:
+  CUDA0: NVIDIA GeForce RTX 3090 (24123 MiB, 23844 MiB free)
+  CUDA1: NVIDIA GeForce RTX 3070 (7839 MiB, 7663 MiB free)

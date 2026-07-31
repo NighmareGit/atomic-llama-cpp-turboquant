@@ -1,0 +1,1788 @@
+#include "placement-plan.h"
+
+#include "heatmap-rollup.h"
+#include "log.h"
+
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <cctype>
+#include <fstream>
+#include <map>
+#include <regex>
+#include <set>
+#include <sstream>
+
+using json = nlohmann::ordered_json;
+
+static void add_err(std::vector<placement_plan_error> & errors, const std::string & msg) {
+    errors.push_back({msg});
+}
+
+bool placement_plan_parse_json(
+        const std::string & json_text,
+        placement_plan & out,
+        std::vector<placement_plan_error> & errors) {
+    out = placement_plan{};
+    json j;
+    try {
+        j = json::parse(json_text);
+    } catch (const std::exception & e) {
+        add_err(errors, std::string("plan JSON parse failed: ") + e.what());
+        return false;
+    }
+
+    if (!j.is_object()) {
+        add_err(errors, "plan root must be an object");
+        return false;
+    }
+
+    out.schema_version = j.value("schema_version", 1);
+    out.created_at = j.value("created_at", "");
+    out.split_mode = j.value("split_mode", "layer");
+    out.capacity_snapshot_at = j.value("capacity_snapshot_at", "");
+    out.reserve_mode = j.value("reserve_mode", "table");
+    if (j.contains("reserve_model_version")) {
+        if (j["reserve_model_version"].is_number()) {
+            out.reserve_model_version = std::to_string(j["reserve_model_version"].get<int>());
+        } else {
+            out.reserve_model_version = j["reserve_model_version"].get<std::string>();
+        }
+    }
+
+    if (j.contains("model") && j["model"].is_object()) {
+        out.model_path = j["model"].value("path", "");
+        out.n_layer = j["model"].value("n_layer", 0);
+    }
+    if (j.contains("n_layer") && j["n_layer"].is_number_integer()) {
+        out.n_layer = j["n_layer"].get<int32_t>();
+    }
+
+    if (!j.contains("assignments") || !j["assignments"].is_array()) {
+        add_err(errors, "plan missing assignments array");
+        return false;
+    }
+    for (const auto & a : j["assignments"]) {
+        if (!a.is_object()) {
+            add_err(errors, "assignment entry must be object");
+            return false;
+        }
+        placement_plan_assignment as;
+        as.layer_start = a.value("layer_start", -1);
+        as.layer_end   = a.value("layer_end", -1);
+        as.backend_id  = a.value("backend_id", "");
+        if (as.backend_id.empty() && a.contains("backend")) {
+            as.backend_id = a["backend"].get<std::string>();
+        }
+        out.assignments.push_back(as);
+    }
+
+    if (j.contains("overrides") && j["overrides"].is_array()) {
+        for (const auto & o : j["overrides"]) {
+            placement_plan_override ov;
+            ov.match = o.value("match", "");
+            ov.backend_id = o.value("backend_id", "");
+            out.overrides.push_back(ov);
+        }
+    }
+
+    if (j.contains("heat") && j["heat"].is_object()) {
+        out.heat.status = j["heat"].value("status", "none");
+        out.heat.task = j["heat"].value("task", "");
+        out.heat.schema_version = j["heat"].value("schema_version", 1);
+        if (j["heat"].contains("layers") && j["heat"]["layers"].is_array()) {
+            for (const auto & l : j["heat"]["layers"]) {
+                placement_plan_heat_layer hl;
+                hl.idx = l.value("idx", -1);
+                hl.ms = l.value("ms", 0.0);
+                hl.us = l.value("us", 0ull);
+                hl.rank = l.value("rank", -1);
+                hl.n_nodes = l.value("n_nodes", 0);
+                out.heat.layers.push_back(hl);
+            }
+        }
+    }
+
+    if (j.contains("backends") && j["backends"].is_array()) {
+        for (const auto & b : j["backends"]) {
+            placement_plan::backend_snapshot bs;
+            bs.backend_id = b.value("backend_id", "");
+            bs.usable_weight_mib = b.value("usable_weight_mib", 0ull);
+            bs.free_mib = b.value("free_mib", 0ull);
+            bs.total_mib = b.value("total_mib", 0ull);
+            out.backends.push_back(bs);
+        }
+    }
+
+    return true;
+}
+
+bool placement_plan_load_file(
+        const std::string & path,
+        placement_plan & out,
+        std::vector<placement_plan_error> & errors) {
+    std::ifstream ifs(path);
+    if (!ifs) {
+        add_err(errors, "failed to open plan file: " + path);
+        return false;
+    }
+    std::ostringstream ss;
+    ss << ifs.rdbuf();
+    return placement_plan_parse_json(ss.str(), out, errors);
+}
+
+bool placement_plan_validate(
+        const placement_plan & plan,
+        int32_t n_layer,
+        bool topology_has_mixed_rpc_and_local,
+        std::vector<placement_plan_error> & errors) {
+    const size_t n_err0 = errors.size();
+
+    if (plan.schema_version < 1) {
+        add_err(errors, "schema_version must be >= 1");
+    }
+    if (n_layer <= 0) {
+        add_err(errors, "n_layer must be positive for validation");
+        return false;
+    }
+    if (plan.assignments.empty()) {
+        add_err(errors, "assignments must not be empty");
+    }
+
+    // overrides[] validated structurally here; backend resolve at prepare_apply
+    for (size_t oi = 0; oi < plan.overrides.size(); ++oi) {
+        const auto & o = plan.overrides[oi];
+        if (o.match.empty()) {
+            add_err(errors, "override " + std::to_string(oi) + " missing match pattern");
+        }
+        if (o.backend_id.empty()) {
+            add_err(errors, "override " + std::to_string(oi) + " missing backend_id");
+        }
+        if (!o.match.empty()) {
+            try {
+                std::regex re(o.match);
+                (void) re;
+            } catch (const std::regex_error & e) {
+                add_err(errors, "override " + std::to_string(oi) + " invalid regex: " + e.what());
+            }
+        }
+    }
+
+    std::string sm = plan.split_mode;
+    std::transform(sm.begin(), sm.end(), sm.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+    if (sm.empty()) {
+        sm = "layer";
+    }
+    if (sm != "layer" && sm != "tensor") {
+        add_err(errors, "split_mode must be \"layer\" or \"tensor\"");
+    }
+    if (sm == "tensor" && topology_has_mixed_rpc_and_local) {
+        add_err(errors, "split_mode=tensor refused for mixed local+RPC topology (illegal global tensor rail)");
+    }
+
+    // coverage
+    std::vector<int> cover(n_layer, 0);
+    for (size_t ai = 0; ai < plan.assignments.size(); ++ai) {
+        const auto & a = plan.assignments[ai];
+        if (a.backend_id.empty()) {
+            add_err(errors, "assignment " + std::to_string(ai) + " missing backend_id");
+            continue;
+        }
+        if (a.layer_start < 0 || a.layer_end <= a.layer_start) {
+            add_err(errors, "assignment " + std::to_string(ai) + " invalid range [" +
+                std::to_string(a.layer_start) + "," + std::to_string(a.layer_end) + ")");
+            continue;
+        }
+        if (a.layer_end > n_layer) {
+            add_err(errors, "assignment " + std::to_string(ai) + " layer_end " +
+                std::to_string(a.layer_end) + " exceeds n_layer " + std::to_string(n_layer));
+            continue;
+        }
+        for (int32_t il = a.layer_start; il < a.layer_end; ++il) {
+            cover[il]++;
+            if (cover[il] > 1) {
+                add_err(errors, "layer " + std::to_string(il) + " covered more than once (overlap)");
+            }
+        }
+    }
+    for (int32_t il = 0; il < n_layer; ++il) {
+        if (cover[il] == 0) {
+            add_err(errors, "layer " + std::to_string(il) + " not covered (gap)");
+        }
+    }
+
+    // Shape A double-count: refuse plan that uses both logical TP-unit and
+    // physical rpc:// members for the same endpoint.
+    {
+        std::vector<std::string> ids;
+        for (const auto & a : plan.assignments) {
+            if (!a.backend_id.empty()) {
+                ids.push_back(a.backend_id);
+            }
+        }
+        for (const auto & o : plan.overrides) {
+            if (!o.backend_id.empty()) {
+                ids.push_back(o.backend_id);
+            }
+        }
+        std::vector<std::string> dc_errs;
+        if (!placement_plan_ids_tp_double_count(ids, dc_errs)) {
+            for (const auto & e : dc_errs) {
+                add_err(errors, e);
+            }
+        }
+    }
+
+    return errors.size() == n_err0;
+}
+
+bool placement_plan_expand_layers(
+        const placement_plan & plan,
+        int32_t n_layer,
+        placement_layer_map & out_layers,
+        std::vector<placement_plan_error> & errors) {
+    out_layers.assign(n_layer, "");
+    for (const auto & a : plan.assignments) {
+        if (a.layer_start < 0 || a.layer_end > n_layer || a.layer_end <= a.layer_start) {
+            add_err(errors, "expand: invalid range");
+            return false;
+        }
+        for (int32_t il = a.layer_start; il < a.layer_end; ++il) {
+            if (!out_layers[il].empty()) {
+                add_err(errors, "expand: overlap at layer " + std::to_string(il));
+                return false;
+            }
+            out_layers[il] = a.backend_id;
+        }
+    }
+    for (int32_t il = 0; il < n_layer; ++il) {
+        if (out_layers[il].empty()) {
+            add_err(errors, "expand: gap at layer " + std::to_string(il));
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool backend_id_is_cpu(const std::string & id) {
+    return id == "cpu" || id == "CPU";
+}
+
+// Fuzzy match: local:NAME vs local:pci:BUS when names align via inventory display
+static bool backend_ids_match(const std::string & plan_id, const std::string & inv_id) {
+    if (plan_id == inv_id) {
+        return true;
+    }
+    // allow plan local:ROCm0 to match inv local:ROCm0
+    return false;
+}
+
+bool placement_plan_match_backends(
+        const placement_plan & plan,
+        const placement_inventory & inv,
+        std::vector<std::string> & missing_ids) {
+    missing_ids.clear();
+    std::set<std::string> needed;
+    for (const auto & a : plan.assignments) {
+        if (!backend_id_is_cpu(a.backend_id)) {
+            needed.insert(a.backend_id);
+        }
+    }
+    std::set<std::string> have;
+    for (const auto & r : inv.records) {
+        have.insert(r.backend_id);
+        // also index by local:NAME form from display if local:pci
+        if (r.kind == PLACEMENT_KIND_LOCAL_GPU && !r.display_name.empty()) {
+            // no stable short name in record alone - use device_id already in backend_id
+        }
+    }
+    // Also accept plan local:<devname> if any inventory local has matching suffix after local:
+    for (const auto & need : needed) {
+        if (have.count(need)) {
+            continue;
+        }
+        bool found = false;
+        if (need.rfind("local:", 0) == 0) {
+            const std::string rest = need.substr(6);
+            for (const auto & r : inv.records) {
+                if (r.kind != PLACEMENT_KIND_LOCAL_GPU) {
+                    continue;
+                }
+                if (r.backend_id == need) {
+                    found = true;
+                    break;
+                }
+                // plan uses local:ROCm0, inv uses local:pci:... — match via walking devices later
+                if (r.backend_id.rfind("local:", 0) == 0) {
+                    // try live name match in prepare_apply
+                    if (rest.find("pci:") != 0 && r.device_id.empty()) {
+                        // will resolve live
+                    }
+                }
+            }
+        }
+        // defer hard miss to prepare which has live devices; still list if no record shares prefix
+        if (!found) {
+            // if any inv rpc/local exists with exact id we're good; else mark missing for now
+            bool any = false;
+            for (const auto & r : inv.records) {
+                if (backend_ids_match(need, r.backend_id)) {
+                    any = true;
+                    break;
+                }
+                // local:NAME vs local:pci:X — not equal; prepare_apply resolves via live name
+                if (need.rfind("local:", 0) == 0 && r.kind == PLACEMENT_KIND_LOCAL_GPU) {
+                    any = true; // optimistic; prepare will confirm
+                    break;
+                }
+            }
+            if (!any) {
+                missing_ids.push_back(need);
+            }
+        }
+    }
+    return missing_ids.empty();
+}
+
+std::string placement_layer_map_to_string(const placement_layer_map & layers) {
+    std::ostringstream ss;
+    for (size_t i = 0; i < layers.size(); ++i) {
+        ss << "layer " << i << " -> " << layers[i] << "\n";
+    }
+    return ss.str();
+}
+
+// Live resolve: map backend_id from inventory + registered devices
+static ggml_backend_dev_t find_dev_for_backend_id(const std::string & backend_id) {
+    if (backend_id_is_cpu(backend_id)) {
+        return nullptr;
+    }
+    // Shape A logical unit: bind to device 0 of the multi-device endpoint.
+    // Server multi-device / specialized AR runs inside that process; client
+    // layer-rails the logical unit as one fat backend among others.
+    if (placement_backend_id_is_tp_unit(backend_id)) {
+        const std::string ep = placement_endpoint_from_backend_id(backend_id);
+        if (ep.empty()) {
+            return nullptr;
+        }
+        for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+            ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+            const char * name = ggml_backend_dev_name(dev);
+            if (!name || std::string(name).rfind("RPC", 0) != 0) {
+                continue;
+            }
+            const char * desc = ggml_backend_dev_description(dev);
+            if (desc && ep == desc) {
+                return dev; // first registered device for endpoint (index 0)
+            }
+        }
+        return nullptr;
+    }
+    // RPC form rpc://host:port#idx
+    if (backend_id.rfind("rpc://", 0) == 0) {
+        const size_t hash = backend_id.rfind('#');
+        if (hash == std::string::npos) {
+            return nullptr;
+        }
+        const std::string ep = backend_id.substr(6, hash - 6); // after rpc://
+        int idx = 0;
+        try {
+            idx = std::stoi(backend_id.substr(hash + 1));
+        } catch (...) {
+            return nullptr;
+        }
+        int seen = 0;
+        for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+            ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+            const char * name = ggml_backend_dev_name(dev);
+            if (!name || std::string(name).rfind("RPC", 0) != 0) {
+                continue;
+            }
+            const char * desc = ggml_backend_dev_description(dev);
+            if (!desc || ep != desc) {
+                continue;
+            }
+            if (seen == idx) {
+                return dev;
+            }
+            ++seen;
+        }
+        return nullptr;
+    }
+    // local:pci:BUS or local:NAME
+    if (backend_id.rfind("local:", 0) == 0) {
+        const std::string rest = backend_id.substr(6);
+        const bool is_pci = rest.rfind("pci:", 0) == 0;
+        const std::string pci = is_pci ? rest.substr(4) : "";
+        const std::string want_name = is_pci ? "" : rest;
+        for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+            ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+            if (ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_CPU) {
+                continue;
+            }
+            const char * name = ggml_backend_dev_name(dev);
+            if (name && std::string(name).rfind("RPC", 0) == 0) {
+                continue;
+            }
+            ggml_backend_dev_props props{};
+            ggml_backend_dev_get_props(dev, &props);
+            if (is_pci) {
+                if (props.device_id && pci == props.device_id) {
+                    return dev;
+                }
+            } else {
+                if (name && want_name == name) {
+                    return dev;
+                }
+                // also accept local:ROCm0 style vs name
+            }
+        }
+    }
+    return nullptr;
+}
+
+bool placement_plan_prepare_apply(
+        const placement_plan & plan,
+        int32_t n_layer,
+        const placement_inventory & inv,
+        bool topology_has_mixed_rpc_and_local,
+        placement_apply_result & out,
+        std::vector<placement_plan_error> & errors) {
+    out = placement_apply_result{};
+    if (!placement_plan_validate(plan, n_layer, topology_has_mixed_rpc_and_local, errors)) {
+        return false;
+    }
+    if (!placement_plan_expand_layers(plan, n_layer, out.layer_backend_ids, errors)) {
+        return false;
+    }
+
+    // Check inventory completeness for topology (optional soft: only required backends)
+    std::set<std::string> needed;
+    for (const auto & id : out.layer_backend_ids) {
+        if (!backend_id_is_cpu(id)) {
+            needed.insert(id);
+        }
+    }
+    for (const auto & o : plan.overrides) {
+        if (!backend_id_is_cpu(o.backend_id)) {
+            needed.insert(o.backend_id);
+        }
+    }
+
+    // usable lookup from live inventory
+    std::map<std::string, uint64_t> usable_by_id;
+    for (const auto & r : inv.records) {
+        usable_by_id[r.backend_id] = r.usable_weight_mib;
+    }
+
+    std::map<std::string, ggml_backend_dev_t> resolved;
+    for (const auto & id : needed) {
+        ggml_backend_dev_t dev = find_dev_for_backend_id(id);
+        if (!dev) {
+            // try inventory-equivalent local:pci if plan has local:NAME
+            if (id.rfind("local:", 0) == 0) {
+                for (const auto & r : inv.records) {
+                    if (r.kind != PLACEMENT_KIND_LOCAL_GPU) {
+                        continue;
+                    }
+                    // if plan is local:ROCm0 and we find ROCm0 device
+                    ggml_backend_dev_t d2 = find_dev_for_backend_id(r.backend_id);
+                    if (!d2) {
+                        continue;
+                    }
+                    const char * nm = ggml_backend_dev_name(d2);
+                    const std::string rest = id.substr(6);
+                    if (nm && rest == nm) {
+                        dev = d2;
+                        usable_by_id[id] = r.usable_weight_mib;
+                        break;
+                    }
+                    if (rest.rfind("pci:", 0) == 0 && r.device_id == rest.substr(4)) {
+                        dev = d2;
+                        usable_by_id[id] = r.usable_weight_mib;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!dev) {
+            add_err(errors, "backend_id missing at apply re-discover: " + id);
+            continue;
+        }
+        resolved[id] = dev;
+
+        // usable budget: refuse if live usable is 0 for backends with layers
+        uint64_t usable = 0;
+        if (usable_by_id.count(id)) {
+            usable = usable_by_id[id];
+        } else {
+            // find by resolved device matching inv record
+            for (const auto & r : inv.records) {
+                if (find_dev_for_backend_id(r.backend_id) == dev) {
+                    usable = r.usable_weight_mib;
+                    break;
+                }
+            }
+        }
+        if (usable == 0) {
+            // still allow if free > 0 in inv for that id (usable 0 from huge reserves)
+            bool free_ok = false;
+            for (const auto & r : inv.records) {
+                if (r.backend_id == id || find_dev_for_backend_id(r.backend_id) == dev) {
+                    if (r.free_mib > 0) {
+                        free_ok = true;
+                    }
+                    break;
+                }
+            }
+            if (!free_ok) {
+                add_err(errors, "backend_id has no usable/free capacity at apply: " + id);
+            }
+        }
+    }
+
+    if (!errors.empty()) {
+        return false;
+    }
+
+    out.layer_devices.assign(n_layer, nullptr);
+    std::vector<ggml_backend_dev_t> unique;
+    for (int32_t il = 0; il < n_layer; ++il) {
+        const std::string & id = out.layer_backend_ids[il];
+        if (backend_id_is_cpu(id)) {
+            out.layer_devices[il] = nullptr;
+            continue;
+        }
+        ggml_backend_dev_t dev = resolved[id];
+        out.layer_devices[il] = dev;
+        if (std::find(unique.begin(), unique.end(), dev) == unique.end()) {
+            unique.push_back(dev);
+        }
+    }
+    out.devices = unique;
+    out.debug_dump = placement_layer_map_to_string(out.layer_backend_ids);
+
+    // Tensor overrides: backend_id -> buft. Policy: override wins for matched tensors.
+    out.override_pattern_storage.clear();
+    out.tensor_buft_overrides.clear();
+    out.override_notes.clear();
+    out.override_pattern_storage.reserve(plan.overrides.size());
+    out.tensor_buft_overrides.reserve(plan.overrides.size() + 1);
+
+    for (size_t oi = 0; oi < plan.overrides.size(); ++oi) {
+        const auto & o = plan.overrides[oi];
+        ggml_backend_buffer_type_t buft = nullptr;
+        if (backend_id_is_cpu(o.backend_id)) {
+            buft = ggml_backend_cpu_buffer_type();
+        } else {
+            auto it = resolved.find(o.backend_id);
+            if (it == resolved.end() || it->second == nullptr) {
+                add_err(errors, "override " + std::to_string(oi) +
+                    " backend_id missing at apply: " + o.backend_id);
+                continue;
+            }
+            buft = ggml_backend_dev_buffer_type(it->second);
+            if (!buft) {
+                add_err(errors, "override " + std::to_string(oi) +
+                    " no buffer type for backend_id: " + o.backend_id);
+                continue;
+            }
+            if (std::find(unique.begin(), unique.end(), it->second) == unique.end()) {
+                unique.push_back(it->second);
+            }
+        }
+        out.override_pattern_storage.push_back(o.match);
+        // pointer filled after all patterns stored (vector may reallocate)
+        out.override_notes.push_back(
+            "override wins for match \"" + o.match + "\" -> " + o.backend_id +
+            " (layer assignment still applies to unmatched tensors)");
+    }
+
+    if (!errors.empty()) {
+        return false;
+    }
+
+    out.devices = unique;
+    // Build null-terminated buft override list with stable pattern c_str()
+    for (size_t i = 0; i < out.override_pattern_storage.size(); ++i) {
+        const auto & o = plan.overrides[i];
+        ggml_backend_buffer_type_t buft = nullptr;
+        if (backend_id_is_cpu(o.backend_id)) {
+            buft = ggml_backend_cpu_buffer_type();
+        } else {
+            buft = ggml_backend_dev_buffer_type(resolved[o.backend_id]);
+        }
+        out.tensor_buft_overrides.push_back({
+            out.override_pattern_storage[i].c_str(),
+            buft,
+        });
+    }
+    out.tensor_buft_overrides.push_back({nullptr, nullptr});
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Capacity packer (issue 11)
+// ---------------------------------------------------------------------------
+
+bool placement_plan_pack_capacity(
+        const placement_inventory & inv,
+        int32_t n_layer,
+        const std::string & model_path,
+        placement_plan & out,
+        std::vector<placement_plan_error> & errors) {
+    out = placement_plan{};
+    if (n_layer <= 0) {
+        add_err(errors, "pack: n_layer must be positive");
+        return false;
+    }
+
+    struct cand {
+        std::string backend_id;
+        uint64_t    usable = 0;
+        uint64_t    free_mib = 0;
+        uint64_t    total_mib = 0;
+    };
+    std::vector<cand> cands;
+    for (const auto & r : inv.records) {
+        // Prefer usable; fall back to free if usable is 0 but free remains
+        uint64_t u = r.usable_weight_mib;
+        if (u == 0) {
+            u = r.free_mib;
+        }
+        if (u == 0 && r.total_mib == 0) {
+            continue;
+        }
+        if (u == 0) {
+            continue; // no budget
+        }
+        cands.push_back({r.backend_id, u, r.free_mib, r.total_mib});
+    }
+
+    if (cands.empty()) {
+        add_err(errors, "pack: no backends with positive usable/free capacity");
+        return false;
+    }
+
+    // Deterministic order: usable desc, then backend_id asc
+    std::sort(cands.begin(), cands.end(), [](const cand & a, const cand & b) {
+        if (a.usable != b.usable) {
+            return a.usable > b.usable;
+        }
+        return a.backend_id < b.backend_id;
+    });
+
+    // Cap number of backends to n_layer (at most one layer each)
+    if ((int32_t) cands.size() > n_layer) {
+        cands.resize((size_t) n_layer);
+    }
+
+    const size_t nb = cands.size();
+    uint64_t sum_u = 0;
+    for (const auto & c : cands) {
+        sum_u += c.usable;
+    }
+    if (sum_u == 0) {
+        add_err(errors, "pack: total usable is zero");
+        return false;
+    }
+
+    // Proportional layer counts; guarantee min 1 for each cand when possible
+    std::vector<int32_t> counts(nb, 0);
+    int32_t assigned = 0;
+    for (size_t i = 0; i < nb; ++i) {
+        // floor; min 1
+        int32_t n = (int32_t) ((cands[i].usable * (uint64_t) n_layer) / sum_u);
+        if (n < 1) {
+            n = 1;
+        }
+        counts[i] = n;
+        assigned += n;
+    }
+    // If over-allocated (min-1 push), trim from largest first
+    while (assigned > n_layer) {
+        bool trimmed = false;
+        for (size_t i = 0; i < nb && assigned > n_layer; ++i) {
+            if (counts[i] > 1) {
+                counts[i]--;
+                assigned--;
+                trimmed = true;
+            }
+        }
+        if (!trimmed) {
+            break;
+        }
+    }
+    // Remainder to largest usable (index 0)
+    if (assigned < n_layer) {
+        counts[0] += (n_layer - assigned);
+        assigned = n_layer;
+    }
+    // If still short (pathological), dump rest on first
+    if (assigned < n_layer) {
+        counts[0] += (n_layer - assigned);
+    }
+
+    // Contiguous ranges: order by pack sort (large first = early layers).
+    // Small cards as cold fillers still get a trailing or mid share via proportion;
+    // with large-first ordering they land later when remainder is small — actually
+    // large first means early layers on big GPUs (common for PP). Small get later
+    // contiguous blocks if we emit in sort order... Wait: counts[0] is largest,
+    // so layers 0..c0-1 on largest, then next, etc. Small cards get late layers.
+    // AC: "smaller card gets fewer layers" — satisfied by proportion + min 1.
+    // "cold filler" — late layers on small is OK for TG-ish; fine for capacity pack.
+
+    out.schema_version = 1;
+    out.created_at = placement_now_iso8601();
+    out.model_path = model_path;
+    out.n_layer = n_layer;
+    out.split_mode = "layer";
+    out.capacity_snapshot_at = inv.records.empty() ? out.created_at : inv.records[0].reported_at;
+    out.reserve_mode = inv.reserve_mode.empty() ? "table" : inv.reserve_mode;
+    out.reserve_model_version = inv.reserve_model_version.empty()
+        ? PLACEMENT_RESERVE_MODEL_TABLE_V1 : inv.reserve_model_version;
+    out.heat.status = "none";
+    out.heat.task = "";
+    out.heat.schema_version = 1;
+    out.overrides.clear();
+
+    int32_t cursor = 0;
+    for (size_t i = 0; i < nb; ++i) {
+        if (counts[i] <= 0) {
+            continue;
+        }
+        placement_plan_assignment a;
+        a.layer_start = cursor;
+        a.layer_end = cursor + counts[i];
+        a.backend_id = cands[i].backend_id;
+        out.assignments.push_back(a);
+        cursor = a.layer_end;
+
+        placement_plan::backend_snapshot bs;
+        bs.backend_id = cands[i].backend_id;
+        bs.usable_weight_mib = cands[i].usable;
+        bs.free_mib = cands[i].free_mib;
+        bs.total_mib = cands[i].total_mib;
+        out.backends.push_back(bs);
+    }
+
+    if (cursor != n_layer) {
+        add_err(errors, "pack: internal layer sum " + std::to_string(cursor) +
+            " != n_layer " + std::to_string(n_layer));
+        return false;
+    }
+
+    // Self-validate
+    std::vector<placement_plan_error> verr;
+    if (!placement_plan_validate(out, n_layer, /*mixed*/ true, verr)) {
+        for (const auto & e : verr) {
+            errors.push_back(e);
+        }
+        return false;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Attention-local packer (attn + MTP on local client GPU)
+// ---------------------------------------------------------------------------
+
+bool placement_plan_pack_capacity_attn_local(
+        const placement_inventory & inv,
+        int32_t n_layer,
+        const std::string & model_path,
+        const std::vector<bool> & is_layer_recurrent,
+        placement_plan & out,
+        std::vector<placement_plan_error> & errors) {
+    out = placement_plan{};
+    if (n_layer <= 0) {
+        add_err(errors, "pack_attn_local: n_layer must be positive");
+        return false;
+    }
+
+    // Fallback: no recurrent info means conventional dense model
+    if (is_layer_recurrent.empty()) {
+        return placement_plan_pack_capacity(inv, n_layer, model_path, out, errors);
+    }
+    bool any_recurrent = false;
+    for (auto v : is_layer_recurrent) {
+        if (v) { any_recurrent = true; break; }
+    }
+    if (!any_recurrent) {
+        return placement_plan_pack_capacity(inv, n_layer, model_path, out, errors);
+    }
+
+    struct cand {
+        std::string backend_id;
+        uint64_t    usable = 0;
+        uint64_t    free_mib = 0;
+        uint64_t    total_mib = 0;
+        int         speed_tier = 0; // 2=local GPU, 1=RPC, 0=CPU
+    };
+    std::vector<cand> cands;
+    for (const auto & r : inv.records) {
+        uint64_t u = r.usable_weight_mib;
+        if (u == 0) {
+            u = r.free_mib;
+        }
+        if (u == 0) {
+            continue;
+        }
+        int st = 0;
+        if (r.kind == PLACEMENT_KIND_LOCAL_GPU) {
+            st = 2;
+        } else if (r.kind == PLACEMENT_KIND_RPC_DEVICE || r.kind == PLACEMENT_KIND_RPC_TP_UNIT) {
+            st = 1;
+        }
+        cands.push_back({r.backend_id, u, r.free_mib, r.total_mib, st});
+    }
+
+    if (cands.empty()) {
+        add_err(errors, "pack_attn_local: no backends with positive usable/free capacity");
+        return false;
+    }
+
+    // Sort: local GPU first, then RPC, then CPU; within same kind by usable desc
+    std::sort(cands.begin(), cands.end(), [](const cand & a, const cand & b) {
+        if (a.speed_tier != b.speed_tier) {
+            return a.speed_tier > b.speed_tier;
+        }
+        if (a.usable != b.usable) {
+            return a.usable > b.usable;
+        }
+        return a.backend_id < b.backend_id;
+    });
+
+    // Find local backend index
+    int local_idx = -1;
+    for (size_t i = 0; i < cands.size(); ++i) {
+        if (cands[i].speed_tier == 2) {
+            local_idx = (int) i;
+            break;
+        }
+    }
+
+    // Fallback: no local GPU backend
+    if (local_idx < 0) {
+        return placement_plan_pack_capacity(inv, n_layer, model_path, out, errors);
+    }
+
+    // Cap number of backends to n_layer
+    if ((int32_t) cands.size() > n_layer) {
+        cands.resize((size_t) n_layer);
+    }
+
+    const size_t n_backends = cands.size();
+
+    // Compute proportional layer counts (same as capacity packer)
+    uint64_t sum_u = 0;
+    for (const auto & c : cands) {
+        sum_u += c.usable;
+    }
+    if (sum_u == 0) {
+        add_err(errors, "pack_attn_local: total usable is zero");
+        return false;
+    }
+
+    std::vector<int32_t> counts(n_backends, 0);
+    int32_t assigned = 0;
+    for (size_t i = 0; i < n_backends; ++i) {
+        int32_t n = (int32_t) ((cands[i].usable * (uint64_t) n_layer) / sum_u);
+        if (n < 1) {
+            n = 1;
+        }
+        counts[i] = n;
+        assigned += n;
+    }
+    while (assigned > n_layer) {
+        bool trimmed = false;
+        for (size_t i = 0; i < n_backends && assigned > n_layer; ++i) {
+            if (counts[i] > 1) {
+                counts[i]--;
+                assigned--;
+                trimmed = true;
+            }
+        }
+        if (!trimmed) break;
+    }
+    if (assigned < n_layer) {
+        counts[0] += (n_layer - assigned);
+    }
+
+    // Build remaining capacity tracker (how many layers each backend can still take)
+    std::vector<int32_t> remaining = counts;
+
+    // Per-layer assignment: attention (non-recurrent) -> local, SSM (recurrent) -> remote
+    // For remote backends, prefer faster (smaller index) ones first
+    std::vector<int32_t> backend_assignments(n_layer, -1);
+
+    for (int32_t il = 0; il < n_layer; ++il) {
+        bool is_attn = !is_layer_recurrent[(size_t) il];
+
+        if (is_attn && remaining[local_idx] > 0) {
+            // Attention goes to local if space
+            backend_assignments[il] = local_idx;
+            remaining[local_idx]--;
+        } else if (!is_attn) {
+            // SSM: assign to a remote backend (prefer fastest = smallest index)
+            bool placed = false;
+            for (size_t bi = 0; bi < n_backends; ++bi) {
+                if ((int) bi == local_idx) continue; // skip local for SSM
+                if (remaining[bi] > 0) {
+                    backend_assignments[il] = (int32_t) bi;
+                    remaining[bi]--;
+                    placed = true;
+                    break;
+                }
+            }
+            if (!placed) {
+                // Spill SSM to local if no remote has space
+                if (remaining[local_idx] > 0) {
+                    backend_assignments[il] = local_idx;
+                    remaining[local_idx]--;
+                    placed = true;
+                }
+            }
+            if (!placed) {
+                // Shouldn't happen if counts sum to n_layer, but be safe: any backend
+                for (size_t bi = 0; bi < n_backends; ++bi) {
+                    if (remaining[bi] > 0) {
+                        backend_assignments[il] = (int32_t) bi;
+                        remaining[bi]--;
+                        placed = true;
+                        break;
+                    }
+                }
+            }
+        } else {
+            // Attention but local is full: spill to remote
+            bool placed = false;
+            for (size_t bi = 0; bi < n_backends; ++bi) {
+                if ((int) bi == local_idx) continue;
+                if (remaining[bi] > 0) {
+                    backend_assignments[il] = (int32_t) bi;
+                    remaining[bi]--;
+                    placed = true;
+                    break;
+                }
+            }
+            if (!placed && remaining[local_idx] > 0) {
+                backend_assignments[il] = local_idx;
+                remaining[local_idx]--;
+            }
+        }
+    }
+
+    // Verify all layers assigned
+    for (int32_t i = 0; i < n_layer; ++i) {
+        if (backend_assignments[i] < 0) {
+            add_err(errors, "pack_attn_local: layer " + std::to_string(i) + " not assigned");
+            return false;
+        }
+    }
+
+    // Collect per-backend layer lists
+    std::vector<std::vector<int32_t>> backend_layer_lists(n_backends);
+    for (int32_t i = 0; i < n_layer; ++i) {
+        int32_t bi = backend_assignments[i];
+        backend_layer_lists[bi].push_back(i);
+    }
+
+    // Sort each backend's layer list by index for contiguous ranges
+    for (auto & lst : backend_layer_lists) {
+        std::sort(lst.begin(), lst.end());
+    }
+
+    // Build output plan (same schema as heat packer)
+    out.schema_version = 1;
+    out.created_at = placement_now_iso8601();
+    out.model_path = model_path;
+    out.n_layer = n_layer;
+    out.split_mode = "layer";
+    out.capacity_snapshot_at = inv.records.empty() ? out.created_at : inv.records[0].reported_at;
+    out.reserve_mode = inv.reserve_mode.empty() ? "table" : inv.reserve_mode;
+    out.reserve_model_version = inv.reserve_model_version.empty()
+        ? PLACEMENT_RESERVE_MODEL_TABLE_V1 : inv.reserve_model_version;
+    out.heat.status = "none";
+    out.heat.task = "";
+    out.heat.schema_version = 1;
+    out.overrides.clear();
+
+    // Emit contiguous sub-ranges per backend
+    for (size_t i = 0; i < n_backends; ++i) {
+        const auto & lst = backend_layer_lists[i];
+        if (lst.empty()) continue;
+
+        int32_t range_start = lst[0];
+        int32_t range_end = lst[0] + 1;
+        for (size_t j = 1; j < lst.size(); ++j) {
+            if (lst[j] == range_end) {
+                range_end = lst[j] + 1;
+            } else {
+                placement_plan_assignment a;
+                a.layer_start = range_start;
+                a.layer_end = range_end;
+                a.backend_id = cands[i].backend_id;
+                out.assignments.push_back(a);
+
+                range_start = lst[j];
+                range_end = lst[j] + 1;
+            }
+        }
+        placement_plan_assignment a;
+        a.layer_start = range_start;
+        a.layer_end = range_end;
+        a.backend_id = cands[i].backend_id;
+        out.assignments.push_back(a);
+
+        // One backend snapshot per backend (not per sub-range)
+        placement_plan::backend_snapshot bs;
+        bs.backend_id = cands[i].backend_id;
+        bs.usable_weight_mib = cands[i].usable;
+        bs.free_mib = cands[i].free_mib;
+        bs.total_mib = cands[i].total_mib;
+        out.backends.push_back(bs);
+    }
+
+    // Self-validate
+    std::vector<placement_plan_error> verr;
+    if (!placement_plan_validate(out, n_layer, /*mixed*/ true, verr)) {
+        for (const auto & e : verr) {
+            errors.push_back(e);
+        }
+        return false;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Min-hop contiguous packer
+// ---------------------------------------------------------------------------
+
+bool placement_plan_pack_capacity_min_hop(
+        const placement_inventory & inv,
+        int32_t n_layer,
+        const std::string & model_path,
+        const std::vector<bool> & is_layer_recurrent,
+        placement_plan & out,
+        std::vector<placement_plan_error> & errors) {
+    out = placement_plan{};
+    if (n_layer <= 0) {
+        add_err(errors, "pack_min_hop: n_layer must be positive");
+        return false;
+    }
+
+    // Build candidate list with speed tiers (same as attn_local)
+    struct cand {
+        std::string backend_id;
+        uint64_t    usable = 0;
+        uint64_t    free_mib = 0;
+        uint64_t    total_mib = 0;
+        int         speed_tier = 0; // 2=local GPU, 1=RPC, 0=CPU
+    };
+    std::vector<cand> cands;
+    for (const auto & r : inv.records) {
+        uint64_t u = r.usable_weight_mib;
+        if (u == 0) {
+            u = r.free_mib;
+        }
+        if (u == 0) {
+            continue;
+        }
+        int st = 0;
+        if (r.kind == PLACEMENT_KIND_LOCAL_GPU) {
+            st = 2;
+        } else if (r.kind == PLACEMENT_KIND_RPC_DEVICE || r.kind == PLACEMENT_KIND_RPC_TP_UNIT) {
+            st = 1;
+        }
+        cands.push_back({r.backend_id, u, r.free_mib, r.total_mib, st});
+    }
+
+    if (cands.empty()) {
+        add_err(errors, "pack_min_hop: no backends with positive usable/free capacity");
+        return false;
+    }
+
+    // Sort: local first (tier 2), then RPC (tier 1) by usable desc
+    std::sort(cands.begin(), cands.end(), [](const cand & a, const cand & b) {
+        if (a.speed_tier != b.speed_tier) {
+            return a.speed_tier > b.speed_tier;
+        }
+        if (a.usable != b.usable) {
+            return a.usable > b.usable;
+        }
+        return a.backend_id < b.backend_id;
+    });
+
+    // Check if we have a local GPU
+    int local_idx = -1;
+    for (size_t i = 0; i < cands.size(); ++i) {
+        if (cands[i].speed_tier == 2) {
+            local_idx = (int) i;
+            break;
+        }
+    }
+
+    // Fallback: no local GPU -> use simple capacity packer
+    if (local_idx < 0) {
+        return placement_plan_pack_capacity(inv, n_layer, model_path, out, errors);
+    }
+
+    // Check if hybrid model
+    bool is_hybrid = false;
+    if (!is_layer_recurrent.empty()) {
+        for (auto v : is_layer_recurrent) {
+            if (v) { is_hybrid = true; break; }
+        }
+    }
+
+    // Cap number of backends to n_layer
+    if ((int32_t) cands.size() > n_layer) {
+        cands.resize((size_t) n_layer);
+        if (local_idx >= (int) cands.size()) {
+            local_idx = -1;
+        }
+    }
+
+    const size_t n_backends = cands.size();
+
+    // Compute proportional layer counts
+    uint64_t sum_u = 0;
+    for (const auto & c : cands) {
+        sum_u += c.usable;
+    }
+    if (sum_u == 0) {
+        add_err(errors, "pack_min_hop: total usable is zero");
+        return false;
+    }
+
+    std::vector<int32_t> counts(n_backends, 0);
+    int32_t assigned = 0;
+    for (size_t i = 0; i < n_backends; ++i) {
+        int32_t n = (int32_t) ((cands[i].usable * (uint64_t) n_layer) / sum_u);
+        if (n < 1) {
+            n = 1;
+        }
+        counts[i] = n;
+        assigned += n;
+    }
+    // Trim over-allocation from slowest backends first (reverse order)
+    while (assigned > n_layer) {
+        bool trimmed = false;
+        for (size_t i = n_backends; i > 0 && assigned > n_layer; --i) {
+            size_t idx = i - 1;
+            if (counts[idx] > 1) {
+                counts[idx]--;
+                assigned--;
+                trimmed = true;
+            }
+        }
+        if (!trimmed) break;
+    }
+    if (assigned < n_layer) {
+        counts[0] += (n_layer - assigned);
+    }
+
+    // Build final assignments (contiguous blocks)
+    struct block {
+        int32_t start;
+        int32_t end;
+        std::string backend_id;
+        uint64_t usable;
+        uint64_t free_mib;
+        uint64_t total_mib;
+    };
+    std::vector<block> blocks;
+
+    if (!is_hybrid) {
+        // Non-hybrid: simple contiguous split in speed-sorted order (local first)
+        int32_t cursor = 0;
+        for (size_t i = 0; i < n_backends; ++i) {
+            if (counts[i] <= 0) continue;
+            blocks.push_back({cursor, cursor + counts[i],
+                cands[i].backend_id, cands[i].usable,
+                cands[i].free_mib, cands[i].total_mib});
+            cursor += counts[i];
+        }
+    } else {
+        // Hybrid: same contiguous split, but optionally reorder blocks so that
+        // the local GPU gets the attention-heaviest contiguous span.
+        // When attention density is uniform (no clear winner), local stays first.
+        //
+        // Compute smoothed attention density per layer (window=3)
+        std::vector<float> attn_score((size_t) n_layer, 0.0f);
+        for (int32_t i = 0; i < n_layer; ++i) {
+            if ((size_t) i < is_layer_recurrent.size() && !is_layer_recurrent[(size_t) i]) {
+                attn_score[(size_t) i] = 1.0f;
+            }
+        }
+        const int sw = 3;
+        std::vector<float> smoothed(n_layer, 0.0f);
+        for (int32_t i = 0; i < n_layer; ++i) {
+            float sum = 0.0f;
+            int cnt = 0;
+            for (int32_t j = std::max(0, i - sw); j <= std::min(n_layer - 1, i + sw); ++j) {
+                sum += attn_score[j];
+                cnt++;
+            }
+            smoothed[i] = sum / (float) cnt;
+        }
+
+        // Assign blocks speed-sorted (local first)
+        int32_t cursor = 0;
+        std::vector<block> tmp_blocks;
+        for (size_t i = 0; i < n_backends; ++i) {
+            if (counts[i] <= 0) continue;
+            tmp_blocks.push_back({cursor, cursor + counts[i],
+                cands[i].backend_id, cands[i].usable,
+                cands[i].free_mib, cands[i].total_mib});
+            cursor += counts[i];
+        }
+
+        // Swap local with best remote block if attention density gap >= 0.25
+        if (local_idx >= 0 && (size_t) local_idx < tmp_blocks.size()) {
+            const auto & local_block = tmp_blocks[local_idx];
+            float local_density = 0.0f;
+            for (int32_t i = local_block.start; i < local_block.end; ++i) {
+                local_density += smoothed[i];
+            }
+            local_density /= (float)(local_block.end - local_block.start);
+
+            float best_density = local_density;
+            size_t best_remote = (size_t) -1;
+            for (size_t i = 0; i < tmp_blocks.size(); ++i) {
+                if ((int) i == local_idx) continue;
+                float d = 0.0f;
+                for (int32_t j = tmp_blocks[i].start; j < tmp_blocks[i].end; ++j) {
+                    d += smoothed[j];
+                }
+                d /= (float)(tmp_blocks[i].end - tmp_blocks[i].start);
+                if (d > best_density) {
+                    best_density = d;
+                    best_remote = i;
+                }
+            }
+
+            const float density_gap = best_density - local_density;
+            if (best_remote != (size_t) -1 && density_gap >= 0.25f) {
+                std::swap(tmp_blocks[local_idx], tmp_blocks[best_remote]);
+            }
+        }
+
+        // Re-sort by layer_start to restore contiguity
+        std::sort(tmp_blocks.begin(), tmp_blocks.end(),
+            [](const block & a, const block & b) { return a.start < b.start; });
+        blocks = std::move(tmp_blocks);
+    }
+
+    // Build output plan
+    out.schema_version = 1;
+    out.created_at = placement_now_iso8601();
+    out.model_path = model_path;
+    out.n_layer = n_layer;
+    out.split_mode = "layer";
+    out.capacity_snapshot_at = inv.records.empty() ? out.created_at : inv.records[0].reported_at;
+    out.reserve_mode = inv.reserve_mode.empty() ? "table" : inv.reserve_mode;
+    out.reserve_model_version = inv.reserve_model_version.empty()
+        ? PLACEMENT_RESERVE_MODEL_TABLE_V1 : inv.reserve_model_version;
+    out.heat.status = "none";
+    out.heat.task = "";
+    out.heat.schema_version = 1;
+    out.overrides.clear();
+
+    for (const auto & b : blocks) {
+        placement_plan_assignment a;
+        a.layer_start = b.start;
+        a.layer_end = b.end;
+        a.backend_id = b.backend_id;
+        out.assignments.push_back(a);
+
+        placement_plan::backend_snapshot bs;
+        bs.backend_id = b.backend_id;
+        bs.usable_weight_mib = b.usable;
+        bs.free_mib = b.free_mib;
+        bs.total_mib = b.total_mib;
+        // Deduplicate backends
+        bool found = false;
+        for (const auto & existing : out.backends) {
+            if (existing.backend_id == b.backend_id) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            out.backends.push_back(bs);
+        }
+    }
+
+    // Verify total coverage
+    int32_t covered = 0;
+    for (const auto & b : blocks) {
+        covered += (b.end - b.start);
+    }
+    if (covered != n_layer) {
+        add_err(errors, "pack_min_hop: internal layer sum " + std::to_string(covered) +
+            " != n_layer " + std::to_string(n_layer));
+        return false;
+    }
+
+    // Self-validate
+    std::vector<placement_plan_error> verr;
+    if (!placement_plan_validate(out, n_layer, /*mixed*/ true, verr)) {
+        for (const auto & e : verr) {
+            errors.push_back(e);
+        }
+        return false;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Heat-aware packer (issue 13 / P3)
+// ---------------------------------------------------------------------------
+
+bool placement_plan_parse_heatmap_file(
+        const std::string & path,
+        std::vector<heatmap_layer_rollup> & rollup,
+        std::vector<placement_plan_error> & errors) {
+    rollup.clear();
+
+    std::ifstream ifs(path);
+    if (!ifs) {
+        add_err(errors, "failed to open heatmap file: " + path);
+        return false;
+    }
+    std::ostringstream ss;
+    ss << ifs.rdbuf();
+    const std::string text = ss.str();
+
+    json j;
+    try {
+        j = json::parse(text);
+    } catch (const std::exception & e) {
+        add_err(errors, "heatmap JSON parse failed: " + std::string(e.what()));
+        return false;
+    }
+
+    // Navigate: tasks.tg.layer_rollup (preferred) or tasks.tg.layers
+    auto extract_layer_array = [&](const json & arr) -> bool {
+        for (const auto & item : arr) {
+            if (!item.is_object()) continue;
+            heatmap_layer_rollup lr;
+            lr.idx = item.value("idx", -1);
+            lr.ms = item.value("ms", 0.0);
+            lr.us = item.value("us", (uint64_t) 0);
+            lr.n_nodes = item.value("n_nodes", 0);
+            if (item.contains("nodes") && item["nodes"].is_array()) {
+                for (const auto & n : item["nodes"]) {
+                    lr.nodes.push_back(n.get<std::string>());
+                }
+            }
+            if (lr.idx >= 0) {
+                rollup.push_back(lr);
+            }
+        }
+        return !rollup.empty();
+    };
+
+    try {
+        // Try tasks.tg.layer_rollup (full detail) first
+        if (j.contains("tasks") && j["tasks"].is_object() &&
+            j["tasks"].contains("tg") && j["tasks"]["tg"].is_object()) {
+            const auto & tg = j["tasks"]["tg"];
+            if (tg.contains("layer_rollup") && tg["layer_rollup"].is_array()) {
+                if (extract_layer_array(tg["layer_rollup"])) {
+                    return true;
+                }
+            }
+            if (tg.contains("layers") && tg["layers"].is_array()) {
+                if (extract_layer_array(tg["layers"])) {
+                    return true;
+                }
+            }
+        }
+        // Fallback: check for a top-level "layer_rollup" or "layers" array
+        if (j.contains("layer_rollup") && j["layer_rollup"].is_array()) {
+            if (extract_layer_array(j["layer_rollup"])) {
+                return true;
+            }
+        }
+        if (j.contains("layers") && j["layers"].is_array()) {
+            if (extract_layer_array(j["layers"])) {
+                return true;
+            }
+        }
+    } catch (const std::exception & e) {
+        add_err(errors, "heatmap extraction failed: " + std::string(e.what()));
+        return false;
+    }
+
+    add_err(errors, "no per-layer heat data found in heatmap file (expected tasks.tg.layer_rollup or tasks.tg.layers)");
+    return false;
+}
+
+bool placement_plan_pack_heat(
+        const placement_inventory & inv,
+        int32_t n_layer,
+        const std::string & model_path,
+        const std::vector<heatmap_layer_rollup> & rollup,
+        placement_plan & out,
+        std::vector<placement_plan_error> & errors) {
+    out = placement_plan{};
+    if (n_layer <= 0) {
+        add_err(errors, "pack_heat: n_layer must be positive");
+        return false;
+    }
+
+    // If no heat data, fall back to capacity-only packing
+    if (rollup.empty()) {
+        return placement_plan_pack_capacity(inv, n_layer, model_path, out, errors);
+    }
+
+    // Build candidate backends sorted by usable_weight desc (proxy for speed)
+    struct cand {
+        std::string backend_id;
+        uint64_t    usable = 0;
+        uint64_t    free_mib = 0;
+        uint64_t    total_mib = 0;
+        int         speed_tier = 0; // 2=local GPU, 1=RPC, 0=CPU
+    };
+    std::vector<cand> cands;
+    for (const auto & r : inv.records) {
+        uint64_t u = r.usable_weight_mib;
+        if (u == 0) {
+            u = r.free_mib;
+        }
+        if (u == 0) {
+            continue;
+        }
+        int st = 0;
+        if (r.kind == PLACEMENT_KIND_LOCAL_GPU) {
+            st = 2;
+        } else if (r.kind == PLACEMENT_KIND_RPC_DEVICE || r.kind == PLACEMENT_KIND_RPC_TP_UNIT) {
+            st = 1;
+        }
+        cands.push_back({r.backend_id, u, r.free_mib, r.total_mib, st});
+    }
+
+    if (cands.empty()) {
+        add_err(errors, "pack_heat: no backends with positive usable/free capacity");
+        return false;
+    }
+
+    // Sort: speed_tier desc (local GPU > RPC > CPU), then usable desc, then backend_id asc
+    std::sort(cands.begin(), cands.end(), [](const cand & a, const cand & b) {
+        if (a.speed_tier != b.speed_tier) {
+            return a.speed_tier > b.speed_tier;
+        }
+        if (a.usable != b.usable) {
+            return a.usable > b.usable;
+        }
+        return a.backend_id < b.backend_id;
+    });
+
+    // Cap number of backends to n_layer
+    if ((int32_t) cands.size() > n_layer) {
+        cands.resize((size_t) n_layer);
+    }
+
+    const size_t n_backends = cands.size();
+
+    // -----------------------------------------------------------------------
+    // Hot-on-fast / cold-on-slow: sort hottest layers first, then assign
+    // hottest to fastest backends by capacity proportion.
+    // -----------------------------------------------------------------------
+
+    std::vector<int32_t> layer_order(n_layer);
+    for (int32_t i = 0; i < n_layer; ++i) {
+        layer_order[i] = i;
+    }
+
+    // Heat lookup by layer index
+    std::map<int, const heatmap_layer_rollup *> heat_by_idx;
+    for (const auto & hl : rollup) {
+        heat_by_idx[hl.idx] = &hl;
+    }
+
+    // Hot layers first (ms desc); layers without heat score go last
+    std::sort(layer_order.begin(), layer_order.end(), [&](int32_t a, int32_t b) {
+        auto ha = heat_by_idx.find(a);
+        auto hb = heat_by_idx.find(b);
+        double ma = (ha != heat_by_idx.end()) ? ha->second->ms : 0.0;
+        double mb = (hb != heat_by_idx.end()) ? hb->second->ms : 0.0;
+        if (ma != mb) {
+            return ma > mb;
+        }
+        return a < b; // stable by layer index
+    });
+
+    // Compute total usable for proportional distribution
+    uint64_t sum_u = 0;
+    for (const auto & c : cands) {
+        sum_u += c.usable;
+    }
+    if (sum_u == 0) {
+        add_err(errors, "pack_heat: total usable is zero");
+        return false;
+    }
+
+    // Proportional layer counts (floor); guarantee min 1 for each backend when possible
+    std::vector<int32_t> counts(n_backends, 0);
+    int32_t assigned = 0;
+    for (size_t i = 0; i < n_backends; ++i) {
+        int32_t n = (int32_t) ((cands[i].usable * (uint64_t) n_layer) / sum_u);
+        if (n < 1) {
+            n = 1;
+        }
+        counts[i] = n;
+        assigned += n;
+    }
+
+    // Trim over-allocation from largest first
+    while (assigned > n_layer) {
+        bool trimmed = false;
+        for (size_t i = 0; i < n_backends && assigned > n_layer; ++i) {
+            if (counts[i] > 1) {
+                counts[i]--;
+                assigned--;
+                trimmed = true;
+            }
+        }
+        if (!trimmed) break;
+    }
+    // Remainder to first (largest/fastest)
+    if (assigned < n_layer) {
+        counts[0] += (n_layer - assigned);
+    }
+
+    // -----------------------------------------------------------------------
+    // Assign hottest to fastest backends: backend[0] gets first counts[0] hot layers
+    // -----------------------------------------------------------------------
+
+    // We partition layers among backends in order: backend[0] gets first counts[0] of
+    // the hottest layers, backend[1] gets next counts[1], etc.
+    std::vector<int32_t> backend_assignments(n_layer, -1);
+    size_t bi = 0;
+    int32_t placed_in_current = 0;
+    for (int32_t pos = 0; pos < n_layer; ++pos) {
+        int32_t li = layer_order[pos];
+        // Advance to next backend with remaining capacity
+        while (bi < n_backends && placed_in_current >= counts[bi]) {
+            placed_in_current = 0;
+            bi++;
+        }
+        if (bi >= n_backends) {
+            // Shouldn't happen if counts sum to n_layer, but be safe
+            break;
+        }
+        backend_assignments[li] = (int32_t) bi;
+        placed_in_current++;
+    }
+
+    // Verify all layers assigned
+    for (int32_t i = 0; i < n_layer; ++i) {
+        if (backend_assignments[i] < 0) {
+            add_err(errors, "pack_heat: layer " + std::to_string(i) + " not assigned");
+            return false;
+        }
+    }
+
+    // Build contiguous ranges per backend (sort by layer index)
+    std::vector<std::vector<int32_t>> backend_layer_lists(n_backends);
+    for (int32_t i = 0; i < n_layer; ++i) {
+        int32_t bi = backend_assignments[i];
+        backend_layer_lists[bi].push_back(i);
+    }
+
+    // Sort each backend's layer list by layer index for contiguous ranges
+    for (auto & lst : backend_layer_lists) {
+        std::sort(lst.begin(), lst.end());
+    }
+
+    // Build snapshot header
+    out.schema_version = 1;
+    out.created_at = placement_now_iso8601();
+    out.model_path = model_path;
+    out.n_layer = n_layer;
+    out.split_mode = "layer";
+    out.capacity_snapshot_at = inv.records.empty() ? out.created_at : inv.records[0].reported_at;
+    out.reserve_mode = inv.reserve_mode.empty() ? "table" : inv.reserve_mode;
+    out.reserve_model_version = inv.reserve_model_version.empty()
+        ? PLACEMENT_RESERVE_MODEL_TABLE_V1 : inv.reserve_model_version;
+    out.overrides.clear();
+
+    // Assignments: contiguous ranges per backend
+    for (size_t i = 0; i < n_backends; ++i) {
+        const auto & lst = backend_layer_lists[i];
+        if (lst.empty()) continue;
+
+        // Emit contiguous sub-ranges; split layers by ascending index within each backend
+        int32_t range_start = lst[0];
+        int32_t range_end = lst[0] + 1;
+        for (size_t j = 1; j < lst.size(); ++j) {
+            if (lst[j] == range_end) {
+                range_end = lst[j] + 1;
+            } else {
+                placement_plan_assignment a;
+                a.layer_start = range_start;
+                a.layer_end = range_end;
+                a.backend_id = cands[i].backend_id;
+                out.assignments.push_back(a);
+
+                range_start = lst[j];
+                range_end = lst[j] + 1;
+            }
+        }
+        placement_plan_assignment a;
+        a.layer_start = range_start;
+        a.layer_end = range_end;
+        a.backend_id = cands[i].backend_id;
+        out.assignments.push_back(a);
+
+        // One backend snapshot per backend (not per sub-range)
+        placement_plan::backend_snapshot bs;
+        bs.backend_id = cands[i].backend_id;
+        bs.usable_weight_mib = cands[i].usable;
+        bs.free_mib = cands[i].free_mib;
+        bs.total_mib = cands[i].total_mib;
+        out.backends.push_back(bs);
+    }
+
+    // -----------------------------------------------------------------------
+    // Determine heat status. Full: rollup covers all n_layers with unique indices.
+    // Refuse full on stub/device-count input (too few entries or missing indices).
+    // -----------------------------------------------------------------------
+    bool full_heat = (rollup.size() == (size_t) n_layer);
+    // Verify all layer indices 0..n_layer-1 present (rejects device-count stubs
+    // that happen to match n_layer in count but not in index range)
+    if (full_heat) {
+        std::set<int> seen;
+        for (const auto & hl : rollup) {
+            if (hl.idx < 0 || hl.idx >= n_layer) {
+                full_heat = false;
+                break;
+            }
+            seen.insert(hl.idx);
+        }
+        if ((int) seen.size() != n_layer) {
+            full_heat = false;
+        }
+    }
+
+    out.heat.status = full_heat ? "full" : (rollup.empty() ? "none" : "partial");
+    out.heat.task = "tg";
+    out.heat.schema_version = 1;
+    out.heat.layers.clear();
+
+    // Build ranked list of layers by heat (hot to cold)
+    std::vector<std::pair<int, double>> ranked;
+    for (const auto & hl : rollup) {
+        ranked.push_back({hl.idx, hl.ms});
+    }
+    std::sort(ranked.begin(), ranked.end(), [](const auto & a, const auto & b) {
+        if (a.second != b.second) return a.second > b.second;
+        return a.first < b.first;
+    });
+    for (size_t ri = 0; ri < ranked.size(); ++ri) {
+        int idx = ranked[ri].first;
+        auto hit = heat_by_idx.find(idx);
+        if (hit == heat_by_idx.end()) continue;
+        placement_plan_heat_layer hl;
+        hl.idx = idx;
+        hl.ms = hit->second->ms;
+        hl.us = hit->second->us;
+        hl.rank = (int) ri;
+        hl.n_nodes = hit->second->n_nodes;
+        out.heat.layers.push_back(hl);
+    }
+
+    // Self-validate
+    std::vector<placement_plan_error> verr;
+    if (!placement_plan_validate(out, n_layer, true, verr)) {
+        for (const auto & e : verr) {
+            errors.push_back(e);
+        }
+        return false;
+    }
+
+    return true;
+}
+
+std::string placement_plan_to_json(const placement_plan & plan, int indent) {
+    json j;
+    j["schema_version"] = plan.schema_version;
+    if (!plan.created_at.empty()) {
+        j["created_at"] = plan.created_at;
+    }
+    j["split_mode"] = plan.split_mode.empty() ? "layer" : plan.split_mode;
+    {
+        json m;
+        if (!plan.model_path.empty()) {
+            m["path"] = plan.model_path;
+        }
+        m["n_layer"] = plan.n_layer;
+        j["model"] = m;
+    }
+    if (!plan.capacity_snapshot_at.empty()) {
+        j["capacity_snapshot_at"] = plan.capacity_snapshot_at;
+    }
+    j["reserve_mode"] = plan.reserve_mode;
+    j["reserve_model_version"] = plan.reserve_model_version;
+
+    j["backends"] = json::array();
+    for (const auto & b : plan.backends) {
+        j["backends"].push_back(json{
+            {"backend_id", b.backend_id},
+            {"usable_weight_mib", b.usable_weight_mib},
+            {"free_mib", b.free_mib},
+            {"total_mib", b.total_mib},
+        });
+    }
+
+    j["assignments"] = json::array();
+    for (const auto & a : plan.assignments) {
+        j["assignments"].push_back(json{
+            {"layer_start", a.layer_start},
+            {"layer_end", a.layer_end},
+            {"backend_id", a.backend_id},
+        });
+    }
+
+    j["overrides"] = json::array();
+    for (const auto & o : plan.overrides) {
+        j["overrides"].push_back(json{
+            {"match", o.match},
+            {"backend_id", o.backend_id},
+        });
+    }
+
+    json heat_layers = json::array();
+    for (const auto & hl : plan.heat.layers) {
+        heat_layers.push_back(json{
+            {"idx", hl.idx},
+            {"ms", hl.ms},
+            {"us", hl.us},
+            {"rank", hl.rank},
+            {"n_nodes", hl.n_nodes},
+        });
+    }
+    j["heat"] = json{
+        {"status", plan.heat.status.empty() ? "none" : plan.heat.status},
+        {"task", plan.heat.task},
+        {"schema_version", plan.heat.schema_version},
+        {"layers", heat_layers},
+    };
+
+    return j.dump(indent);
+}
+
+bool placement_plan_write_file(const placement_plan & plan, const std::string & path) {
+    std::ofstream ofs(path);
+    if (!ofs) {
+        return false;
+    }
+    ofs << placement_plan_to_json(plan, 2);
+    ofs << "\n";
+    return (bool) ofs;
+}

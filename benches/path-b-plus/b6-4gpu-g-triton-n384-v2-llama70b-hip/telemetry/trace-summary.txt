@@ -1,0 +1,55 @@
+=== trace summary ===
+dir=/home/hunter/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-4gpu-g-triton-n384-v2-llama70b-hip/telemetry
+
+[rpc] events=2888
+  ALLOC_BUFFER count=18 total_ms=34.3 avg_us=1906
+  GET_ALIGNMENT count=6 total_ms=0.92 avg_us=154
+  GET_MAX_SIZE count=6 total_ms=0.93 avg_us=155
+  BUFFER_GET_BASE count=18 total_ms=2.6 avg_us=144
+  FREE_BUFFER count=18 total_ms=34.84 avg_us=1936
+  BUFFER_CLEAR count=6 total_ms=41.21 avg_us=6868
+  SET_TENSOR count=258 total_ms=45.73 avg_us=177
+  SET_TENSOR_HASH count=554 total_ms=33561.4 avg_us=60580
+  GET_TENSOR count=774 total_ms=238.92 avg_us=309
+  GRAPH_COMPUTE count=18 total_ms=2.67 avg_us=148
+  GET_DEVICE_MEMORY count=18 total_ms=37.12 avg_us=2062
+  GET_ALLOC_SIZE count=30 total_ms=9.5 avg_us=317
+  HELLO count=15 total_ms=0 avg_us=0
+  DEVICE_COUNT count=6 total_ms=1.09 avg_us=182
+  GRAPH_RECOMPUTE count=756 total_ms=4.37 avg_us=6
+  EVENT_RECORD count=387 total_ms=8145.43 avg_us=21048
+  blocking_events=1114 blocking_ms=42095.9
+  drain_flush_ms=8192.73
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  copy_issue_count=258 defer_count=258 peer_copy_count=0
+
+[sched] events=4407
+  split_total_count=645
+  split_total_ms_sum=8983.17 avg_us=13927
+    backend4 splits=129 ms=8.76
+    backend0 splits=129 ms=68.65
+    backend1 splits=129 ms=3789.1
+    backend2 splits=129 ms=1943.81
+    backend3 splits=129 ms=3172.86
+  input_wait_copy_ms=5789.17
+  graph_compute_async_ms=380.08
+  event_record_ms=0.86
+  assembly_overlap_count=406 pairs=166410 overlap_pct=0.2
+    copy0 splits=165
+    copy1 splits=160
+    copy2 splits=160
+    copy3 splits=160

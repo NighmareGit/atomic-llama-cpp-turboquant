@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "trace_dir": "/home/hunter/atomic-llama-cpp-turboquant/benches/path-b-plus/profiler-4gpu-primary-romulus-trace-v2/telemetry",
+  "gen_only": true,
+  "gen_tokens_est": 385,
+  "G_tps": 53.2131,
+  "overlap_efficiency": 0.9523,
+  "drain_flush_ms": 6069.57,
+  "blocking_ms": 15773.9,
+  "gate_s5": "PASS",
+  "gate_b6": "FAIL",
+  "assembly_overlap_count": 2526,
+  "overlap_pct": 0.2,
+  "overlap_target_pct": 5.0,
+  "split_ms_per_token": 17.895,
+  "stall_ratio": 0.9564,
+  "stall_ms": 6589.57,
+  "compute_ms": 280.93,
+  "backends_ms_per_token": {
+    "0": 0.061,
+    "1": 9.233,
+    "2": 3.751,
+    "3": 4.829,
+    "4": 0.021
+  },
+  "straggler_backend": "1",
+  "straggler_ms_per_token": 9.233,
+  "topology_class": "client_split",
+  "rpc_rtt_per_token": 13.15,
+  "graph_submit_count": 2310,
+  "blocking_rpc_count": 5062,
+  "fire_and_forget_count": 6216,
+  "gpu_smell_flags": [
+    "CLOCK_THROTTLE"
+  ],
+  "path_c_reserved": {
+    "cross_endpoint_copy_count": null,
+    "server_local_copy_count": null
+  }
+}

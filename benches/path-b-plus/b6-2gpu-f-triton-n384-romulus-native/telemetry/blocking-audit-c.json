@@ -1,0 +1,44 @@
+{
+  "label": "b6-2gpu-f-triton-n384-romulus-native",
+  "gen_window": {
+    "lo_us": 64101674990,
+    "hi_us": 64105049825,
+    "decode_ids": 384
+  },
+  "gen_tokens": 384,
+  "overlap_pct": 0.2,
+  "stall_ratio": 0.838,
+  "sched_gen_ms": {
+    "input_wait_copy": 2805.9319999999907,
+    "rpc_flush_downloads": 216.3800000000001,
+    "graph_compute_async": 306.7199999999872,
+    "event_record": 0.7290000000000004,
+    "split_total": 3349.225000000004,
+    "event_sync_slot": 2705.154999999999,
+    "copy_async_ok": 0.0,
+    "input_copy_slow": 2760.3270000000025,
+    "rpc_download_issue": 6.712999999999988,
+    "host_h2d_issue": 1.6929999999999878
+  },
+  "rpc_gen_blocking_ms_by_cmd": {
+    "GET_TENSOR": 66.44,
+    "13": 1.72,
+    "EVENT_RECORD": 140.58
+  },
+  "copy_issue": {
+    "count": 1155,
+    "defer_count": 1155,
+    "peer_copy_count": 0
+  },
+  "local_sync_gap_ms": 2805.93,
+  "c_full_trace": true,
+  "sync_copy_fallback_ms": 0.0,
+  "sync_copy_fallback_count": 0,
+  "sync_copy_fallback_by_backend_ms": {},
+  "copy_async_ok_count": 2310,
+  "verdict_flags": [
+    "COPY_ASYNC_OK_ONLY",
+    "GET_TENSOR_GT_COPY",
+    "WAIT_DOMINATES_COMPUTE"
+  ]
+}

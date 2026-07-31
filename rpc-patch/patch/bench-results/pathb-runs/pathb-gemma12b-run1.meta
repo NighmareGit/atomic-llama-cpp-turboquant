@@ -1,0 +1,25 @@
+=== gemma12b-run1 ===
+model=/mnt/models/gemma-4-12b-it-Q4_K_M.gguf load_timeout=180s
+2026-06-25T11:04:14Z
+container=5e8f4ea44782b6582fa67fa776c36ddd66ffc8c970ab0c1c44563736dda61740
+poll 0s: START-1782385455
+container exited early at 10s
+exit_code=0
+[ Prompt: 161.7 t/s | Generation: 51.5 t/s ]
+EXIT-0-1782385462
+available commands:
+  /exit or Ctrl+C     stop or exit
+  /regen              regenerate the last response
+  /clear              clear the chat history
+  /read <file>        add a text file
+  /glob <pattern>     add text files using globbing pattern
+> Say hello in one sentence.
+[Start thinking]
+*   Task: Say "hello".
+    *   Constraint: One sentence.
+    *   "Hello!"
+    *   "
+[ Prompt: 161.7 t/s | Generation: 51.5 t/s ]
+Exiting...
+EXIT-0-1782385462
+RESULT=PASS

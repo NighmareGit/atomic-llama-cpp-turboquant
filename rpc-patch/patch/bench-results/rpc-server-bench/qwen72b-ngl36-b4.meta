@@ -1,0 +1,13 @@
+=== qwen72b-ngl36-b4 ===
+variant=pathb proto=Path B (v4.2.2 workspace)
+model=/mnt/models/Qwen3-72B-Instruct.IQ4_XS.gguf ctx=1024 ctk=q4_0 ctv=q4_0 ngl=36 ts=10,90 ncmoe=none np=1 no_warmup=1 load_timeout=600s
+server_extra=--no-warmup -np 1 --no-warmup --reasoning off
+2026-06-25T15:51:24Z
+starting rpc-server (CUDA device 0)...
+d3a3050f5692b3b6b62ddd3151c289f93c5f1304b26fc73c40b5eb900372529f
+starting llama-server (ROCm HIP device 0)...
+75d41f2a9a0aec3624e4dabe940985dc2bc2e01a4b493b2341a2d6835064ae75
+polling server health (max 600s)...
+server ready at 10s
+benchmark 1 runs...
+FAIL run 1: curl error

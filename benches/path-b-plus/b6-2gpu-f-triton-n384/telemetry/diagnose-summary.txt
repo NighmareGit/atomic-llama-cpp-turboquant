@@ -1,0 +1,6 @@
+=== llama-pipeline-diagnose ===
+diagnose.json -> /src/benches/path-b-plus/b6-2gpu-f-triton-n384/telemetry/diagnose.json
+gate_s5=PASS gate_b6=FAIL overlap_pct=0.2
+stall_ratio=0.8674 straggler=backend1 (8.206 ms/tok)
+overlap_efficiency=1.096300
+gpu_smells=CLOCK_THROTTLE

@@ -1,0 +1,90 @@
+{
+  "label": "b6-2gpu-f-triton-n384-romulus-native",
+  "gen_window_us": {
+    "lo": 64101674990,
+    "hi": 64105049825,
+    "span_ms": 3374.84
+  },
+  "gen_tokens": 384,
+  "overlap_pct": 0.2,
+  "assembly_overlap": {
+    "count": 886,
+    "pairs": 444675,
+    "overlap_pct": 0.2
+  },
+  "pipeline_gap_ms": {
+    "p50": -7.6,
+    "p95": -6.84,
+    "samples": [
+      -358.85,
+      -14.49,
+      -4.98,
+      -4.94,
+      -4.67,
+      -4.46,
+      -4.54,
+      -4.54
+    ]
+  },
+  "rpc_rtt_ms": {
+    "count": 777,
+    "p50": 0.01,
+    "p95": 0.16,
+    "p99": 4.25
+  },
+  "hol_tails": {
+    "count": 4,
+    "total_ms": 129.38,
+    "threshold_mult": 10.0,
+    "top10": [
+      {
+        "backend": "1",
+        "decode_id": 1,
+        "split": 2,
+        "phase": "drain_event",
+        "cmd": "EVENT",
+        "ms": 84.29,
+        "p50_ms": 0.01
+      },
+      {
+        "backend": "1",
+        "decode_id": 1,
+        "split": 2,
+        "phase": "flush_get",
+        "cmd": "GET",
+        "ms": 27.23,
+        "p50_ms": 0.01
+      },
+      {
+        "backend": "1",
+        "decode_id": 2,
+        "split": 2,
+        "phase": "drain_event",
+        "cmd": "EVENT",
+        "ms": 10.02,
+        "p50_ms": 0.01
+      },
+      {
+        "backend": "1",
+        "decode_id": 1,
+        "split": 2,
+        "phase": "drain_event",
+        "cmd": "EVENT",
+        "ms": 7.84,
+        "p50_ms": 0.01
+      }
+    ]
+  },
+  "gantt_ascii": [
+    "gantt decode_id 1..24 width=96 span_ms=793.4",
+    "  CUDA0  |    1111                                            2 3568ABDEFGHIJKLMNO                        |",
+    "  RPC    |                                                  111124679ACDEFGHIJKLMNO11111111111111111111111|",
+    "  CPU    |1                                                   2 3568ABDEFGHIJKLMNO                        |"
+  ],
+  "segments_count": 1152,
+  "rpc_segments_count": 774,
+  "verdict_flags": [
+    "LOW_OVERLAP",
+    "HOL_TAIL_RTT"
+  ]
+}

@@ -1,0 +1,94 @@
+You are an expert reasoning assistant. Answer each turn completely before moving on.
+Use structured markdown, show intermediate steps, and flag uncertainty explicitly.
+
+<|im_start|>user
+## Turn 1: Logic puzzle (Knights and Knaves)
+
+On an island, inhabitants are either knights (always tell the truth) or knaves (always lie).
+You meet three people: A, B, and C.
+
+- A says: "B is a knave."
+- B says: "C is a knave."
+- C says: "A and B are both knaves."
+
+Determine the type of each person. Prove your answer by checking every statement against the assignment.
+If multiple solutions exist, list them all. If none exist, prove impossibility.
+<|im_end|>
+<|im_start|>assistant
+<|im_end|>
+<|im_start|>user
+## Turn 2: River crossing with constraints
+
+Four researchers (Alpha, Beta, Gamma, Delta) must cross a bridge at night.
+They have one torch. The bridge holds at most two people.
+
+Crossing times (minutes): Alpha=1, Beta=2, Gamma=7, Delta=10.
+When two cross together, they move at the slower person's pace.
+
+Rules:
+1. The torch must be carried on every crossing.
+2. Gamma refuses to cross with Delta unless Alpha is on the bridge side they depart from.
+3. Beta cannot be left alone on either bank with Delta (Beta is afraid of Delta's equipment).
+
+Find the minimum total time to get everyone across. Prove optimality or give a lower bound.
+Show each torch position after every crossing.
+<|im_end|>
+<|im_start|>assistant
+<|im_end|>
+<|im_start|>user
+## Turn 3: HumanEval-style code puzzle
+
+Implement `longest_increasing_path(grid: list[list[int]]) -> int` in Python 3.
+
+- `grid` is non-empty, rectangular, entries are integers in [-10^4, 10^4].
+- A path moves 4-directionally (up/down/left/right), cannot revisit cells.
+- Return the length of the longest strictly increasing path.
+
+Requirements:
+1. Give a correct O(m*n) solution (m rows, n cols).
+2. Explain the DP invariant.
+3. Provide 3 edge-case tests (1x1, all equal, snake shape).
+4. State time and space complexity.
+
+Do not use external libraries beyond typing.
+<|im_end|>
+<|im_start|>assistant
+<|im_end|>
+<|im_start|>user
+## Turn 4: Follow-up on the code puzzle
+
+Refactor your solution to use iterative DFS with an explicit stack instead of recursion.
+Then answer:
+1. Could memoization be replaced by topological ordering? When and why?
+2. What breaks if we allow revisiting cells but not immediately backtracking?
+3. Write a property-based test plan (at least 5 invariants).
+<|im_end|>
+<|im_start|>assistant
+<|im_end|>
+<|im_start|>user
+## Turn 5: Follow-up on the logic puzzle
+
+Revisit Turn 1. Suppose exactly one of A, B, C is a spy who can lie OR tell the truth freely (not bound by knight/knave rules).
+The other two remain standard knights/knaves.
+How many consistent assignments exist? Enumerate them.
+<|im_end|>
+<|im_start|>assistant
+<|im_end|>
+<|im_start|>user
+## Turn 6: Systems reasoning (cluster context)
+
+You are now profiling a 5-GPU distributed inference run:
+- remus 5060 Ti RPC :50051
+- romulus 3060 Ti docker RPC 127.0.0.1:50051
+- triton 3090 RPC :50054 and 3070 RPC :50055 (isolated docker per GPU)
+- romulus 7900 XTX ROCm client
+- tensor-split 20,10,30,10,30; GGML_PIPELINE_PLUS=1
+
+Given decode straggler backend1 at ~6.8 ms/token and overlap_pct ~0.3%:
+1. Is the pipeline stall-bound or RPC-drain-bound on this topology?
+2. What experiments would you run next (max 4), holding hardware fixed?
+3. What risks appear if we scale to n=2000+ generation tokens?
+
+Be concrete. Prefer falsifiable hypotheses.
+<|im_end|>
+<|im_start|>assistant

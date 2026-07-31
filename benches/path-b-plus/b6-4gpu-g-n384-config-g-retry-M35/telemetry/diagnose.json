@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "trace_dir": "benches/path-b-plus/b6-4gpu-g-n384-config-g-retry-M35/telemetry",
+  "gen_only": true,
+  "gen_tokens_est": 385,
+  "G_tps": 75.981,
+  "overlap_efficiency": 1.122,
+  "drain_flush_ms": 4816.14,
+  "blocking_ms": 32153.2,
+  "gate_s5": "PASS",
+  "gate_b6": "FAIL",
+  "assembly_overlap_count": 2364,
+  "overlap_pct": 0.2,
+  "overlap_target_pct": 5.0,
+  "split_ms_per_token": 14.767,
+  "stall_ratio": 0.6668,
+  "stall_ms": 3790.69,
+  "compute_ms": 280.34,
+  "backends_ms_per_token": {
+    "0": 0.093,
+    "1": 7.132,
+    "2": 2.328,
+    "3": 5.192,
+    "4": 0.022
+  },
+  "straggler_backend": "1",
+  "straggler_ms_per_token": 7.132,
+  "topology_class": "client_split",
+  "rpc_rtt_per_token": 6.23,
+  "graph_submit_count": 2310,
+  "blocking_rpc_count": 2398,
+  "fire_and_forget_count": 6632,
+  "gpu_smell_flags": [
+    "CLOCK_THROTTLE"
+  ],
+  "path_c_reserved": {
+    "cross_endpoint_copy_count": null,
+    "server_local_copy_count": null
+  }
+}

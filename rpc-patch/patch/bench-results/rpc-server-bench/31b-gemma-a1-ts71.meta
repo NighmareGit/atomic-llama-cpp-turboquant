@@ -1,0 +1,8 @@
+=== 31b-gemma-a1-ts71 ===
+variant=a1 proto=A1 (v4.1.0 image)
+model=/mnt/models/gemma-4-31B-it-Q4_K_M.gguf ctx=4096 ctk=q8_0 ctv=turbo3 ngl=60 ts=7,1 load_timeout=600s
+2026-06-25T11:20:44Z
+starting rpc-server (CUDA device 0)...
+docker: Error response from daemon: Conflict. The container name "/bench-rpc" is already in use by container "e842745ade173da0f1563b20feff82789c399105ae02cb21b65789661a4fcf04". You have to remove (or rename) that container to be able to reuse that name.
+
+Run 'docker run --help' for more information

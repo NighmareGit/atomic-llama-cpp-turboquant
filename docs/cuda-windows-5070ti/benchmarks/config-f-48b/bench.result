@@ -1,0 +1,6 @@
+
+run=1 P=5.2 G=8.1 preview=It looks like you've typed the classic pangram:  
+**"The quick brown fox jumps o
+run=2 P=7.0 G=11.3 preview=It looks like you've shared the classic pangram:  
+**"The quick brown fox jumps 
+run=3 P=4.4 G=11.9 preview=It looks like you've shared the classic pangram sentence: **“The quick brown fox

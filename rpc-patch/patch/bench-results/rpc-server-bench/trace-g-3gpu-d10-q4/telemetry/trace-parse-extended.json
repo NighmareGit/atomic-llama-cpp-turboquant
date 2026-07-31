@@ -1,0 +1,20 @@
+{
+  "dir": "/home/hunter/projects/path-d-gpipeline-assembly-line/rpc-patch/patch/bench-results/rpc-server-bench/trace-g-3gpu-d10-q4/telemetry",
+  "rpc_events": 22811,
+  "sched_events": 38466,
+  "rpc_rtt": {
+    "count": 3699,
+    "total_ms": 17498.99
+  },
+  "input_wait_copy": 1676.85,
+  "graph_compute_async": 9894.6,
+  "event_record": 80.45,
+  "sync_copy_fallback": 805.75,
+  "copy_async_ok_count": 8232,
+  "c_full_trace": true,
+  "assembly_overlap": {
+    "count": 1702,
+    "pairs": 6353046,
+    "overlap_pct": 0.0
+  }
+}

@@ -1,0 +1,18 @@
+# D7 apples-to-apples profiler results
+
+Artifact dir: `/tmp/d7-a2a-profiler-20260719162451`
+
+| Arm | TG t/s | PP t/s | status | notes |
+|-----|-------:|-------:|--------|-------|
+| P1-d7-gpipe3-mtp2 | 74.53 | 2509.20 | exit=0 | ok |
+| P3-nogpipe-mtp2 | 76.88 | - | exit=0 | ok |
+| P4-gpipe3-nomtp | 74.42 | - | exit=0 | ok |
+
+## Historical targets
+| Source | TG |
+|--------|---:|
+| D7.1 RPC+nmax2 | 131-133 |
+| D7.3 + FA | 143 |
+| Peer MTP profiler | ~139 |
+| Peer no-MTP | ~146 |
+| Today server chat (prior) | 74-79 |

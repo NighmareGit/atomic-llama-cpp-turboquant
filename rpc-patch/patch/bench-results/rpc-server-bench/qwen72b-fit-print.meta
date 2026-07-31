@@ -1,0 +1,12 @@
+=== qwen72b-fit-print ===
+variant=pathb proto=Path B (v4.2.2 workspace)
+model=/mnt/models/Qwen3-72B-Instruct.IQ4_XS.gguf ctx=1024 ctk=q4_0 ctv=q4_0 ngl=0 ts=10,90 ncmoe=none np=1 no_warmup=1 load_timeout=600s
+server_extra=--no-warmup -np 1 --fit on --fit-target 512,1024 --fit-print on --reasoning off
+2026-06-25T15:52:23Z
+starting rpc-server (CUDA device 0)...
+bec1d188d285386d2fd756e87ecb7f7f46d72a2fabe4e68406ce485406bb2556
+starting llama-server (ROCm HIP device 0)...
+12ee829b46b7cd2c07bb5deba446039ccd795295765767bd50827f27f031e9d7
+polling server health (max 600s)...
+ERROR: llama-server container exited during load
+error: invalid argument: --fit-print

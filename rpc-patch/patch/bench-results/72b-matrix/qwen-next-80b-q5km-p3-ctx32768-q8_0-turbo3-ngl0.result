@@ -1,0 +1,2 @@
+run=1 prompt=fox P=43.0 G=15.0 preview='The quick brown fox jumps over the lazy dog.\n\nThis sentence is a well-known **pangram**—a sentence that contains every letter of the English alphabet'
+run=2 prompt=fox P=24.0 G=16.6 preview='The quick brown fox jumps over the lazy dog.\n\nThis sentence is a well-known pangram in English — a sentence that contains every letter of the alphabet at least'

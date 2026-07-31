@@ -1,0 +1,24 @@
+=== config-c-9b-qwen ===
+variant=pathb proto=Path B (v4.2.2 workspace) rpc_mode=multi endpoint=127.0.0.1:50051,192.168.8.176:50051
+model=/mnt/models/Qwen3.5-9B-MTP-Q4_K_M.gguf ctx=4096 ctk=q8_0 ctv=turbo3 ngl=99 ts=10,25,65 ncmoe=none np=1 no_warmup=1 load_timeout=600s
+server_extra=--no-warmup -np 1 --fit off --fit-target 900,900,900 --verbose -lv 2
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  451G  242G  66% /
+2026-06-26T09:07:46Z
+using remote/multi RPC at 127.0.0.1:50051,192.168.8.176:50051 (no local bench-rpc)
+Connection to 127.0.0.1 50051 port [tcp/*] succeeded!
+RPC reachable: 127.0.0.1:50051
+Connection to 192.168.8.176 50051 port [tcp/*] succeeded!
+RPC reachable: 192.168.8.176:50051
+starting llama-server (ROCm HIP device 0)...
+126cd84988fa4eda39ef156947225e4d80a6bef8bff6a1974cbb9779b9134135
+polling server health (max 600s)...
+server ready at 15s
+benchmark 3 runs...
+run=1 P=59.9 G=59.5 preview=''
+run=2 P=44.4 G=60.1 preview=''
+run=3 P=45.9 G=58.6 preview=''
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  451G  242G  66% /
+RESULT=PASS
+results in /home/hunter/projects/atomic-llama-cpp-patch/atomic-llama-cpp-turboquant/rpc-patch/patch/bench-results/config-c-matrix/config-c-9b-qwen.result

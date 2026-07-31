@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "trace_dir": "/home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-n384-no-defer/telemetry",
+  "gen_only": true,
+  "gen_tokens_est": 385,
+  "G_tps": 128.834,
+  "overlap_efficiency": 1.0946,
+  "drain_flush_ms": 1776.34,
+  "blocking_ms": 2126.46,
+  "gate_s5": "PASS",
+  "gate_b6": "FAIL",
+  "assembly_overlap_count": 877,
+  "overlap_pct": 0.2,
+  "overlap_target_pct": 5.0,
+  "split_ms_per_token": 8.496,
+  "stall_ratio": 0.8695,
+  "stall_ms": 2844.3,
+  "compute_ms": 382.32,
+  "backends_ms_per_token": {
+    "2": 0.077,
+    "0": 0.233,
+    "1": 8.186
+  },
+  "straggler_backend": "1",
+  "straggler_ms_per_token": 8.186,
+  "topology_class": "client_split",
+  "rpc_rtt_per_token": 2.05,
+  "graph_submit_count": 770,
+  "blocking_rpc_count": 790,
+  "fire_and_forget_count": 1174,
+  "gpu_smell_flags": [
+    "CLOCK_THROTTLE"
+  ],
+  "path_c_reserved": {
+    "cross_endpoint_copy_count": null,
+    "server_local_copy_count": null
+  }
+}

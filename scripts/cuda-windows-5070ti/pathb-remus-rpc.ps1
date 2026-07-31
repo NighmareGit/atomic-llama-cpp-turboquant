@@ -1,0 +1,2 @@
+param([ValidateSet("start","stop","status","logs","build")][string]$Action = "status")
+& "$PSScriptRoot\invoke-wsl.ps1" -BashCommand "chmod +x rpc-patch/scripts/pathb-remus-rpc.sh; ./rpc-patch/scripts/pathb-remus-rpc.sh $Action"

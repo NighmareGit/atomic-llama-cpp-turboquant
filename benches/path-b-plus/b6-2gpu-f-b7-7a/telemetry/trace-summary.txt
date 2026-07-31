@@ -1,0 +1,48 @@
+=== trace summary ===
+dir=/home/hunter/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f/telemetry
+
+[rpc] events=10834
+  ALLOC_BUFFER count=16 total_ms=78.32 avg_us=4895
+  GET_ALIGNMENT count=4 total_ms=0.78 avg_us=195
+  GET_MAX_SIZE count=4 total_ms=0.8 avg_us=200
+  BUFFER_GET_BASE count=16 total_ms=2.3 avg_us=144
+  FREE_BUFFER count=16 total_ms=45.97 avg_us=2873
+  BUFFER_CLEAR count=8 total_ms=0.86 avg_us=108
+  SET_TENSOR_HASH count=336 total_ms=13301.9 avg_us=39589
+  GET_TENSOR count=1540 total_ms=320.7 avg_us=208
+  GRAPH_COMPUTE count=16 total_ms=17.59 avg_us=1099
+  GET_DEVICE_MEMORY count=16 total_ms=48.2 avg_us=3013
+  GET_ALLOC_SIZE count=6528 total_ms=2548.45 avg_us=390
+  HELLO count=36 total_ms=8.46 avg_us=235
+  DEVICE_COUNT count=4 total_ms=0.94 avg_us=235
+  GRAPH_RECOMPUTE count=1524 total_ms=2.79 avg_us=2
+  EVENT_RECORD count=770 total_ms=7910.44 avg_us=10273
+  blocking_events=5026 blocking_ms=24217.3
+  drain_flush_ms=7910.44
+  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=3 peer_copy=
+
+[sched] events=9240
+  split_total_count=2310
+  split_total_ms_sum=9028.92 avg_us=3909
+    backend2 splits=770 ms=11.64
+    backend0 splits=770 ms=34.34
+    backend1 splits=770 ms=8982.94
+  input_wait_copy_ms=8493.83
+  graph_compute_async_ms=521.06
+  event_record_ms=0.74
+  assembly_overlap_count=2077 pairs=1778700 overlap_pct=0.1
+    copy0 splits=582
+    copy1 splits=576
+    copy2 splits=576
+    copy3 splits=576

@@ -1,0 +1,34 @@
+=== qwen72b-ngl32 ===
+model=/mnt/models/Qwen3-72B-Instruct.IQ4_XS.gguf
+rpc=127.0.0.1:50051 ngl=32 split=layer ts=10,90 ctk=q4_0 ctv=q4_0
+load_timeout=600s gen_timeout=600s
+2026-06-25T15:49:21Z
+container=e480cc799cde8614b68543b2bc0e2d9849265594f95f3abdd886cef1dacb9fff
+poll 0s: START-1782402561
+poll 10s: > Say hello in one short sentence.
+container exited at 20s
+exit_code=0
+FAIL: no generation throughput line
+FAIL: RPC abort
+EXIT-134-1782402575
+> Say hello in one short sentence.
+ and/app/a2/ggml/src/ggml-rpc/ggml-rpc.cpp:677: Remote RPC server crashed or returned malformed response
+/app/bin/libggml-base.so.0(+0x1c8fb)[0x792b9772b8fb]
+/app/bin/libggml-base.so.0(ggml_print_backtrace+0x21f)[0x792b9772bd7f]
+/app/bin/libggml-base.so.0(ggml_abort+0x152)[0x792b9772bf52]
+/app/bin/libggml-rpc.so.0(+0xd579)[0x792b980b4579]
+/app/bin/libggml-base.so.0(ggml_backend_tensor_copy+0x156)[0x792b97744ce6]
+/app/bin/libggml-base.so.0(ggml_backend_sched_graph_compute_async+0x1ee)[0x792b97749d9e]
+/app/bin/libllama.so.0(_ZN13llama_context13graph_computeEP11ggml_cgraphb+0xa1)[0x792b978dc7e1]
+/app/bin/libllama.so.0(_ZN13llama_context14process_ubatchERK12llama_ubatch14llm_graph_typeP22llama_memory_context_iR11ggml_status+0x11b)[0x792b978df6fb]
+/app/bin/libllama.so.0(_ZN13llama_context6decodeERK11llama_batch+0x38a)[0x792b978e64ca]
+/app/bin/libllama.so.0(llama_decode+0x10)[0x792b978e7cf0]
+/app/bin/libllama-cli-impl.so(_ZN19server_context_impl12update_slotsEv+0xa7d)[0x792b9879ba7d]
+/app/bin/libllama-cli-impl.so(_ZN12server_queue10start_loopEl+0x221)[0x792b9873f7a1]
+/lib/x86_64-linux-gnu/libstdc++.so.6(+0xdc253)[0x792b9852e253]
+/lib/x86_64-linux-gnu/libc.so.6(+0x94ac3)[0x792b9829dac3]
+/lib/x86_64-linux-gnu/libc.so.6(clone+0x44)[0x792b9832ea04]
+timeout: the monitored command dumped core
+bash: line 10:     8 Aborted                 timeout "$PATHB_GEN_TIMEOUT" stdbuf -oL -eL /app/bin/llama-cli --rpc "$PATHB_RPC" -m "$PATHB_MODEL" -p "$PATHB_PROMPT" -n "$PATHB_N_PREDICT" -ngl "$PATHB_NGL" -ctk "$PATHB_CTK" -ctv "$PATHB_CTV" -sm "$PATHB_SPLIT_MODE" $TS_ARGS $CTX_ARGS --single-turn --simple-io --no-conversation $PATHB_EXTRA_ARGS
+EXIT-134-1782402575
+RESULT=FAIL

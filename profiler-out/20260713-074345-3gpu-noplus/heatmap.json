@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-13T05:46:12Z",
+  "git_sha": "c91743d32",
+  "model": {
+    "path": "/mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf",
+    "n_layers": 32,
+    "param_count_b": 8.03026,
+    "ctx_size": 2048
+  },
+  "tasks": {
+    "pp": {
+      "n_prompt_tokens": 64,
+      "wall_ms": 71.4375,
+      "tps": 895.888,
+      "layers": [
+        { "idx": 0, "ms": 5.054, "gpu_id": 0 }
+      ]
+    },
+    "tg": {
+      "n_gen_tokens": 256,
+      "wall_ms": 2374.9,
+      "tps": 107.794,
+      "layers": [
+        { "idx": 0, "ms": 5.054, "gpu_id": 0 }
+      ]
+    }
+  },
+  "gpu_metadata": [
+    { "id": 3, "name": "CUDA0", "backend": "CUDA", "vram_total_mib": 7841, "pci_link_gen": 0, "pci_link_width": 0, "source": "rpc_server" },
+    { "id": 4, "name": "CUDA0", "backend": "CUDA", "vram_total_mib": 15849, "pci_link_gen": 0, "pci_link_width": 0, "source": "rpc_server" },
+    { "id": 0, "name": "ROCm0", "backend": "Radeon RX 7900 XTX", "vram_total_mib": 24560, "pci_link_gen": 0, "pci_link_width": 0, "source": "client", "compute_avg_us": 2607, "compute_max_us": 3260, "compute_min_us": 2575 }
+  ],
+  "summary": {
+    "straggler_gpu": 1,
+    "kv_source": "server"
+  }
+}

@@ -1,0 +1,169 @@
+{
+  "label": "b6-4gpu-g-n384-romulus-native",
+  "gen_tokens": 384,
+  "overlap_pct": 0.2,
+  "token_wall_ms": {
+    "p50": 17.03,
+    "p95": 23.08,
+    "p99": 60.41
+  },
+  "per_token_avg_ms": {
+    "input_wait_copy": 18.32,
+    "event_record": 0.0,
+    "rpc_blocking": 0.0
+  },
+  "straggler_backend": "1",
+  "straggler_role": "RPC",
+  "straggler_ms_per_tok": 6.59,
+  "sample_waterfalls": [
+    {
+      "decode_id": 1,
+      "wall_ms": 2868.99,
+      "serial_ms": 1838.27,
+      "input_wait_ms": 1860.33,
+      "event_record_ms": 0.05,
+      "rpc_blocking_ms": 0.0,
+      "straggler_backend": "3",
+      "straggler_ms": 1030.77,
+      "waterfall": [
+        {
+          "split": 0,
+          "backend": "4",
+          "role": "backend4",
+          "ms": 3.72,
+          "detail": "graph_compute_async=3.6"
+        },
+        {
+          "split": 1,
+          "backend": "0",
+          "role": "CUDA0",
+          "ms": 11.55,
+          "detail": "input_wait_copy=1.4 graph_compute_async=10.3"
+        },
+        {
+          "split": 2,
+          "backend": "1",
+          "role": "RPC",
+          "ms": 448.16,
+          "detail": "input_wait_copy=546.7 graph_compute_async=3.4"
+        },
+        {
+          "split": 3,
+          "backend": "2",
+          "role": "CPU",
+          "ms": 344.07,
+          "detail": "input_wait_copy=398.9 graph_compute_async=5.7"
+        },
+        {
+          "split": 4,
+          "backend": "3",
+          "role": "CPU/host",
+          "ms": 1030.77,
+          "detail": "input_wait_copy=913.2 graph_compute_async=173.1"
+        }
+      ],
+      "rpc_by_cmd": {}
+    },
+    {
+      "decode_id": 193,
+      "wall_ms": 15.34,
+      "serial_ms": 11.99,
+      "input_wait_ms": 11.91,
+      "event_record_ms": 0.0,
+      "rpc_blocking_ms": 0.0,
+      "straggler_backend": "1",
+      "straggler_ms": 6.66,
+      "waterfall": [
+        {
+          "split": 0,
+          "backend": "4",
+          "role": "backend4",
+          "ms": 0.01,
+          "detail": ""
+        },
+        {
+          "split": 1,
+          "backend": "0",
+          "role": "CUDA0",
+          "ms": 0.02,
+          "detail": ""
+        },
+        {
+          "split": 2,
+          "backend": "1",
+          "role": "RPC",
+          "ms": 6.66,
+          "detail": "input_wait_copy=6.6"
+        },
+        {
+          "split": 3,
+          "backend": "2",
+          "role": "CPU",
+          "ms": 1.97,
+          "detail": "input_wait_copy=2.0"
+        },
+        {
+          "split": 4,
+          "backend": "3",
+          "role": "CPU/host",
+          "ms": 3.34,
+          "detail": "input_wait_copy=3.3"
+        }
+      ],
+      "rpc_by_cmd": {}
+    },
+    {
+      "decode_id": 365,
+      "wall_ms": 17.16,
+      "serial_ms": 13.52,
+      "input_wait_ms": 13.28,
+      "event_record_ms": 0.0,
+      "rpc_blocking_ms": 0.0,
+      "straggler_backend": "1",
+      "straggler_ms": 7.76,
+      "waterfall": [
+        {
+          "split": 0,
+          "backend": "4",
+          "role": "backend4",
+          "ms": 0.02,
+          "detail": ""
+        },
+        {
+          "split": 1,
+          "backend": "0",
+          "role": "CUDA0",
+          "ms": 0.05,
+          "detail": ""
+        },
+        {
+          "split": 2,
+          "backend": "1",
+          "role": "RPC",
+          "ms": 7.76,
+          "detail": "input_wait_copy=7.7 graph_compute_async=0.1"
+        },
+        {
+          "split": 3,
+          "backend": "2",
+          "role": "CPU",
+          "ms": 2.07,
+          "detail": "input_wait_copy=2.0"
+        },
+        {
+          "split": 4,
+          "backend": "3",
+          "role": "CPU/host",
+          "ms": 3.62,
+          "detail": "input_wait_copy=3.5 graph_compute_async=0.1"
+        }
+      ],
+      "rpc_by_cmd": {}
+    }
+  ],
+  "verdict_flags": [
+    "INPUT_WAIT_DOMINATES",
+    "RPC_STRAGGLER",
+    "TAIL_TOKEN_SPIKE"
+  ]
+}

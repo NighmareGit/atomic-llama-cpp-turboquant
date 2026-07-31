@@ -1,0 +1,14 @@
+{
+  "provider": "longcat",
+  "model": "LongCat-2.0",
+  "api_key": "${LONGCAT_API_KEY}",
+  "base_url": "https://api.longcat.chat/openai",
+  "max_tokens": 4000,
+  "temperature": 0.7,
+  "timeout": 30,
+  "retry_attempts": 3,
+  "supported_formats": [
+    "openai",
+    "anthropic"
+  ]
+}

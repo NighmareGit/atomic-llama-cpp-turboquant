@@ -1,0 +1,37 @@
+# 72B+ matrix production summary (Config C, post-fix 2026-06-26)
+# Full detail: README.md, matrix-summary.txt, phase{2,3,4}-*.log
+
+Topology: RPC0=remus 5060 Ti, RPC1=3060 Ti, ROCm0=7900 XTX
+Endpoint: 192.168.8.176:50051,127.0.0.1:50051
+ts=35,15,50  fit_targets=620,1024,880
+Env: PATHB_CUDA_DISABLE_GRAPHS=1 GGML_CUDA_DISABLE_GRAPHS=1 on RPC workers
+
+## Recommended presets (phase 1-4 winners)
+
+| Preset | mode | ngl | ncmoe | ctx | ctk/ctv | extras |
+|--------|------|-----|-------|-----|---------|--------|
+| llama70b | fitoff | 60 | - | 8192 | q4_0/q4_0 | -fa on |
+| qwen72b | fitoff | 60 | - | 8192 | q4_0/q4_0 | -fa on |
+| kimi72b | fitoff | 60 | - | 8192 | q4_0/q4_0 | -fa on |
+| qwen-next-80b | fiton | 0 | 8 | 8192 | q4_0/q4_0 | -fa on (VRAM) |
+| coder-next-q4 | fitoff | 60 | 8 | 8192 | q4_0/q4_0 | -fa on |
+
+Avoid: coder-next APEX for repeated loads (p2-p4 load exit). Use coder-next-q4.
+
+## Throughput (phase 1, 16 tok gen)
+
+llama70b G=4.9  qwen72b G=4.8  kimi72b G=5.3
+qwen-next-80b G=16.9 (fiton)  coder-next-q4 G=16.4
+
+## Phase 2 best (fa=on only; fa=off fails q4_0 V cache)
+
+llama70b G=5.1  coder-next-q4 G=21.1 (kv-unified on)
+
+## RPC fix (ggml-rpc.cpp)
+
+graph_compute deferred EVENT_RECORD must set tls_pending_event.pending
++ central drain in send_rpc_cmd / send_rpc_cmd_deferred
++ SET_TENSOR_BATCH flush to tls_set_batch_sock
+
+Rebuild: build-cuda-b-bin-sync/rpc-server + build-rocm-docker/libggml-rpc.so
+Sync remus: docker cp rpc-server pathb-rpc-remus:/usr/local/bin/rpc-server

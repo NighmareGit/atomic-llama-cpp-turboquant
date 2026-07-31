@@ -1,0 +1,25 @@
+=== 4b-run3 ===
+model=/mnt/models/Qwen3.5-4B-Q4_K_M.gguf load_timeout=180s
+2026-06-25T11:03:59Z
+container=7799068d483010436b2be0093b1b1087e9ffc98eb43261d48a7bbc2e8a051f55
+poll 0s: START-1782385439
+container exited early at 10s
+exit_code=0
+[ Prompt: 121.5 t/s | Generation: 110.8 t/s ]
+EXIT-0-1782385443
+  /exit or Ctrl+C     stop or exit
+  /regen              regenerate the last response
+  /clear              clear the chat history
+  /read <file>        add a text file
+  /glob <pattern>     add text files using globbing pattern
+> The quick brown fox jumps over the lazy dog.
+[Start thinking]
+Thinking Process:
+1.  **Analyze the Request:**
+    *   Input: "The quick brown fox jumps over the lazy dog."
+    *   Context: This is a well-known pangram (a sentence containing every letter of the alphabet at least once).
+    *   Implicit Task: The
+[ Prompt: 121.5 t/s | Generation: 110.8 t/s ]
+Exiting...
+EXIT-0-1782385443
+RESULT=PASS

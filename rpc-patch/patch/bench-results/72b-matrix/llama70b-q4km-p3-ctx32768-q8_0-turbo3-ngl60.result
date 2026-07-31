@@ -1,0 +1,2 @@
+run=1 prompt=fox P=15.4 G=4.8 preview="The classic pangram! This sentence is known for using all the letters of the alphabet at least once. It's a popular example sentence in typography and keyboard demonstrations"
+run=2 prompt=fox P=4.7 G=4.9 preview="The classic pangram!\n\nYou've just typed out one of the most well-known sentences in the English language. A pangram is a sentence that uses all the"

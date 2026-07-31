@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "trace_dir": "/home/hunter/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-4gpu-g-triton-n128-qwen80b-moe-v2/telemetry",
+  "gen_only": true,
+  "gen_tokens_est": 129,
+  "G_tps": 68.8223,
+  "overlap_efficiency": 1.9423,
+  "drain_flush_ms": 3043.87,
+  "blocking_ms": 37005.5,
+  "gate_s5": "PASS",
+  "gate_b6": "FAIL",
+  "assembly_overlap_count": 796,
+  "overlap_pct": 0.5,
+  "overlap_target_pct": 5.0,
+  "split_ms_per_token": 28.222,
+  "stall_ratio": 0.6572,
+  "stall_ms": 2392.8,
+  "compute_ms": 392.01,
+  "backends_ms_per_token": {
+    "0": 0.092,
+    "1": 11.637,
+    "2": 6.544,
+    "3": 9.919,
+    "4": 0.031
+  },
+  "straggler_backend": "1",
+  "straggler_ms_per_token": 11.637,
+  "topology_class": "client_split",
+  "rpc_rtt_per_token": 6.64,
+  "graph_submit_count": 774,
+  "blocking_rpc_count": 856,
+  "fire_and_forget_count": 2274,
+  "gpu_smell_flags": [
+    "CLOCK_THROTTLE"
+  ],
+  "path_c_reserved": {
+    "cross_endpoint_copy_count": null,
+    "server_local_copy_count": null
+  }
+}

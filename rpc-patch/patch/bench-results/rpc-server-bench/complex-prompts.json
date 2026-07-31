@@ -1,0 +1,18 @@
+[
+  {
+    "id": "complex-reasoning-1",
+    "content": "Explain the key differences between TCP and UDP protocols in terms of reliability, ordering, and congestion control. Then describe a real-world scenario where you would choose UDP over TCP and justify your decision with specific technical trade-offs. Finally, discuss how QUIC protocol bridges the gap between these two approaches."
+  },
+  {
+    "id": "complex-reasoning-2",
+    "content": "Analyze the following C++ code snippet and identify all potential issues including memory leaks, race conditions, and undefined behavior. Provide a corrected version with explanations for each fix:\n\n```cpp\n#include <vector>\n#include <thread>\n#include <iostream>\n\nclass DataProcessor {\n    std::vector<int>* data;\n    int* result;\npublic:\n    DataProcessor() : data(new std::vector<int>()), result(nullptr) {}\n    ~DataProcessor() { delete result; }\n    void addData(int v) { data->push_back(v); }\n    int* process() {\n        auto& d = *data;\n        result = new int(0);\n        for (size_t i = 0; i < d.size(); i++) {\n            *result += d[i];\n        }\n        return result;\n    }\n};\n```"
+  },
+  {
+    "id": "complex-reasoning-3",
+    "content": "Describe how transformer-based language models use attention mechanisms to process sequential data. Explain the concepts of Query, Key, and Value matrices, multi-head attention, and positional encoding. Then discuss why the quadratic complexity of self-attention with respect to sequence length is a bottleneck and how techniques like FlashAttention and sliding window attention address this limitation."
+  },
+  {
+    "id": "complex-reasoning-4",
+    "content": "Compare and contrast three different approaches to distributed training of large language models: data parallelism, tensor parallelism, and pipeline parallelism. For each approach, explain the communication patterns, synchronization requirements, and memory efficiency characteristics. Include a discussion of how modern frameworks like DeepSpeed ZeRO combine these techniques."
+  }
+]

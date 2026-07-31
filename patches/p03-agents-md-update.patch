@@ -1,0 +1,70 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 6d13b97be..9628d115d 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -169,6 +169,65 @@ gh pr comment
+ gh issue create
+ ```
+ 
++## Sub-branch layout (checkouts on disk)
++
++This repo has multiple sub-branches checked out as separate folders on disk for compartmentalized work. Each folder is an independent git clone (not a worktree), all pushing to the same remotes.
++
++### Repositories
++
++| Repo | Disk location | Remote | Branches on disk |
++|------|-------------|--------|-----------------|
++| **Canonical** (upstream+ops) | `~/projects/atomic-llama-cpp-turboquant` | `gitea` -> `hunter/atomic-llama-cpp-turboquant`<br>`github` -> `NighmareGit/atomic-llama-cpp-turboquant` | `Path-B-Event-Support-Pipeline-Plus` (active) |
++| **Scratch (canonical clone)** | `~/scratch/prototype-repo` | `gitea` -> `hunter/atomic-llama-cpp-turboquant` | `path-d-good` (active)<br>`path-d-udp-test`<br>`master` (local orphan, not upstream) |
++| **Path-D fork** | `~/projects/path-d-gpipeline-assembly-line` | `gitea` -> `hunter/path-d-gpipeline-assembly-line`<br>`gitea-alt` -> `hunter/atomic-llama-cpp-turboquant` | `Path-D-Gpipeline-Assembly-Line`<br>`agent/uid-fix` (active)<br>`agent/transport-udp`<br>`experiment/cuda-ipc-events`<br>`feature/turboquant-kv-cache` |
++| **Path-D agent clones** | `~/scratch/agent-uid-fix` | -> `hunter/path-d-gpipeline-assembly-line` | `agent/uid-fix` (active)<br>`experiment/cuda-ipc-events` |
++| | `~/scratch/agent-transport-udp` | -> local `~/projects/path-d-gpipeline-assembly-line` | `agent/transport-udp` (active)<br>`experiment/cuda-ipc-events` |
++
++### Branch relationships
++
++```
++gitea/master  (upstream llama.cpp, b8523)
++  |
++  +-- gitea/Path-B-Event-Support              (Path-B baseline)
++  |     +-- gitea/Path-B-Event-Support-Pipeline-Plus  (canonical "main", long-lived)
++  |           |
++  |           +-- gitea/Path-D-Gpipeline-Assembly-Line  (Path-D pipeline work)
++  |           |     |
++  |           |     +-- path-d-good            (scratch: RPC garble fix)
++  |           |     +-- path-d-udp-test        (scratch: copy_event async H2D fix)
++  |           |     +-- agent/uid-fix          (fork: MTP UID fix)
++  |           |     +-- agent/transport-udp    (fork: UDP transport prototype)
++  |           |     +-- experiment/cuda-ipc-events (fork: CUDA IPC events)
++  |           |
++  |           +-- gitea/experiment/*           (7 archived experiment branches)
++  |           +-- gitea/feature/*              (feature branches)
++  |           +-- gitea/fix/*                  (fix branches)
++  |
++  +-- gitea/Path-C-Distributed-Orchestration  (Path-C design)
++```
++
++### Active checkouts and what they're for
++
++| Folder | Branch | Purpose |
++|--------|--------|---------|
++| `~/projects/atomic-llama-cpp-turboquant` | `Path-B-Event-Support-Pipeline-Plus` | Canonical mainline. Builds/deploys to cluster dockers. |
++| `~/scratch/prototype-repo` | `path-d-good` | **CURRENT WORKSPACE.** Path-D bugfixes + RPC garble fix. ROCm build in `build-rocm/`. |
++| `~/scratch/prototype-repo` | `path-d-udp-test` | Has the async H2D copy_event fix (`e2fcdaf63`) that `path-d-good` lacks. Needs merge. |
++| `~/projects/path-d-gpipeline-assembly-line` | `agent/uid-fix` | MTP UID fix work (separate fork from canonical). |
++| `~/scratch/agent-uid-fix` | `agent/uid-fix` | Agent-compartment clone of the fork. |
++| `~/scratch/agent-transport-udp` | `agent/transport-udp` | UDP transport prototype, cloned from local fork. |
++
++### Fix status: `path-d-good` vs `Path-D-Gpipeline-Assembly-Line`
++
++These two branches have **diverged**. Both need something from the other:
++
++| Fix | `path-d-good` | `Path-D-Gpipeline-Assembly-Line` |
++|-----|--------------|----------------------------------|
++| `serialize_tensor` weak symbol fix (RPC garble) | YES (`f4871fafa`) | **NO** |
++| `copy_event` per-call events (async H2D garble) | **NO** | YES (`e2fcdaf63`, ancestor) |
++
++The two branches should be reconciled (cherry-pick the missing fix in whichever direction is cleaner).
++
+ ## Useful Resources
+ 
+ To conserve context space, load these resources as needed:

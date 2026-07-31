@@ -1,0 +1,204 @@
+=== debug-27b-fitoff-ngl56-quick ===
+variant=pathb proto=Path B (v4.2.2 workspace) rpc_mode=local endpoint=127.0.0.1:50051
+model=/mnt/models/Qwen3.5-27B-Q5_K_M.gguf ctx=8192 ctk=q8_0 ctv=turbo3 ngl=56 ts=39,11,50 ncmoe=none np=1 no_warmup=1 load_timeout=600s
+server_extra=--no-warmup -np 1 --fit off --verbose -lv 4
+prompts_file=default-fox verbose_lv=default extract_vram=0
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  452G  241G  66% /
+2026-06-26T11:54:02Z
+starting rpc-server (CUDA device 0, local)...
+d701b05ff28d05135e364acd46a36d6922336fd27e15392a78f5cac24457c10a
+starting llama-server (ROCm HIP device 0)...
+13ae96af6b6557cb17e052afeaec1ccb364bbb78e69806662b0520cf8dec2062
+polling server health (max 600s)...
+ERROR: llama-server container exited during load
+0.01.634.512 I print_info: model params          = 26.90 B
+0.01.634.512 I print_info: general.name          = Qwen3.5 27B
+0.01.634.515 I print_info: vocab type            = BPE
+0.01.634.516 I print_info: n_vocab               = 248320
+0.01.634.516 I print_info: n_merges              = 247587
+0.01.634.516 I print_info: BOS token             = 11 ','
+0.01.634.516 I print_info: EOS token             = 248046 '<|im_end|>'
+0.01.634.516 I print_info: EOT token             = 248046 '<|im_end|>'
+0.01.634.517 I print_info: PAD token             = 248044 '<|endoftext|>'
+0.01.634.517 I print_info: LF token              = 198 'Ċ'
+0.01.634.517 I print_info: FIM PRE token         = 248060 '<|fim_prefix|>'
+0.01.634.517 I print_info: FIM SUF token         = 248062 '<|fim_suffix|>'
+0.01.634.517 I print_info: FIM MID token         = 248061 '<|fim_middle|>'
+0.01.634.517 I print_info: FIM PAD token         = 248063 '<|fim_pad|>'
+0.01.634.517 I print_info: FIM REP token         = 248064 '<|repo_name|>'
+0.01.634.518 I print_info: FIM SEP token         = 248065 '<|file_sep|>'
+0.01.634.518 I print_info: EOG token             = 248044 '<|endoftext|>'
+0.01.634.518 I print_info: EOG token             = 248046 '<|im_end|>'
+0.01.634.518 I print_info: EOG token             = 248063 '<|fim_pad|>'
+0.01.634.518 I print_info: EOG token             = 248064 '<|repo_name|>'
+0.01.634.518 I print_info: EOG token             = 248065 '<|file_sep|>'
+0.01.634.519 I print_info: max token length      = 256
+0.01.634.520 I load_tensors: loading model tensors, this can take a while... (mmap = true, direct_io = false)
+0.02.096.542 E alloc_tensor_range: failed to allocate RPC0[127.0.0.1:50051] buffer of size 12242181120
+0.02.456.916 E llama_model_load: error loading model: unable to allocate RPC0[127.0.0.1:50051] buffer
+0.02.456.940 E llama_model_load_from_file_impl: failed to load model
+0.02.456.943 E common_init_from_params: failed to load model '/mnt/models/Qwen3.5-27B-Q5_K_M.gguf'
+0.02.456.947 E srv    load_model: failed to load model, '/mnt/models/Qwen3.5-27B-Q5_K_M.gguf'
+0.02.456.948 I srv    operator(): operator(): cleaning up before exit...
+0.02.458.891 E srv  llama_server: exiting due to model loading error
+--- artifact capture (load_exit) @ 2026-06-26T11:54:10Z ---
+=== 2026-06-26T11:54:10Z reason=load_exit ===
+[docker ps -a]
+bench-llama                      Exited (1) 2 seconds ago    llama-rocm-patched
+bench-rpc                        Exited (0) 6 seconds ago    llama-rpc-cuda-a2
+pathb-rpc                        Up About a minute           llama-rpc-cuda-a2
+llama_nv_tq_rpc                  Exited (137) 43 hours ago   vllm-deploy-llama-nv-tq-rpc:latest
+llama_amd_tq_rpc                 Exited (137) 43 hours ago   vllm-deploy-llama-amd-tq-rpc:latest
+=== 2026-06-26T11:54:10Z reason=load_exit ===
+[romulus-rocm]
+
+
+============================ ROCm System Management Interface ============================
+================================== Memory Usage (Bytes) ==================================
+GPU[0]		: VRAM Total Memory (B): 25753026560
+GPU[0]		: VRAM Total Used Memory (B): 915111936
+==========================================================================================
+================================== End of ROCm SMI Log ===================================
+[romulus-nvidia]
+Fri Jun 26 13:54:10 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.71.05              Driver Version: 595.71.05      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3060 Ti     Off |   00000000:0A:00.0 Off |                  N/A |
+|  0%   50C    P2             40W /  220W |     187MiB /   8192MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            3057      G   /usr/lib/xorg/Xorg                        4MiB |
+|    0   N/A  N/A          271833      C   /app/bin/rpc-server                     164MiB |
++-----------------------------------------------------------------------------------------+
+[remus-nvidia]
+Fri Jun 26 13:54:10 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.71.05              Driver Version: 595.71.05      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 5060 Ti     Off |   00000000:01:00.0 Off |                  N/A |
+|  0%   51C    P1             19W /  180W |     183MiB /  16311MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            2128      G   /usr/lib/xorg/Xorg                        4MiB |
+|    0   N/A  N/A          115035      C   /usr/local/bin/rpc-server               160MiB |
++-----------------------------------------------------------------------------------------+
+--- rpc-local (tail) ---
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: Host ('0.0.0.0') is != '127.0.0.1'
+         Never expose the RPC server to an open network!
+         This is an experimental feature and is not secure!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+Starting RPC server v4.2.2
+  endpoint       : 0.0.0.0:50051
+  local cache    : n/a
+Devices:
+  CUDA0: NVIDIA GeForce RTX 3060 Ti (7841 MiB, 7687 MiB free)
+  transport      : TCP
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+Client connection closed
+Accepted client connection
+ggml_backend_cuda_buffer_type_alloc_buffer: allocating 11675.05 MiB on device 0: cudaMalloc failed: out of memory
+Client connection closed
+--- rpc-remus (tail) ---
+pathb-rpc-remus  | Accepted client connection
+pathb-rpc-remus  | Client connection closed
+pathb-rpc-remus  | Accepted client connection
+pathb-rpc-remus  | Client connection closed
+pathb-rpc-remus  | Accepted client connection
+pathb-rpc-remus  | Client connection closed
+pathb-rpc-remus  | Accepted client connection
+pathb-rpc-remus  | Client connection closed
+--- logs-since ---
+pathb-rpc-remus  | 
+pathb-rpc-remus  | !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+pathb-rpc-remus  | WARNING: Host ('0.0.0.0') is != '127.0.0.1'
+pathb-rpc-remus  |          Never expose the RPC server to an open network!
+pathb-rpc-remus  |          This is an experimental feature and is not secure!
+pathb-rpc-remus  | !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+pathb-rpc-remus  | 
+pathb-rpc-remus  | ggml_cuda_init: found 1 CUDA devices (Total VRAM: 15849 MiB):
+pathb-rpc-remus  |   Device 0: NVIDIA GeForce RTX 5060 Ti, compute capability 12.0, VMM: yes, VRAM: 15849 MiB
+pathb-rpc-remus  | Starting RPC server v4.2.2
+pathb-rpc-remus  |   endpoint       : 0.0.0.0:50051
+pathb-rpc-remus  |   local cache    : n/a
+pathb-rpc-remus  | Devices:
+pathb-rpc-remus  |   CUDA0: NVIDIA GeForce RTX 5060 Ti (15849 MiB, 15699 MiB free)
+pathb-rpc-remus  |   transport      : TCP
+pathb-rpc-remus  | Accepted client connection
+pathb-rpc-remus  | Client connection closed
+pathb-rpc-remus  | Accepted client connection
+pathb-rpc-remus  | Client connection closed
+pathb-rpc-remus  | Accepted client connection
+pathb-rpc-remus  | Client connection closed
+pathb-rpc-remus  | Accepted client connection
+pathb-rpc-remus  | Client connection closed
+pathb-rpc-remus  | Accepted client connection
+pathb-rpc-remus  | Client connection closed
+pathb-rpc-remus  | Accepted client connection
+pathb-rpc-remus  | Client connection closed
+pathb-rpc-remus  | Accepted client connection
+pathb-rpc-remus  | Client connection closed
+pathb-rpc-remus  | Accepted client connection
+pathb-rpc-remus  | Client connection closed
+--- server log tail (infer) ---
+0.01.634.518 I print_info: FIM SEP token         = 248065 '<|file_sep|>'
+0.01.634.518 I print_info: EOG token             = 248044 '<|endoftext|>'
+0.01.634.518 I print_info: EOG token             = 248046 '<|im_end|>'
+0.01.634.518 I print_info: EOG token             = 248063 '<|fim_pad|>'
+0.01.634.518 I print_info: EOG token             = 248064 '<|repo_name|>'
+0.01.634.518 I print_info: EOG token             = 248065 '<|file_sep|>'
+0.01.634.519 I print_info: max token length      = 256
+0.01.634.520 I load_tensors: loading model tensors, this can take a while... (mmap = true, direct_io = false)
+0.02.096.542 E alloc_tensor_range: failed to allocate RPC0[127.0.0.1:50051] buffer of size 12242181120
+0.02.456.916 E llama_model_load: error loading model: unable to allocate RPC0[127.0.0.1:50051] buffer
+0.02.456.940 E llama_model_load_from_file_impl: failed to load model
+0.02.456.943 E common_init_from_params: failed to load model '/mnt/models/Qwen3.5-27B-Q5_K_M.gguf'
+0.02.456.947 E srv    load_model: failed to load model, '/mnt/models/Qwen3.5-27B-Q5_K_M.gguf'
+0.02.456.948 I srv    operator(): operator(): cleaning up before exit...
+0.02.458.891 E srv  llama_server: exiting due to model loading error

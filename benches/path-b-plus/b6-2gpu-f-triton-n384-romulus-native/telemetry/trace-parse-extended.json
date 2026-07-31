@@ -1,0 +1,20 @@
+{
+  "dir": "/home/hunter/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-n384-romulus-native/telemetry",
+  "rpc_events": 8128,
+  "sched_events": 18480,
+  "rpc_rtt": {
+    "count": 1554,
+    "total_ms": 4312.99
+  },
+  "input_wait_copy": 6037.9,
+  "graph_compute_async": 734.07,
+  "event_record": 0.46,
+  "sync_copy_fallback": 3940.35,
+  "copy_async_ok_count": 1155,
+  "c_full_trace": true,
+  "assembly_overlap": {
+    "count": 2882,
+    "pairs": 4002075,
+    "overlap_pct": 0.1
+  }
+}

@@ -1,0 +1,6 @@
+=== llama-pipeline-diagnose ===
+diagnose.json -> /home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-guard-n128/telemetry/diagnose.json
+gate_s5=PASS gate_b6=FAIL overlap_pct=0.9
+stall_ratio=0.6357 straggler=backend1 (13.661 ms/tok)
+overlap_efficiency=1.6476
+gpu_smells=none

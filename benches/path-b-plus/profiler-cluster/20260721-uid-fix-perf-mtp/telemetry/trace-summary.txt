@@ -1,0 +1,34 @@
+=== trace summary ===
+dir=benches/path-b-plus/profiler-cluster/20260721-uid-fix-perf-mtp/telemetry
+
+[rpc] events=4095
+  ALLOC_BUFFER count=8 total_ms=7.27 avg_us=908
+  GET_ALIGNMENT count=2 total_ms=0.42 avg_us=212
+  GET_MAX_SIZE count=2 total_ms=0.39 avg_us=197
+  BUFFER_GET_BASE count=8 total_ms=1.13 avg_us=142
+  FREE_BUFFER count=8 total_ms=17.14 avg_us=2142
+  BUFFER_CLEAR count=4 total_ms=0.62 avg_us=154
+  SET_TENSOR_HASH count=176 total_ms=5872.51 avg_us=33367
+  GET_TENSOR count=768 total_ms=152.95 avg_us=199
+  GRAPH_COMPUTE count=9 total_ms=87.36 avg_us=9706
+  GET_DEVICE_MEMORY count=2310 total_ms=2798.96 avg_us=1212
+  GET_ALLOC_SIZE count=32 total_ms=7.58 avg_us=237
+  HELLO count=4 total_ms=0 avg_us=0
+  DEVICE_COUNT count=2 total_ms=80.95 avg_us=40474
+  GRAPH_RECOMPUTE count=762 total_ms=5.76 avg_us=8
+  blocking_events=1663 blocking_ms=8947.2
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+
+[sched] events=12286
+  split_total_count=1152
+  split_total_ms_sum=14137.8 avg_us=12272
+    backend2 splits=384 ms=5.33
+    backend0 splits=384 ms=4877.45
+    backend1 splits=384 ms=9255.03
+  input_wait_copy_ms=3178.07
+  graph_compute_async_ms=8836.93
+  event_record_ms=1991.95
+  assembly_overlap_count=768 pairs=442368 overlap_pct=0.2

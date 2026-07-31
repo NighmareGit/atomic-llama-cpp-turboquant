@@ -1,0 +1,17 @@
+=== 27b-qwen-a1-ts1090 ===
+variant=a1 proto=A1 (v4.1.0 image)
+model=/mnt/models/Qwen3.5-27B-Q5_K_M.gguf ctx=8192 ctk=q8_0 ctv=turbo3 ngl=99 ts=10,90 ncmoe=none np=1 no_warmup=1 load_timeout=600s
+server_extra=--no-warmup -np 1
+2026-06-25T12:47:38Z
+starting rpc-server (CUDA device 0)...
+28ebaed673148d677739a108c4e70dc9755131ab49efa32fa81df1a456358fcd
+starting llama-server (ROCm HIP device 0)...
+ba901f884705a0c5679645cfa9eac67915aaaa14606d3bb4eac8b0aee273f259
+polling server health (max 600s)...
+server ready at 10s
+benchmark 3 runs...
+run=1 P=95.1 G=27.1 preview=''
+run=2 P=156.9 G=27.1 preview=''
+run=3 P=154.4 G=27.2 preview=''
+RESULT=PASS
+results in /tmp/rpc-server-bench/27b-qwen-a1-ts1090.result

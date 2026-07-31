@@ -1,0 +1,47 @@
+=== coder-next-apex-p1-fitoff-ngl60-ncmoe20 ===
+variant=pathb proto=Path B (v4.2.2 workspace) rpc_mode=multi endpoint=192.168.8.176:50051,127.0.0.1:50051
+model=/mnt/models/Qwen3-Coder-Next-APEX-I-Quality.gguf ctx=8192 ctk=q4_0 ctv=q4_0 ngl=60 ts=35,15,50 ncmoe=20 np=1 no_warmup=1 load_timeout=1800s
+server_extra=--no-warmup -np 1 --n-cpu-moe 20 --fit off --verbose -lv 4 --reasoning off
+prompts_file=default-fox verbose_lv=4 extract_vram=1
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  452G  241G  66% /
+2026-06-26T10:33:08Z
+using remote/multi RPC at 192.168.8.176:50051,127.0.0.1:50051 (no local bench-rpc)
+Connection to 192.168.8.176 50051 port [tcp/*] succeeded!
+RPC reachable: 192.168.8.176:50051
+Connection to 127.0.0.1 50051 port [tcp/*] succeeded!
+RPC reachable: 127.0.0.1:50051
+starting llama-server (ROCm HIP device 0)...
+b570d24ca2ed91bf4f692a5c9f4fa1aa79c26b98b11880942bc5cfbbbe6b6e5b
+polling server health (max 1800s)...
+ERROR: llama-server container exited during load
+0.14.850.589 I llama_context: n_ctx_seq     = 8192
+0.14.850.589 I llama_context: n_batch       = 2048
+0.14.850.589 I llama_context: n_ubatch      = 512
+0.14.850.589 I llama_context: causal_attn   = 1
+0.14.850.590 I llama_context: flash_attn    = auto
+0.14.850.590 I llama_context: kv_unified    = false
+0.14.850.592 I llama_context: freq_base     = 5000000.0
+0.14.850.593 I llama_context: freq_scale    = 1
+0.14.850.593 I llama_context: n_rs_seq      = 0
+0.14.850.593 I llama_context: n_outputs_max = 1
+0.14.850.594 W llama_context: n_ctx_seq (8192) < n_ctx_train (262144) -- the full capacity of the model will not be utilized
+0.15.940.184 I llama_context:  ROCm_Host  output buffer size =     0.58 MiB
+0.15.940.755 I llama_kv_cache:      ROCm0 KV buffer size =    27.00 MiB
+0.16.055.067 I llama_kv_cache: RPC0[127.0.0.1:50051] KV buffer size =     9.00 MiB
+0.16.056.130 I llama_kv_cache: RPC0[192.168.8.176:50051] KV buffer size =    18.00 MiB
+0.16.056.504 I llama_kv_cache: size =   54.00 MiB (  8192 cells,  12 layers,  1/1 seqs), K (q4_0):   27.00 MiB, V (q4_0):   27.00 MiB
+0.16.056.506 I llama_kv_cache: attn_rot_k = 0, n_embd_head_k_all = 256
+0.16.056.506 I llama_kv_cache: attn_rot_v = 0, n_embd_head_k_all = 256
+0.16.057.229 I llama_memory_recurrent:      ROCm0 RS buffer size =    35.59 MiB
+0.16.057.296 I llama_memory_recurrent: RPC0[127.0.0.1:50051] RS buffer size =    10.47 MiB
+0.16.057.992 I llama_memory_recurrent: RPC0[192.168.8.176:50051] RS buffer size =    29.31 MiB
+0.16.057.996 I llama_memory_recurrent: size =   75.38 MiB (     1 cells,  48 layers,  1 seqs  0 rs_seq), R (f32):    3.38 MiB, S (f32):   72.00 MiB
+0.16.058.007 I sched_reserve: reserving ...
+0.16.061.611 I sched_reserve: Flash Attention was auto, set to enabled
+0.16.061.612 I sched_reserve: resolving fused Gated Delta Net support:
+0.16.062.289 I sched_reserve: fused Gated Delta Net (autoregressive) enabled
+0.16.062.965 I sched_reserve: fused Gated Delta Net (chunked) enabled
+0.16.409.992 E ggml_backend_cuda_buffer_type_alloc_buffer: allocating 845.00 MiB on device 0: cudaMalloc failed: out of memory
+0.16.409.997 E ggml_gallocr_reserve_n_impl: failed to allocate ROCm0 buffer of size 886044800
+0.16.409.998 E graph_reserve: failed to allocate compute buffers

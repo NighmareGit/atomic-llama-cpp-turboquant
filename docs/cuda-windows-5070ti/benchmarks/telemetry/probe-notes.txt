@@ -1,0 +1,19 @@
+PCIe monitoring probe (2026-06-27)
+
+Windows 5070 Ti:
+- nvidia-smi dmon -s pucvmte: WORKS (min interval 1s on Windows; use query loop at 500ms for finer samples)
+- PCIe RX/TX via dmon -s t: WORKS (rxpci/txpci columns, idle ~6-14 MB/s)
+- GPM metrics 20/21: N/A (Hopper+ only)
+
+remus 5060 Ti (SSH):
+- nvidia-smi dmon -s pucvmte: WORKS
+- PCIe counters: WORKS
+
+remus RX6600 (SSH):
+- rocm-smi -b --json: NO DATA
+- rocm-smi --showuse --showpower --showmemuse --json: WORKS (1s loop)
+- GPU use % and power available; no numeric PCIe MB/s
+
+Interpretation ceilings:
+- Gen4 x16 theoretical ~32 GB/s per direction
+- RPC at 40 t/s expects <<1% of PCIe and NIC ceiling

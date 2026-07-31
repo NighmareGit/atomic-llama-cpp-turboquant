@@ -1,0 +1,4 @@
+git_sha 251f1a157
+model /mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf
+pp tps= 2509.2 wall_ms= 204.049 n= 512
+tg tps= 74.5273 wall_ms= 1717.49 n= 128

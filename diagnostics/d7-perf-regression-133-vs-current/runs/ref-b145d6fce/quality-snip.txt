@@ -1,0 +1,50 @@
+3:>>> collect_client_devices: 2 total devices registered
+4:>>>   dev[0]: name=ROCm0 desc=Radeon RX 7900 XTX type=1
+5:>>>   dev[1]: name=CPU desc=Intel(R) Core(TM) i7-14700K type=0
+6:llama_model_loader: loaded meta data with 48 key-value pairs and 753 tensors from /mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf (version GGUF V3 (latest))
+40:llama_model_loader: - kv  32:                       tokenizer.ggml.model str              = gpt2
+41:llama_model_loader: - kv  33:                         tokenizer.ggml.pre str              = qwen35
+42:llama_model_loader: - kv  34:                      tokenizer.ggml.tokens arr[str,248320]  = ["!", "\"", "#", "$", "%", "&", "'", ...
+43:llama_model_loader: - kv  35:                  tokenizer.ggml.token_type arr[i32,248320]  = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, ...
+44:llama_model_loader: - kv  36:                      tokenizer.ggml.merges arr[str,247587]  = ["Ġ Ġ", "ĠĠ ĠĠ", "i n", "Ġ t",...
+45:llama_model_loader: - kv  37:                tokenizer.ggml.eos_token_id u32              = 248046
+46:llama_model_loader: - kv  38:            tokenizer.ggml.padding_token_id u32              = 248044
+47:llama_model_loader: - kv  39:                tokenizer.ggml.bos_token_id u32              = 248044
+48:llama_model_loader: - kv  40:               tokenizer.ggml.add_bos_token bool             = false
+49:llama_model_loader: - kv  41:                    tokenizer.chat_template str              = {%- set image_count = namespace(value...
+66:init_tokenizer: initializing tokenizer for type 2
+67:load: 0 unused tokens
+68:load: control token: 248075 '<tts_text_bos_single>' is not marked as EOG
+69:load: control token: 248073 '<tts_text_bos>' is not marked as EOG
+70:load: control token: 248072 '<tts_pad>' is not marked as EOG
+71:load: control token: 248071 '<|audio_end|>' is not marked as EOG
+72:load: control token: 248061 '<|fim_middle|>' is not marked as EOG
+73:load: control token: 248055 '<|vision_pad|>' is not marked as EOG
+74:load: control token: 248052 '<|quad_end|>' is not marked as EOG
+75:load: control token: 248049 '<|box_start|>' is not marked as EOG
+76:load: control token: 248048 '<|object_ref_end|>' is not marked as EOG
+77:load: control token: 248045 '<|im_start|>' is not marked as EOG
+78:load: control token: 248057 '<|video_pad|>' is not marked as EOG
+79:load: control token: 248070 '<|audio_start|>' is not marked as EOG
+80:load: control token: 248056 '<|image_pad|>' is not marked as EOG
+81:load: control token: 248054 '<|vision_end|>' is not marked as EOG
+82:load: control token: 248060 '<|fim_prefix|>' is not marked as EOG
+83:load: control token: 248050 '<|box_end|>' is not marked as EOG
+84:load: control token: 248074 '<tts_text_eod>' is not marked as EOG
+85:load: control token: 248053 '<|vision_start|>' is not marked as EOG
+86:load: control token: 248062 '<|fim_suffix|>' is not marked as EOG
+87:load: control token: 248047 '<|object_ref_start|>' is not marked as EOG
+88:load: control token: 248051 '<|quad_start|>' is not marked as EOG
+89:load: control token: 248076 '<|audio_pad|>' is not marked as EOG
+90:load: printing all EOG tokens:
+96:load: special tokens cache size = 33
+97:load: token to piece cache size = 1.7581 MB
+151:print_info: BOS token             = 248044 '<|endoftext|>'
+152:print_info: EOS token             = 248046 '<|im_end|>'
+153:print_info: EOT token             = 248046 '<|im_end|>'
+154:print_info: PAD token             = 248044 '<|endoftext|>'
+155:print_info: LF token              = 198 'Ċ'
+156:print_info: FIM PRE token         = 248060 '<|fim_prefix|>'
+157:print_info: FIM SUF token         = 248062 '<|fim_suffix|>'
+158:print_info: FIM MID token         = 248061 '<|fim_middle|>'
+159:print_info: FIM PAD token         = 248063 '<|fim_pad|>'

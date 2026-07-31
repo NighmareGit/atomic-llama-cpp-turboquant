@@ -1,0 +1,4 @@
+{"avg_ts":200.788,"G_tps":200.788,"g_method":"wall_n_gen","n_gen_tokens":384,"n_eval":1,"n_reused":381,"elapsed_ns":1912466255,"rep":1,"reps":1,"GGML_PIPELINE_PLUS":1}
+{"avg_ts":201.412,"G_tps":201.412,"g_method":"wall_n_gen","n_gen_tokens":384,"n_eval":1,"n_reused":381,"elapsed_ns":1906536417,"rep":1,"reps":1,"GGML_PIPELINE_PLUS":1}
+{"avg_ts":202.173,"G_tps":202.173,"g_method":"wall_n_gen","n_gen_tokens":384,"n_eval":1,"n_reused":381,"elapsed_ns":1899359783,"rep":1,"reps":1,"GGML_PIPELINE_PLUS":1}
+{"avg_ts":204.097,"G_tps":204.097,"g_method":"wall_n_gen","n_gen_tokens":384,"n_eval":1,"n_reused":381,"elapsed_ns":1881462631,"rep":1,"reps":1,"GGML_PIPELINE_PLUS":1}

@@ -1,0 +1,58 @@
+=== trace summary ===
+dir=/home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-guard-n128/telemetry
+
+[rpc] events=1062
+  ALLOC_BUFFER count=10 total_ms=114.0 avg_us=11400.0
+  GET_ALIGNMENT count=4 total_ms=0.92 avg_us=230.0
+  GRAPH_COMPUTE count=6 total_ms=6.79 avg_us=1131.0
+  GET_DEVICE_MEMORY count=10 total_ms=105.35 avg_us=10535.0
+  GET_ALLOC_SIZE count=10 total_ms=4.1 avg_us=410.0
+  HELLO count=49 total_ms=10.0 avg_us=204.0
+  DEVICE_COUNT count=4 total_ms=0.89 avg_us=222.0
+  GRAPH_RECOMPUTE count=252 total_ms=4.72 avg_us=19.0
+  EVENT_RECORD count=129 total_ms=788.12 avg_us=6109.0
+  GET_MAX_SIZE count=4 total_ms=0.84 avg_us=210.0
+  BUFFER_GET_BASE count=10 total_ms=1.97 avg_us=197.0
+  FREE_BUFFER count=8 total_ms=6.04 avg_us=755.0
+  BUFFER_CLEAR count=4 total_ms=1.37 avg_us=343.0
+  SET_TENSOR_HASH count=304 total_ms=122.15 avg_us=402.0
+  GET_TENSOR count=258 total_ms=75.81 avg_us=294.0
+  blocking_events=458 blocking_ms=1218.83
+  rpc_rtt_count=329 rpc_rtt_ms=430.7
+  rpc_rtt_hist=0ms:317 1ms:4 2ms:3 3ms:1 4ms:1 27ms:1 93ms:1 109ms:1
+  rpc_rtt_p50_ms=0.58 rpc_rtt_p95_ms=0.96 rpc_rtt_p99_ms=4.21
+  EVENT_RECORD count=129 total_ms=788.12
+  drain_flush_ms=788.12
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+  hello endpoint=192.168.8.23:50054 minor=3 peer_copy=True
+
+[sched] events=1548
+  split_total_count=387
+  split_total_ms_sum=1818.04 avg_us=4698.0
+    backend2 splits=129 ms=15.49
+    backend0 splits=129 ms=53.88
+    backend1 splits=129 ms=1748.67
+  input_wait_copy_ms=1154.32
+  graph_compute_async_ms=647.74
+  event_record_ms=1.37
+  assembly_overlap_count=459 pairs=49923 overlap_pct=0.9
+    copy0 splits=99
+    copy1 splits=96
+    copy2 splits=96
+    copy3 splits=96
+  per_split_rpc_rtt:
+    split=2 backend=1 rpc_rtt_count=138 rpc_rtt_ms=49.85

@@ -1,0 +1,213 @@
+=== trace summary ===
+dir=/home/hunter/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-4gpu-g-triton-n128-gemma26b-moe-v2/telemetry
+
+[rpc] events=3027
+  ALLOC_BUFFER count=22 total_ms=43.38 avg_us=1972
+  GET_ALIGNMENT count=6 total_ms=0.86 avg_us=144
+  GET_MAX_SIZE count=6 total_ms=0.78 avg_us=129
+  BUFFER_GET_BASE count=22 total_ms=2.73 avg_us=124
+  FREE_BUFFER count=22 total_ms=17.08 avg_us=776
+  BUFFER_CLEAR count=10 total_ms=15.77 avg_us=1577
+  SET_TENSOR count=258 total_ms=10.93 avg_us=42
+  SET_TENSOR_HASH count=92 total_ms=9728.47 avg_us=105744
+  GET_TENSOR count=774 total_ms=106.94 avg_us=138
+  GRAPH_COMPUTE count=18 total_ms=3.69 avg_us=205
+  GET_DEVICE_MEMORY count=18 total_ms=18.84 avg_us=1047
+  INIT_TENSOR count=314 total_ms=23.41 avg_us=75
+  GET_ALLOC_SIZE count=144 total_ms=19.95 avg_us=139
+  HELLO count=172 total_ms=0 avg_us=0
+  DEVICE_COUNT count=6 total_ms=0.85 avg_us=142
+  GRAPH_RECOMPUTE count=756 total_ms=2.98 avg_us=4
+  EVENT_RECORD count=387 total_ms=1420.6 avg_us=3671
+  blocking_events=1105 blocking_ms=11395
+  drain_flush_ms=1439.35
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.176:50051 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  hello endpoint=192.168.8.23:50054 minor=4 peer_copy=
+  copy_issue_count=258 defer_count=258 peer_copy_count=0
+
+[sched] events=4262
+  split_total_count=645
+  split_total_ms_sum=1852.05 avg_us=2871
+    backend4 splits=129 ms=3.74
+    backend0 splits=129 ms=15.64
+    backend1 splits=129 ms=814.6
+    backend2 splits=129 ms=295.58
+    backend3 splits=129 ms=722.5
+  input_wait_copy_ms=1144.03
+  graph_compute_async_ms=221.26
+  event_record_ms=0.21
+  assembly_overlap_count=579 pairs=166410 overlap_pct=0.3
+    copy0 splits=165
+    copy1 splits=160
+    copy2 splits=160
+    copy3 splits=160

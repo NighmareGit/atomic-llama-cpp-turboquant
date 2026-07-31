@@ -1,0 +1,12 @@
+﻿{"ts_us":958963842597,"split":0,"backend":4,"copy":0,"phase":"input_wait_copy","elapsed_us":1}
+{"ts_us":958963844844,"split":0,"backend":4,"copy":0,"phase":"graph_compute_async","elapsed_us":2163}
+{"ts_us":958963844877,"split":0,"backend":4,"copy":0,"phase":"event_record","elapsed_us":0}
+{"ts_us":958963844888,"split":0,"backend":4,"copy":0,"phase":"split_total","elapsed_us":4174}
+{"ts_us":958963844913,"split":1,"backend":0,"copy":0,"phase":"input_wait_copy","elapsed_us":16}
+{"ts_us":958963848018,"split":1,"backend":0,"copy":0,"phase":"graph_compute_async","elapsed_us":3093}
+{"ts_us":958963848058,"split":1,"backend":0,"copy":0,"phase":"event_record","elapsed_us":17}
+{"ts_us":958963848069,"split":1,"backend":0,"copy":0,"phase":"split_total","elapsed_us":3171}
+{"ts_us":958963909538,"split":2,"backend":1,"copy":0,"phase":"input_wait_copy","elapsed_us":61357}
+{"ts_us":958963910435,"split":2,"backend":1,"copy":0,"phase":"graph_compute_async","elapsed_us":886}
+{"ts_us":958963910454,"split":2,"backend":1,"copy":0,"phase":"event_record","elapsed_us":11}
+{"ts_us":958963910461,"split":2,"backend":1,"copy":0,"phase":"split_total","elapsed_us":62281}

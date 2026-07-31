@@ -1,0 +1,24 @@
+﻿=== profile summary: profile-f-36b-nl-no6600 ===
+generated: 2026-06-27T04:50:43Z
+
+[throughput]
+  
+  run=1 P=40.8 G=48.9 preview=
+
+[win-5070] samples=26
+  power: min=26.1W max=78.4W avg=32.2W
+  duty_cycle_20pct_tdp=3.8%
+  peak_pct_tdp=26.1%
+  util_gpu: max=25% avg=2.6%
+
+[ram]
+  LOAD: min_avail=2886MB max_pages_sec=131194.9
+  GEN: min_avail=4464MB max_pages_sec=2734.7
+
+[nic] peak_mbps=1593.42 (2.5G ceiling=2500)
+  nic_headroom_pct=36.3
+  nic_ok=False
+
+[verdict]
+  Primary classification requires scheduler trace + E-vs-F delta.
+  If all GPU duty_cycle < 20% during GEN and NIC/PCIe headroom > 99%: orchestration/RPC stall likely.

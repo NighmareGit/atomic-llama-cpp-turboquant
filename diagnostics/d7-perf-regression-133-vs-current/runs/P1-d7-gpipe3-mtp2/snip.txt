@@ -1,0 +1,60 @@
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:11:llama_model_loader: loaded meta data with 48 key-value pairs and 753 tensors from /mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf (version GGUF V3 (latest))
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:21:llama_model_loader: - kv   8:                       general.license.link str              = https://huggingface.co/Qwen/Qwen3.6-3...
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:976:done_getting_tensors: tensor 'token_embd.weight' (q6_K) (and 0 others) cannot be used with preferred buffer type ROCm_Host, using CPU instead
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:990:>>> GPipe enabled: n_stages=3
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:991:llama_model_loader: loaded meta data with 48 key-value pairs and 753 tensors from /mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf (version GGUF V3 (latest))
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:1001:llama_model_loader: - kv   8:                       general.license.link str              = https://huggingface.co/Qwen/Qwen3.6-3...
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:1954:done_getting_tensors: tensor 'token_embd.weight' (q6_K) (and 0 others) cannot be used with preferred buffer type ROCm_Host, using CPU instead
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:2074:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:2100:>>> wall_ms=260.74 tps=1963.68 n_eval=1 n_reused=1
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:2102:>>> GPipe enabled: n_stages=3
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:2103:llama_model_loader: loaded meta data with 48 key-value pairs and 753 tensors from /mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf (version GGUF V3 (latest))
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:2113:llama_model_loader: - kv   8:                       general.license.link str              = https://huggingface.co/Qwen/Qwen3.6-3...
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:3062:done_getting_tensors: tensor 'token_embd.weight' (q6_K) (and 0 others) cannot be used with preferred buffer type ROCm_Host, using CPU instead
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:3178:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:3204:>>> wall_ms=204.95 tps=2498.19 n_eval=1 n_reused=1
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:3206:>>> GPipe enabled: n_stages=3
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:3207:llama_model_loader: loaded meta data with 48 key-value pairs and 753 tensors from /mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf (version GGUF V3 (latest))
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:3217:llama_model_loader: - kv   8:                       general.license.link str              = https://huggingface.co/Qwen/Qwen3.6-3...
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:4166:done_getting_tensors: tensor 'token_embd.weight' (q6_K) (and 0 others) cannot be used with preferred buffer type ROCm_Host, using CPU instead
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:4282:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:4308:>>> wall_ms=203.83 tps=2511.93 n_eval=1 n_reused=1
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:4310:>>> GPipe enabled: n_stages=3
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:4311:llama_model_loader: loaded meta data with 48 key-value pairs and 753 tensors from /mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf (version GGUF V3 (latest))
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:4321:llama_model_loader: - kv   8:                       general.license.link str              = https://huggingface.co/Qwen/Qwen3.6-3...
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:5270:done_getting_tensors: tensor 'token_embd.weight' (q6_K) (and 0 others) cannot be used with preferred buffer type ROCm_Host, using CPU instead
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:5386:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:5412:>>> wall_ms=204.57 tps=2502.77 n_eval=1 n_reused=1
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:5414:>>> GPipe enabled: n_stages=3
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:5415:llama_model_loader: loaded meta data with 48 key-value pairs and 753 tensors from /mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf (version GGUF V3 (latest))
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:5425:llama_model_loader: - kv   8:                       general.license.link str              = https://huggingface.co/Qwen/Qwen3.6-3...
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:6374:done_getting_tensors: tensor 'token_embd.weight' (q6_K) (and 0 others) cannot be used with preferred buffer type ROCm_Host, using CPU instead
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:6490:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:6516:>>> wall_ms=204.48 tps=2503.86 n_eval=1 n_reused=1
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:6519:>>> GPipe enabled: n_stages=3
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:6520:llama_model_loader: loaded meta data with 48 key-value pairs and 753 tensors from /mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf (version GGUF V3 (latest))
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:6530:llama_model_loader: - kv   8:                       general.license.link str              = https://huggingface.co/Qwen/Qwen3.6-3...
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:7479:done_getting_tensors: tensor 'token_embd.weight' (q6_K) (and 0 others) cannot be used with preferred buffer type ROCm_Host, using CPU instead
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:7595:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:7621:>>> wall_ms=204.39 tps=2505.07 n_eval=1 n_reused=1
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:7623:>>> GPipe enabled: n_stages=3
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:7624:llama_model_loader: loaded meta data with 48 key-value pairs and 753 tensors from /mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf (version GGUF V3 (latest))
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:7634:llama_model_loader: - kv   8:                       general.license.link str              = https://huggingface.co/Qwen/Qwen3.6-3...
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:8583:done_getting_tensors: tensor 'token_embd.weight' (q6_K) (and 0 others) cannot be used with preferred buffer type ROCm_Host, using CPU instead
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:8699:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:8725:>>> wall_ms=205.38 tps=2492.98 n_eval=1 n_reused=1
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:8727:>>> GPipe enabled: n_stages=3
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:8728:llama_model_loader: loaded meta data with 48 key-value pairs and 753 tensors from /mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf (version GGUF V3 (latest))
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:8738:llama_model_loader: - kv   8:                       general.license.link str              = https://huggingface.co/Qwen/Qwen3.6-3...
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:9687:done_getting_tensors: tensor 'token_embd.weight' (q6_K) (and 0 others) cannot be used with preferred buffer type ROCm_Host, using CPU instead
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:9803:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:9829:>>> wall_ms=204.50 tps=2503.62 n_eval=1 n_reused=1
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:9831:>>> GPipe enabled: n_stages=3
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:9832:llama_model_loader: loaded meta data with 48 key-value pairs and 753 tensors from /mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf (version GGUF V3 (latest))
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:9842:llama_model_loader: - kv   8:                       general.license.link str              = https://huggingface.co/Qwen/Qwen3.6-3...
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:10791:done_getting_tensors: tensor 'token_embd.weight' (q6_K) (and 0 others) cannot be used with preferred buffer type ROCm_Host, using CPU instead
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:10907:llama_context: GPipe enabled with n_stages=3 (n_backends=3)
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:10933:>>> wall_ms=205.13 tps=2495.99 n_eval=1 n_reused=1
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:10935:>>> GPipe enabled: n_stages=3
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:10936:llama_model_loader: loaded meta data with 48 key-value pairs and 753 tensors from /mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf (version GGUF V3 (latest))
+/tmp/d7-a2a-profiler-20260719162451/P1-d7-gpipe3-mtp2/stderr.log:10946:llama_model_loader: - kv   8:                       general.license.link str              = https://huggingface.co/Qwen/Qwen3.6-3...

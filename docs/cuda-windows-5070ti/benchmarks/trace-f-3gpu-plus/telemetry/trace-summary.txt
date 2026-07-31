@@ -1,0 +1,36 @@
+﻿=== trace summary ===
+dir=D:\projects\atomic-llama-cpp-5070ti\atomic-llama-cpp-turboquant\docs\cuda-windows-5070ti\benchmarks\trace-f-3gpu-plus\telemetry
+
+[rpc] events=5320
+  cmd0 count=16 total_ms=632.22 avg_us=39514
+  cmd1 count=4 total_ms=0.7 avg_us=174
+  cmd10 count=16 total_ms=15.91 avg_us=994
+  cmd11 count=16 total_ms=166.65 avg_us=10416
+  GRAPH_RECOMPUTE count=3712 total_ms=649.52 avg_us=175
+  cmd14 count=24 total_ms=5.14 avg_us=214
+  cmd15 count=4 total_ms=0.75 avg_us=187
+  cmd16 count=504 total_ms=10.72 avg_us=21
+  EVENT_RECORD count=260 total_ms=2599.23 avg_us=9997
+  cmd2 count=4 total_ms=0.62 avg_us=154
+  cmd3 count=16 total_ms=44.48 avg_us=2780
+  SET_TENSOR_HASH count=24 total_ms=7.64 avg_us=318
+  COPY_TENSOR count=144 total_ms=43100.58 avg_us=299310
+  GRAPH_COMPUTE count=576 total_ms=295.29 avg_us=513
+  blocking_events=2530 blocking_ms=31143.76
+  drain_flush_ms=2599.23
+
+[sched] events=2080
+  split_total_count=520
+  split_total_ms_sum=3703.78 avg_us=7123
+    backend3 splits=130 ms=10.02
+    backend0 splits=130 ms=25.15
+    backend1 splits=130 ms=1302.25
+    backend2 splits=130 ms=2366.36
+  input_wait_copy_ms=2794.19
+  graph_compute_async_ms=893.97
+  event_record_ms=0.85
+  assembly_overlap_count=289 pairs=101400 overlap_pct=0.3
+    copy0 splits=132
+    copy1 splits=132
+    copy2 splits=128
+    copy3 splits=128

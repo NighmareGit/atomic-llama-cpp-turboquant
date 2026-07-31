@@ -1,0 +1,20 @@
+0.01.424.740 I device_info:
+0.01.517.000 I   - RPC0    : 127.0.0.1:50051 (7841 MiB, 7687 MiB free)
+0.01.520.867 I   - RPC1    : 192.168.8.176:50051 (15849 MiB, 15677 MiB free)
+0.01.604.974 I llama_prepare_model_devices: using device RPC0 (127.0.0.1:50051) (unknown id) - 7687 MiB free
+0.01.608.936 I llama_prepare_model_devices: using device RPC1 (192.168.8.176:50051) (unknown id) - 15677 MiB free
+0.01.769.600 I load_tensors: loading model tensors, this can take a while... (mmap = true, direct_io = false)
+0.01.772.145 D load_tensors: layer   0 assigned to device RPC0, is_swa = 0
+0.01.772.146 D load_tensors: layer   1 assigned to device RPC0, is_swa = 0
+0.01.772.146 D load_tensors: layer   2 assigned to device RPC0, is_swa = 0
+0.01.772.146 D load_tensors: layer   3 assigned to device RPC0, is_swa = 0
+0.01.772.146 D load_tensors: layer   4 assigned to device RPC1, is_swa = 0
+0.01.772.146 D load_tensors: layer   5 assigned to device RPC1, is_swa = 0
+0.01.772.147 D load_tensors: layer   6 assigned to device RPC1, is_swa = 0
+0.01.772.147 D load_tensors: layer   7 assigned to device RPC1, is_swa = 0
+0.01.772.147 D load_tensors: layer   8 assigned to device RPC1, is_swa = 0
+0.01.772.147 D load_tensors: layer   9 assigned to device RPC1, is_swa = 0
+0.01.772.147 D load_tensors: layer  10 assigned to device RPC1, is_swa = 0
+0.01.772.147 D load_tensors: layer  11 assigned to device ROCm0, is_swa = 0
+0.01.772.148 D load_tensors: layer  12 assigned to device ROCm0, is_swa = 0
+0.01.772.148 D load_tensors: layer  13 assigned to device ROCm0, is_swa = 0

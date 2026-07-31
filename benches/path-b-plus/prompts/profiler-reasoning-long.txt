@@ -1,0 +1,31 @@
+You are a senior systems engineer profiling a distributed LLM inference cluster.
+
+The cluster runs Path B+ pipeline parallelism across four GPUs:
+- romulus 7900 XTX (ROCm client and orchestrator)
+- remus NVIDIA 5060 Ti (CUDA RPC worker)
+- romulus 3060 Ti (CUDA RPC worker via docker on 127.0.0.1:50051)
+- Windows 5070 Ti (CUDA RPC worker on 192.168.8.21:50053)
+
+Tensor split is 36,24,24,16. The model is Qwen3.6-35B MoE with IQ/APEX quantization.
+KV cache uses q8_0. GGML_PIPELINE_PLUS=1 enables cross-token assembly overlap.
+
+Analyze the following scenario in depth:
+
+A user submits a long coding task requiring multi-step reasoning, tool use planning,
+and a detailed final answer. The prompt includes repository context, build logs,
+scheduler traces, RPC latency histograms, and GPU telemetry CSV samples.
+
+Questions to answer thoroughly (use structured sections and concrete numbers where possible):
+
+1. Where is the pipeline stall-bound vs compute-bound during decode?
+2. Which backend is the straggler and why (network, copy, graph submit, or kernel)?
+3. What is the assembly overlap percentage and does it meet the B+6 gate (5% target)?
+4. How much blocking RPC time accrues per generated token?
+5. What changes would improve overlap without breaking Config G stability?
+6. Propose a minimal experiment matrix (2-4 runs) to validate any hypothesis.
+7. Write a concise executive summary for maintainers (max 8 bullets).
+8. Include risks if we increase -n or batch prefill on the romulus client.
+9. Compare expected behavior vs a Windows-as-client mistake topology.
+10. End with a short checklist for the next on-call engineer bringing the cluster up.
+
+Be exhaustive. Prefer technical precision over brevity. Use markdown headings.

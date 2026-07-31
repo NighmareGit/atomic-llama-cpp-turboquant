@@ -1,0 +1,1 @@
+timestamp_utc,power_w,util_gpu_pct,util_mem_pct,sm_clock_mhz,mem_clock_mhz,mem_used_mib,mem_total_mib,pcie_rx_mbs,pcie_tx_mbs

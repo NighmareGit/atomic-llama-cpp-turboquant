@@ -1,0 +1,224 @@
+=== trace-g-3gpu-d9-q4 ===
+variant=pathb proto=Path B (v4.2.2 workspace) rpc_mode=multi endpoint=192.168.8.22:50051,127.0.0.1:50051 trace=1
+telemetry=/home/hunter/projects/path-d-gpipeline-assembly-line/rpc-patch/patch/bench-results/rpc-server-bench/trace-g-3gpu-d9-q4/telemetry
+model=/mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf ctx=4096 ctk=q4_0 ctv=q4_0 ngl=99 ts=38,32,30 ncmoe=none np=1 no_warmup=1 load_timeout=600s
+server_extra=--no-warmup -np 1 --reasoning off --fit off
+prompts_file=/home/hunter/projects/path-d-gpipeline-assembly-line/rpc-patch/patch/bench-results/rpc-server-bench/complex-prompts.json verbose_lv=default extract_vram=0
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  421G  273G  61% /
+2026-07-13T03:19:52Z
+using remote/multi RPC at 192.168.8.22:50051,127.0.0.1:50051 (no local bench-rpc)
+Connection to 192.168.8.22 50051 port [tcp/*] succeeded!
+RPC reachable: 192.168.8.22:50051
+Connection to 127.0.0.1 50051 port [tcp/*] succeeded!
+RPC reachable: 127.0.0.1:50051
+starting llama-server (native ROCm HIP device 0)...
+native llama-server pid=666151 log=/home/hunter/projects/path-d-gpipeline-assembly-line/rpc-patch/patch/bench-results/rpc-server-bench/trace-g-3gpu-d9-q4-server.log
+polling server health (max 600s)...
+server ready at 25s (model loaded)
+benchmark 1 runs...
+run=1 prompt=complex-reasoning-1 P=165.2 G=61.1 preview="plain\n\n\n\n\n\n\n_th\n textHereHereHereHere\n\n/plain\n is is is is is\n\n\n a the not not the\nHereHere \n the a not is'sHere is is\n here\n text Here is is"
+run=2 prompt=complex-reasoning-2 P=489.6 G=68.9 preview=' object\n\n\n\n\n\n\n here\n hereTheHereHereHere is is is is is is Here is the a a a is is is is here comprehensive comprehensive a a here here a is a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a'
+run=3 prompt=complex-reasoning-3 P=259.3 G=68.0 preview=" the\n\n\n\n\n\n prompt following user following</think>TheHere</think> is description. the\n\n\n\n\n\n\n\n user user the user###**###Here's the request request is is is is: for:. in: a a"
+run=4 prompt=complex-reasoning-4 P=251.8 G=72.1 preview=' and\n\n\n\n\n the the the and</think>**Here</think> and and\n and\n\n\n\n\n\n\n\n ** and and and#########\n\n and\n\n and the###**\n\n###  following the the ** **  ** the the following theComparisonComparisonComparisonC'
+--- artifact capture (pass_final) @ 2026-07-13T03:20:33Z ---
+=== 2026-07-13T03:20:33Z reason=pass_final ===
+[docker ps -a]
+pathb-rpc-romulus   Up 2 minutes   nvidia/cuda:12.8.0-devel-ubuntu22.04
+=== 2026-07-13T03:20:33Z reason=pass_final ===
+[romulus-rocm]
+
+
+============================ ROCm System Management Interface ============================
+================================== Memory Usage (Bytes) ==================================
+GPU[0]		: VRAM Total Memory (B): 25753026560
+GPU[0]		: VRAM Total Used Memory (B): 8990244864
+==========================================================================================
+================================== End of ROCm SMI Log ===================================
+[romulus-nvidia]
+Mon Jul 13 05:20:33 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.71.05              Driver Version: 595.71.05      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3060 Ti     Off |   00000000:0A:00.0 Off |                  N/A |
+| 55%   53C    P2             60W /  220W |    6621MiB /   8192MiB |     27%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            6618      G   /usr/lib/xorg/Xorg                        4MiB |
+|    0   N/A  N/A            6930    C+G   ...c/gnome-remote-desktop-daemon        134MiB |
+|    0   N/A  N/A          661541      C   /app/rpc-server                        6450MiB |
++-----------------------------------------------------------------------------------------+
+[remus-nvidia]
+remus nvidia-smi failed
+--- rpc-local (tail) ---
+no local rpc container (pathb-rpc or bench-rpc)
+--- rpc-remus (tail) ---
+endpoint=192.168.8.22:50051,127.0.0.1:50051 mode=multi
+--- logs-since ---
+--- server log tail (infer) ---
+0.32.195.639 I srv        update:    - prompt 0x617175b7f9e0:     454 tokens, checkpoints:  1,   128.129 MiB
+0.32.195.640 I srv        update:    - prompt 0x61717511aeb0:     123 tokens, checkpoints:  1,   126.305 MiB
+0.32.195.641 I srv  get_availabl: prompt cache update took 158.72 ms
+0.32.195.721 I slot launch_slot_: id  0 | task 358 | processing task, is_child = 0
+0.32.195.730 I slot update_slots: id  0 | task 358 | Checking checkpoint with [73, 73] against 3...
+0.32.195.730 W slot update_slots: id  0 | task 358 | forcing full prompt re-processing due to lack of cache data (likely due to SWA or hybrid/recurrent memory, see https://github.com/ggml-org/llama.cpp/pull/13194#issuecomment-2868343055)
+0.32.195.732 W slot update_slots: id  0 | task 358 | erased invalidated context checkpoint (pos_min = 73, pos_max = 73, n_tokens = 74, n_swa = 0, pos_next = 0, size = 62.813 MiB)
+0.32.439.529 I slot create_check: id  0 | task 358 | created context checkpoint 1 of 32 (pos_min = 67, pos_max = 67, n_tokens = 68, size = 62.813 MiB)
+0.33.854.804 I slot print_timing: id  0 | task 358 | n_decoded =    100, tg =  72.82 t/s
+0.36.032.249 I slot print_timing: id  0 | task 358 | prompt eval time =     285.91 ms /    72 tokens (    3.97 ms per token,   251.83 tokens per second)
+0.36.032.251 I slot print_timing: id  0 | task 358 |        eval time =    3550.60 ms /   256 tokens (   13.87 ms per token,    72.10 tokens per second)
+0.36.032.251 I slot print_timing: id  0 | task 358 |       total time =    3836.52 ms /   328 tokens
+0.36.032.252 I slot print_timing: id  0 | task 358 |    graphs reused =        598
+0.36.032.263 I slot      release: id  0 | task 358 | stop processing: n_tokens = 327, truncated = 0
+0.36.032.268 I srv  update_slots: all slots are idle
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  421G  273G  61% /
+parsing trace telemetry...
+=== trace summary ===
+dir=/home/hunter/projects/path-d-gpipeline-assembly-line/rpc-patch/patch/bench-results/rpc-server-bench/trace-g-3gpu-d9-q4/telemetry
+
+[rpc] events=13466
+  ALLOC_BUFFER count=16 total_ms=7.33 avg_us=458.0
+  GET_ALIGNMENT count=4 total_ms=0.64 avg_us=159.0
+  GRAPH_COMPUTE count=90 total_ms=1057.57 avg_us=11751.0
+  GET_DEVICE_MEMORY count=16 total_ms=25.99 avg_us=1625.0
+  GET_ALLOC_SIZE count=168 total_ms=21.69 avg_us=129.0
+  HELLO count=12 total_ms=0.0 avg_us=0.0
+  DEVICE_COUNT count=8 total_ms=15.12 avg_us=1890.0
+  GRAPH_RECOMPUTE count=2392 total_ms=5175.97 avg_us=2164.0
+  EVENT_RECORD count=3618 total_ms=5314.87 avg_us=1469.0
+  GET_MAX_SIZE count=4 total_ms=1.03 avg_us=258.0
+  BUFFER_GET_BASE count=16 total_ms=1.19 avg_us=74.0
+  BUFFER_CLEAR count=24 total_ms=3.68 avg_us=153.0
+  SET_TENSOR count=3678 total_ms=5.85 avg_us=2.0
+  SET_TENSOR_HASH count=240 total_ms=6677.41 avg_us=27823.0
+  GET_TENSOR count=3180 total_ms=1118.6 avg_us=352.0
+  blocking_events=4290 blocking_ms=13697.38
+  rpc_rtt_count=2451 rpc_rtt_ms=13523.87
+  rpc_rtt_hist=0ms:937 1ms:62 2ms:17 3ms:522 4ms:683 5ms:18 6ms:3 7ms:50 8ms:38 9ms:1 10ms:9 11ms:1
+  rpc_rtt_p50_ms=3.87 rpc_rtt_p95_ms=8.28 rpc_rtt_p99_ms=78.58
+  EVENT_RECORD count=3618 total_ms=5314.87
+  drain_flush_ms=173.5
+  hello endpoint=192.168.8.22:50051 minor=4 peer_copy=True
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=True
+  hello endpoint=192.168.8.22:50051 minor=4 peer_copy=True
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=True
+  hello endpoint=192.168.8.22:50051 minor=4 peer_copy=True
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=True
+  hello endpoint=192.168.8.22:50051 minor=4 peer_copy=True
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=True
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=True
+  hello endpoint=127.0.0.1:50051 minor=4 peer_copy=True
+  hello endpoint=192.168.8.22:50051 minor=4 peer_copy=True
+  hello endpoint=192.168.8.22:50051 minor=4 peer_copy=True
+  copy_issue_count=2452 defer_count=2452 peer_copy_count=0
+
+[sched] events=21208
+  split_total_count=2452
+  split_total_ms_sum=6858.67 avg_us=2797.0
+    backend3 splits=613 ms=11.54
+    backend0 splits=613 ms=3139.43
+    backend1 splits=613 ms=3131.17
+    backend2 splits=613 ms=576.54
+  input_wait_copy_ms=788.36
+  graph_compute_async_ms=5995.2
+  event_record_ms=14.15
+  sync_copy_fallback_ms=439.62
+    sync_copy_fallback backend1 count=613 ms=439.62
+  copy_async_ok_count=4904
+    copy_async_ok backend0 count=1839
+    copy_async_ok backend1 count=1226
+    copy_async_ok backend2 count=1839
+  assembly_overlap_count=1236 pairs=2254614 overlap_pct=0.1
+    copy0 splits=616
+    copy1 splits=612
+    copy2 splits=612
+    copy3 splits=612
+  per_split_rpc_rtt:
+    split=1 backend=0 rpc_rtt_count=875 rpc_rtt_ms=1307.87
+    split=3 backend=2 rpc_rtt_count=49 rpc_rtt_ms=127.81
+summary -> /home/hunter/projects/path-d-gpipeline-assembly-line/rpc-patch/patch/bench-results/rpc-server-bench/trace-g-3gpu-d9-q4/telemetry/trace-summary.txt
+extended -> /home/hunter/projects/path-d-gpipeline-assembly-line/rpc-patch/patch/bench-results/rpc-server-bench/trace-g-3gpu-d9-q4/telemetry/trace-parse-extended.json
+=== pathb hotpath summary ===
+dir=/home/hunter/projects/path-d-gpipeline-assembly-line/rpc-patch/patch/bench-results/rpc-server-bench/trace-g-3gpu-d9-q4/telemetry
+trace_summary=/home/hunter/projects/path-d-gpipeline-assembly-line/rpc-patch/patch/bench-results/rpc-server-bench/trace-g-3gpu-d9-q4/telemetry/trace-summary.txt
+gen_tokens_est=613
+trace_id_join_rate=1.0 (joins=21208 total_tid=21208; target >0.95)
+
+[sync-stall-waterfall] per-token critical path (serial splits)
+  sched split_total_ms_sum=6858.67 ms_per_token=11.19
+  |-- backend0 (CUDA0 local compute) total_ms=3139.43 splits=613 ms_per_token=5.12
+  |-- backend1 (RPC worker (e.g. :50051)) total_ms=3131.17 splits=613 ms_per_token=5.11
+  |-- backend2 (RPC worker / CPU tail (topology-dependent)) total_ms=576.54 splits=613 ms_per_token=0.94
+  |-- backend3 (CPU / host split) total_ms=11.54 splits=613 ms_per_token=0.02
+  |-- sched input_wait_copy=788.36 ms (1.29 ms/tok) -> sched event_wait + tensor_copy
+      ref=ggml/src/ggml-backend.cpp:1562-1590 (RPC-WAIT-MAP: split loop input drain)
+  |-- sched sync_copy_fallback=439.62 ms (0.72 ms/tok) -> B+13 local synchronize + tensor_copy (async copy failed)
+      ref=ggml/src/ggml-backend.cpp:1865-1884 (C-full: measured sync fallback)
+  |-- sched graph_compute_async=5995.2 ms (9.78 ms/tok) -> GRAPH_RECOMPUTE / local graph_compute_async
+      ref=ggml/src/ggml-rpc/ggml-rpc.cpp:944-979 (RPC-WAIT-MAP: RPC graph stage)
+  |-- sched event_record=14.15 ms (0.02 ms/tok) -> EVENT_RECORD deferred recv on drain
+      ref=ggml/src/ggml-rpc/ggml-rpc.cpp:304-336 (RPC-WAIT-MAP: drain_pending_event_response)
+  |-- sched copy_async_ok_count=4904 (C-full async copy markers)
+
+[rpc-wait-map] trace buckets -> static wait sites
+  blocking_events total_ms=13697.38 -> blocking RPC RTT budget
+    ggml/src/ggml-rpc/ggml-rpc.cpp:457-475 | RPC-WAIT-MAP: send_recv path
+  SET_TENSOR_HASH total_ms=6677.41 -> cross-endpoint weight relay (hash path)
+    ggml/src/ggml-rpc/ggml-rpc.cpp:832+ | RPC-WAIT-MAP: COPY fallback GET+SET
+  graph_compute_async total_ms=5995.2 -> GRAPH_RECOMPUTE / local graph_compute_async
+    ggml/src/ggml-rpc/ggml-rpc.cpp:944-979 | RPC-WAIT-MAP: RPC graph stage
+  EVENT_RECORD total_ms=5314.87 -> client EVENT_RECORD + drain
+    ggml/src/ggml-rpc/ggml-rpc.cpp:1990+ | RPC-WAIT-MAP: EVENT ack RTT
+  GRAPH_RECOMPUTE total_ms=5175.97 -> per-RPC split graph recompute
+    ggml/src/ggml-rpc/ggml-rpc.cpp:1662 | RPC-WAIT-MAP: server graph_compute serial
+  input_wait_copy total_ms=788.36 -> sched event_wait + tensor_copy
+    ggml/src/ggml-backend.cpp:1562-1590 | RPC-WAIT-MAP: split loop input drain
+  sync_copy_fallback total_ms=439.62 -> B+13 local synchronize + tensor_copy (async copy failed)
+    ggml/src/ggml-backend.cpp:1865-1884 | C-full: measured sync fallback
+  drain_flush total_ms=173.5 -> send_rpc_cmd drain preamble
+    ggml/src/ggml-rpc/ggml-rpc.cpp:413-461 | RPC-WAIT-MAP: flush before blocking cmd
+  event_record total_ms=14.15 -> EVENT_RECORD deferred recv on drain
+    ggml/src/ggml-rpc/ggml-rpc.cpp:304-336 | RPC-WAIT-MAP: drain_pending_event_response
+  doc=docs/cuda-windows-5070ti/RPC-WAIT-MAP.md
+
+[assembly-line] token-pipeline overlap (S5 metric)
+  assembly_overlap_count=1236 pairs=2254614 overlap_pct=0.1
+  design_target_pct=5.0 (Tier 2 aspirational; B+1 pass criterion >0%)
+  gap_pct=4.9 status=PASS (B+1 S5: count>0)
+  copy_rotation: copy0=616 copy1=612 copy2=612 copy3=612
+  copy_rotation_status=OK
+  note=splits within one token remain serial; overlap is cross-token pipeline
+
+[set_tensor_hash] cross-RPC weight relay bucket
+  count=240 total_ms=6677.41 avg_us=27823.0
+  severity=HIGH (dominant RPC stall class on CUDA<->RPC topologies)
+
+[c-full-b13] sync fallback vs async copy (requires C-full build)
+  sync_copy_fallback_ms=439.62 copy_async_ok_count=4904
+  sync_fallback_pct_of_input_wait=55.8
+  verdict=SYNC_COPY_FALLBACK_MEASURED (B+13 fix target)
+
+[top-blockers] ranked RPC/sched wall-time (load+gen window)
+  1. rpc blocking_events total_ms=13697.38
+  2. rpc SET_TENSOR_HASH total_ms=6677.41
+  3. sched graph_compute_async total_ms=5995.2
+  4. rpc EVENT_RECORD total_ms=5314.87
+  5. rpc GRAPH_RECOMPUTE total_ms=5175.97
+  6. rpc GET_TENSOR total_ms=1118.6
+  7. rpc GRAPH_COMPUTE total_ms=1057.57
+  8. sched input_wait_copy total_ms=788.36
+
+see also: rpc-patch/docs/pathb-sync-site-audit.md
+RESULT=PASS
+results in /home/hunter/projects/path-d-gpipeline-assembly-line/rpc-patch/patch/bench-results/rpc-server-bench/trace-g-3gpu-d9-q4.result

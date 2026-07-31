@@ -1,0 +1,16 @@
+=== 9b-q4km-a1 ===
+variant=a1 proto=A1 (v4.1.0 image)
+model=/mnt/models/Qwen3.5-9B-MTP-Q4_K_M.gguf ctx=8192 ctk=q8_0 ctv=turbo3 ngl=99 ts=1,1 load_timeout=180s
+2026-06-25T11:19:18Z
+starting rpc-server (CUDA device 0)...
+cac23b138a81d4136eae5dff7497b78b68043709188b2180f77033bfc25ecf17
+starting llama-server (ROCm HIP device 0)...
+9bc5d3a5a6a9ce09d77d11637dbd3f65ed952e01cd8efc0bf5e33ce7482e5221
+polling server health (max 180s)...
+server ready at 16s
+benchmark 3 runs...
+run=1 P=92.2 G=54.6 preview=''
+run=2 P=448.5 G=54.3 preview=''
+run=3 P=452.5 G=54.2 preview=''
+RESULT=PASS
+results in /tmp/rpc-server-bench/9b-q4km-a1.result

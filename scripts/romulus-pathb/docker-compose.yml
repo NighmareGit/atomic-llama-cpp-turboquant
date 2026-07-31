@@ -1,0 +1,38 @@
+# Romulus Path-B+ local RPC worker (RTX 3060 Ti, :50051).
+# Pair with native ROCm llama-server on the 7900 XTX (scripts/b6-gate-romulus-local-mtp-up.sh).
+#
+# usage (on romulus):
+#   docker compose -f scripts/romulus-pathb/docker-compose.yml up -d
+#   docker compose -f scripts/romulus-pathb/docker-compose.yml logs -f
+
+services:
+  pathb-rpc-romulus:
+    container_name: pathb-rpc-romulus
+    image: atomic-llama-romulus-pathb-rpc:latest
+    network_mode: host
+    ipc: host
+    restart: unless-stopped
+    gpus:
+      - driver: nvidia
+        count: 1
+        capabilities: [gpu]
+    volumes:
+      - /tmp/rpc-telemetry:/tmp/rpc-telemetry
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${CUDA_DEVICE:-0}
+      - CUDA_VISIBLE_DEVICES=${CUDA_DEVICE:-0}
+      - GGML_CUDA_DISABLE_GRAPHS=${GGML_CUDA_DISABLE_GRAPHS:-}
+      - GGML_RPC_DEBUG=${GGML_RPC_DEBUG:-}
+      - GGML_PIPELINE_PLUS=${GGML_PIPELINE_PLUS:-1}
+      - GGML_PIPELINE_MULTI_BACKEND_SEQ=${GGML_PIPELINE_MULTI_BACKEND_SEQ:-1}
+      - GGML_PIPELINE_SCHED_LEGACY=${GGML_PIPELINE_SCHED_LEGACY:-}
+      - GGML_PIPELINE_P0_FULL_SYNC=${GGML_PIPELINE_P0_FULL_SYNC:-}
+      - GGML_RPC_SERVER_TELEMETRY=1
+      - GGML_RPC_SERVER_TELEMETRY_FILE=/tmp/rpc-telemetry/telemetry/server-telemetry.jsonl
+    command: ["-H", "0.0.0.0", "-p", "${RPC_PORT:-50051}", "-d", "CUDA0"]
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/${RPC_PORT:-50051}' || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s

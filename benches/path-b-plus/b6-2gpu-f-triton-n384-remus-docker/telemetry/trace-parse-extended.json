@@ -1,0 +1,17 @@
+{
+  "dir": "/home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-n384-remus-docker/telemetry",
+  "rpc_events": 2154,
+  "sched_events": 4620,
+  "rpc_rtt": {
+    "count": 497,
+    "total_ms": 354.74
+  },
+  "input_wait_copy": 2838.95,
+  "graph_compute_async": 390.68,
+  "event_record": 4.25,
+  "assembly_overlap": {
+    "count": 877,
+    "pairs": 444675,
+    "overlap_pct": 0.2
+  }
+}

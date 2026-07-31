@@ -1,0 +1,17 @@
+=== 35b-a3b-a1a2-ts1090 ===
+variant=a1a2 proto=A1+A2 (v4.1.0 image)
+model=/mnt/models/Qwen3.5-35B-A3B.i1-Q4_K_M.gguf ctx=4096 ctk=q4_0 ctv=q4_0 ngl=99 ts=10,90 ncmoe=8 np=1 no_warmup=1 load_timeout=600s
+server_extra=--no-warmup -np 1 --n-cpu-moe 8
+2026-06-25T12:50:42Z
+starting rpc-server (CUDA device 0)...
+3a31d2b6ea1b8ba8256bf73d49d3af511e715af9ec1520dd56b23bf4a6add7ca
+starting llama-server (ROCm HIP device 0)...
+d65fe741163e1212ba85c8ff47d090c6291a9dcf325fcbcf08d87625d49375d0
+polling server health (max 600s)...
+server ready at 10s
+benchmark 3 runs...
+run=1 P=47.2 G=58.0 preview=''
+run=2 P=213.9 G=58.2 preview=''
+run=3 P=222.6 G=58.0 preview=''
+RESULT=PASS
+results in /tmp/rpc-server-bench/35b-a3b-a1a2-ts1090.result

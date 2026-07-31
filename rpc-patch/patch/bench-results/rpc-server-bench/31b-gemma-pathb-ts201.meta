@@ -1,0 +1,32 @@
+=== 31b-gemma-pathb-ts201 ===
+variant=pathb proto=Path B (v4.2.2 workspace)
+model=/mnt/models/gemma-4-31B-it-Q4_K_M.gguf ctx=4096 ctk=q4_0 ctv=q4_0 ngl=25 ts=20,1 load_timeout=600s
+2026-06-25T11:22:48Z
+starting rpc-server (CUDA device 0)...
+b638fd82cce89efec0ffcb765ea5d8ab1d3aff68f1e316169543daa1b0e56286
+starting llama-server (ROCm HIP device 0)...
+a82a82fc841df1e04e2ef94e93ac9a559b711e3ccc6a4ff8a0ba323036d1347d
+polling server health (max 600s)...
+ERROR: llama-server container exited during load
+0.01.352.194 I log_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.01.352.197 I device_info:
+0.01.352.221 I   - ROCm0   : Radeon RX 7900 XTX (24560 MiB, 24524 MiB free)
+0.01.352.231 I   - CPU     : Intel(R) Core(TM) i7-14700K (80253 MiB, 80253 MiB free)
+0.01.434.517 I   - RPC0    : 127.0.0.1:50051 (7841 MiB, 7687 MiB free)
+0.01.434.611 I system_info: n_threads = 8 (n_threads_batch = 8) / 28 | ROCm : NO_VMM = 1 | PEER_MAX_BATCH_SIZE = 128 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 | 
+0.01.434.615 I srv  llama_server: n_parallel is set to auto, using n_parallel = 4 and kv_unified = true
+0.01.434.677 I srv          init: using 27 threads for HTTP server
+0.01.434.842 I srv         start: binding port with default address family
+0.01.435.971 I srv  llama_server: loading model
+0.01.435.979 I srv    load_model: loading model '/mnt/models/gemma-4-31B-it-Q4_K_M.gguf'
+0.01.435.993 I common_init_result: fitting params to device memory ...
+0.01.435.993 I common_init_result: (for bugs during this step try to reproduce them with -fit off, or provide --verbose logs if the bug only occurs with -fit on)
+0.02.034.720 W common_fit_params: failed to fit params to free device memory: n_gpu_layers already set by user to 25, abort
+0.02.332.841 W load: control-looking token:    212 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+0.02.333.181 W load: control-looking token:     50 '<|tool_response>' was not control-type; this is probably a bug in the model. its type will be overridden
+0.02.337.928 W load: control-looking token:      1 '<eos>' was not control-type; this is probably a bug in the model. its type will be overridden
+0.02.352.276 W load: special_eog_ids contains '<|tool_response>', removing '</s>' token from EOG list
+0.15.748.588 W llama_context: n_ctx_seq (4096) < n_ctx_train (262144) -- the full capacity of the model will not be utilized
+0.15.896.102 I common_init_from_params: warming up the model with an empty run - please wait ... (--no-warmup to disable)
+0.16.439.043 I srv    load_model: initializing slots, n_slots = 4
+cmd_child_to_router:error:/app/a2/ggml/src/ggml-rpc/ggml-rpc.cpp:677: Remote RPC server crashed or returned malformed response

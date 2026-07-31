@@ -1,0 +1,16 @@
+=== 27b-ts1585-ctx8k-a1 ===
+variant=a1 proto=A1 (v4.1.0 image)
+model=/mnt/models/Qwen3.5-27B-Q5_K_M.gguf ctx=8192 ctk=q8_0 ctv=turbo3 ngl=99 ts=15,85 load_timeout=600s
+2026-06-25T12:30:48Z
+starting rpc-server (CUDA device 0)...
+6e8843b6a450d3463e948c72f65366468a86c40fc57c79b2c57672efbd40677d
+starting llama-server (ROCm HIP device 0)...
+b9eda1cd325be73dde99345408b22d42d52ec5dc50f20120c171017ec35047c1
+polling server health (max 600s)...
+server ready at 20s
+benchmark 3 runs...
+run=1 P=42.1 G=26.3 preview=''
+run=2 P=159.4 G=26.3 preview=''
+run=3 P=160.2 G=26.2 preview=''
+RESULT=PASS
+results in /tmp/rpc-server-bench/27b-ts1585-ctx8k-a1.result

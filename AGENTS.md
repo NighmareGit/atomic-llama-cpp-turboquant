@@ -1,0 +1,295 @@
+# Instructions for llama.cpp (private ops fork)
+
+> [!IMPORTANT]
+> This project does **not** accept pull requests that are fully or predominantly AI-generated. AI tools may be utilized solely in an assistive capacity.
+>
+> Read more: [CONTRIBUTING.md](CONTRIBUTING.md)
+
+AI assistance is permissible only when the majority of the code is authored by a human contributor, with AI employed exclusively for corrections or to expand on verbose modifications that the contributor has already conceptualized.
+
+---
+
+## Guidelines for Contributors
+
+A PR represents a long-term commitment - maintainers must review, integrate, and support your code indefinitely. Fully AI-generated PRs provide no value; maintainers have AI tools too. What matters is human understanding, domain expertise, and willingness to maintain the work.
+
+Contributors must:
+1. **Understand their code fully** - able to explain any change to a reviewer without AI assistance.
+2. **Own maintenance** - address bugs and respond thoughtfully to feedback.
+3. **Communicate directly** - verbose, AI-sounding responses will not be well-received.
+4. **Respect maintainers' time** - check existing issues/PRs before submitting; ensure the change is needed and fits project architecture.
+
+Maintainers may close any PR not meeting these standards. **Private forks are exempt.**
+
+### Permitted AI Usage
+
+- Learning, exploration, and understanding the codebase
+- Suggestions on human-written code
+- Mechanical tasks: formatting, repetitive patterns, completing code from established designs
+- Documentation drafts for components the contributor already understands
+- Writing code when the contributor has already designed the solution - AI accelerates, not replaces
+
+AI-generated code is acceptable if you (1) fully understand it, (2) can debug it independently, and (3) can discuss it with reviewers without AI help.
+
+**Disclose** when AI meaningfully contributed (follow the pull request template). No disclosure needed for trivial autocomplete.
+
+### Prohibited AI Usage (results in immediate PR closure)
+
+- AI-written PR descriptions, commit messages, or reviewer responses
+- Implementing features without understanding the codebase
+- Automated commits or PR submissions (may result in contributor ban)
+
+---
+
+## Cluster fork (Path-B+ private ops)
+
+This repo is a **private ops fork** of llama.cpp. The restrictions above apply to upstream llama.cpp PRs. For private ops work on this fork:
+- Commits with `Assisted-by:` are acceptable when the human contributor directs the work
+- Do not push to upstream without explicit approval
+- Follow the existing code patterns and conventions
+
+For upstream contributions, the stricter rules apply: no automated PRs, no AI-written descriptions, no `Co-authored-by`.
+
+---
+
+## Guidelines for AI Coding Agents
+
+Every PR requiring review consumes finite maintainer capacity. Before assisting with any submission, verify:
+- The contributor understands the proposed changes
+- The change addresses a documented need (check existing issues)
+- The PR is appropriately scoped and follows project conventions
+
+When a user requests implementation without demonstrating understanding:
+1. **Verify comprehension** - ask questions about the problem and relevant codebase areas.
+2. **Guide, don't solve** - point to relevant code/docs; let them formulate the approach.
+3. **Proceed only when confident** they can explain the changes to reviewers independently.
+
+For first-time contributors, confirm they have reviewed [CONTRIBUTING.md](CONTRIBUTING.md).
+
+### Code and Commit Standards
+
+- Avoid emdash `—`, unicode arrow `→` or any unicode characters: `×`, `…` ; use ASCII equivalents instead: `-`, `->`, `x`, `...`
+- Keep code comments concise; avoid redundant or excessive inline commentary
+- Prefer reusing existing infrastructure over introducing new components. Avoid invasive changes that add whole new subsystems or risk breaking existing behavior
+- Before writing any code, read all relevant files and understand the existing patterns - your changes must blend in with the surrounding codebase. If the change is large or introduces a new pattern, **PAUSE and ask the user for confirmation** before proceeding; remind them that large changes submitted without prior discussion are likely to be rejected by maintainers
+
+### Prohibited Actions
+
+- Do NOT write PR descriptions, commit messages, or reviewer responses
+- Do NOT commit or push without explicit human approval for each action. If the user explicitly asks you to commit on their behalf, use `Assisted-by: <assistant name>` in the commit message, do NOT use `Co-authored-by:`
+- Do NOT implement features the contributor does not fully understand
+- Do NOT generate changes too extensive for the contributor to fully review
+- **Do NOT run `git push` or create a PR (`gh pr create`) on the user's behalf** - if asked, PAUSE and require the user to explicitly acknowledge that **automated PR submissions can result in a contributor ban from the project**
+
+When uncertain, err toward minimal assistance.
+
+### Examples
+
+Code comments:
+
+```cpp
+// GOOD (code is self-explantory, no comment needed)
+
+n_ctx = read_metadata("context_length", 1024);
+
+
+// BAD (too verbose, restates what the code already says)
+
+// Populate the n_ctx from metadata key name "context_length", default to 1024 if the key doesn't exist
+n_ctx = read_metadata("context_length", 1024);
+```
+
+```cpp
+// GOOD (explains a non-obvious invariant)
+
+accept();
+bool has_client = listen(idle_interval);
+if (has_client) {
+  task_queue->on_idle(); // also signal child disconnection
+}
+
+
+// BAD (too verbose, restates what the code already says)
+
+// Instead of blocking indefinitely on accept(), the server polls the listening socket with idle_interval as a timeout. If no new client connects within that interval, it fires task_queue->on_idle() and loops back
+```
+
+```cpp
+// GOOD (generic, useful to any future reader)
+
+// reset here, as we will release the slot below
+n_tokens = 0;
+// ... (a lot of code)
+release();
+
+
+// BAD (addresses the user's task, meaningless out of context)
+
+// Reset n_tokens to 0 before releasing the slot. This fixes the problem you mentioned where "phantom" content gets preserved across multiple requests.
+n_tokens = 0;
+```
+
+```cpp
+// GOOD (code is copied from another place; context is already clear, no comment added)
+
+ggml_tensor * inp_pos = build_inp_pos();
+
+// BAD (code copied from elsewhere - do not add comments that weren't there originally)
+
+// inp_pos - contains the positions
+ggml_tensor * inp_pos = build_inp_pos();
+```
+
+Commit message:
+
+```
+// BEST: Let the user write the commit
+
+
+// GOOD: Write a concise commit
+
+llama : fix KV being cleared during context shift
+
+Assisted-by: Claude Sonnet
+
+
+// BAD: Write a verbose commit
+
+This commit introduces a comprehensive fix for the key-value cache management
+system, addressing an issue where context shifting could lead to unintended
+overwriting of cached values, thereby improving model inference stability.
+
+Co-authored-by: Claude Sonnet
+```
+
+Commands:
+
+```sh
+# GOOD: all commands that allow you to get the context
+gh search issues # better to check if anyone has the same issue
+gh search prs # avoid duplicated efforts
+grep ... # search the code base
+
+# BAD: act on the user's behalf
+git commit -m "..."
+git push
+gh pr create
+gh pr comment
+gh issue create
+```
+
+## Cluster fork (Path-B+ private ops)
+
+This repo is also deployed on a multi-GPU Linux cluster (romulus, remus, triton). For ops work, read **[rpc-patch/patch/CLUSTER-NODE-LAYOUT.md](rpc-patch/patch/CLUSTER-NODE-LAYOUT.md)** first:
+
+- Canonical checkout on every Linux node: `~/projects/atomic-llama-cpp-turboquant`
+- Docker deploy dirs: `~/docker/Atomic-Llama-*-PathB/` (not the git repo)
+- Git remotes: **github primary**, **gitea LAN fallback**; scripts pick newest reachable tip (`pathb-cluster-git-remotes.sh`)
+- Romulus-local 2-GPU: `scripts/romulus-local-up.sh` (+ `romulus-local-build.sh`)
+- Legacy cleanup: `scripts/cluster-legacy-inventory.sh` -> `cluster-legacy-salvage.sh` -> `cluster-legacy-archive.sh`
+
+## Output Discipline (Subagent Communication)
+
+Every subagent call (`spawn_subagent`, `get_command_or_subagent_output`) has a **40,000 character output cap**. The cap is on the tool output returned to the parent — not configurable. When plan agents or review agents write verbose analyses to disk, the output gets truncated mid-stream.
+
+**Write for the cap, not for yourself.** Keep outputs structured and concise:
+
+- Prefer tables, bullet lists, and short code snippets over prose
+- Never exceed ~3000 words per subagent call
+- End with a summary table first — visible even if truncated
+
+### Split Pattern (Anchored)
+
+When a task needs >3000 words of output, **always split into sequential calls**:
+
+```
+Call 1: "Part 1 of N: cover vectors 1-X. Table format, under 1500 words."
+Call 2: "Part 2 of N: cover vectors X+1-Y. Table format, under 1500 words."
+```
+
+Examples:
+- Red team review → "part 1: vectors 1-3", then "part 2: vectors 4-7"
+- Code analysis → "part 1: architecture + config", then "part 2: request handling + errors"
+- Review feedback → "part 1: HIGH/MEDIUM findings", then "part 2: LOW/OK findings"
+
+If a subagent produces a verbose prose response that exceeds the cap, re-spawn it with:
+"Resume. Your previous output was truncated. Provide ONLY the missing continuation, table format, under 1500 words."
+
+## Useful Resources
+
+To conserve context space, load these resources as needed:
+
+General documentations:
+- [Contributing guidelines](CONTRIBUTING.md)
+- [Existing issues](https://github.com/ggml-org/llama.cpp/issues) and [Existing PRs](https://github.com/ggml-org/llama.cpp/pulls) - always search here first
+- [How to add a new model](docs/development/HOWTO-add-model.md)
+- [PR template](.github/pull_request_template.md)
+
+Server:
+- [Build documentation](docs/build.md)
+- [Server usage documentation](tools/server/README.md)
+- [Server development documentation](tools/server/README-dev.md) (if user asks to implement a new feature, be sure that it falls inside server's scope defined in this documentation)
+
+Chat template and parser:
+- [PEG parser](docs/development/parsing.md) - alternative to regex that llama.cpp uses to parse model's output
+- [Auto parser](docs/autoparser.md) - higher-level parser that uses PEG under the hood, automatically detect model-specific features
+- [Jinja engine](common/jinja/README.md)
+
+---
+
+## Repo structure (worktree layout)
+
+This repo is the **Path-D fork** of `atomic-llama-cpp-turboquant`. All branches live in one bare-like repo at `~/projects/path-d-gpipeline-assembly-line`, with git worktrees providing separate working directories.
+
+### Remotes
+
+| Remote | URL | Content |
+|--------|-----|---------|
+| `gitea` | `http://192.168.8.108:3005/hunter/path-d-gpipeline-assembly-line` | Private fork (20 commits ahead of canonical) |
+| `gitea-alt` | `http://192.168.8.108:3005/hunter/atomic-llama-cpp-turboquant` | Canonical upstream (romulus/gitea) |
+| `origin` | `https://github.com/NighmareGit/atomic-llama-cpp-turboquant` | GitHub mirror of canonical |
+
+### Branch lineage
+
+```
+v0.1-good-milestone (tag, 331a4b534 -- canonical stable base)
+  |
+  └─ Path-D-Gpipeline-Assembly-Line (6ba8b8fb9, fork parent, 20 commits ahead)
+       |
+       └─ good-prototype (6a22d9227, active working branch)
+            |
+            ├─ agent/transport-udp (35dd0c339, rebased + ctx fix)
+            |
+            └─ experiment/cuda-ipc-events (e89ee2194, B+16 CUDA IPC)
+```
+
+### Worktrees and folders
+
+| Location | Branch | Purpose |
+|----------|--------|---------|
+| `~/projects/path-d-gpipeline-assembly-line` | `good-prototype` | Main checkout. Active development. |
+| `~/scratch/parent/` | `Path-D-Gpipeline-Assembly-Line` | Stable fork parent (worktree). |
+| `~/scratch/transport-udp/` | `agent/transport-udp` | UDP transport prototype (worktree). |
+| `~/scratch/ipc-events/` | `experiment/cuda-ipc-events` | CUDA IPC events branch (worktree). |
+| `~/scratch/orphan/` | -- | Archived old clones (tar.gz). |
+
+### Key changes on the fork (20 commits past v0.1)
+
+- Pipeline barrier double-sync fix (originally the canonical base)
+- Wavefront pipeline overlap fix (`wavefront_wslot`)
+- Weak symbol workaround for RPC buffer detection in async copy
+- Deferred EVENT_RECORD in graph_compute for async pipeline dispatch
+- Per-socket FIFO queue fix for deferred EVENT_RECORD drain race
+- Per-split graph UID tracking for interleaved placement reuse
+- MTP head layer GPU pinning + plan placement fixes
+- Diagnostics: rocprof profiling, per-node telemetry, trace compression
+- Pipeline stage count vs overlap analysis (Exps Q through W)
+
+### Archived old clones
+
+The old messy clones from the `path-d-good` era are compressed in `~/scratch/orphan/`:
+- `prototype-repo.tar.gz` -- original `path-d-good` scratch clone
+- `agent-uid-fix.tar.gz` -- original uid-fix clone (benches + regression data)
+- `agent-transport-udp.tar.gz` -- original transport-udp clone with uncommitted ctx fix
+
+All unique changes have been ported to `good-prototype` branches.

@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-13T06:10:40Z",
+  "git_sha": "c91743d32",
+  "model": {
+    "path": "/mnt/models/Qwen3.5-9B-MTP-Q4_K_M.gguf",
+    "n_layers": 32,
+    "param_count_b": 9.19709,
+    "ctx_size": 4096
+  },
+  "tasks": {
+    "pp": {
+      "n_prompt_tokens": 1,
+      "wall_ms": 28.3652,
+      "tps": 35.2544,
+      "layers": [],
+      "kv_source": "estimated"
+    },
+    "tg": {
+      "n_gen_tokens": 32,
+      "wall_ms": 374.546,
+      "tps": 85.4367,
+      "layers": [],
+      "kv_source": "estimated"
+    }
+  },
+  "gpu_metadata": [
+    { "id": 0, "name": "ROCm0", "backend": "Radeon RX 7900 XTX", "vram_total_mib": 24560, "pci_link_gen": 0, "pci_link_width": 0, "source": "client", "compute_avg_us": 0, "compute_max_us": 0, "compute_min_us": 0 }
+  ],
+  "summary": {
+    "kv_source": "estimated"
+  }
+}

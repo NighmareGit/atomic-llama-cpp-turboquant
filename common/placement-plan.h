@@ -1,0 +1,232 @@
+#pragma once
+
+// Placement plan IR parse + validate + apply preparation (P1 layer ranges + overrides).
+// Design: docs/research/placement-plan-ir-apply-design.md
+// Conflict: override wins for matched tensors (layer ranges still apply to unmatched).
+
+#include "placement-capacity.h"
+
+#include "ggml-backend.h"
+#include "llama.h"
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+struct heatmap_layer_rollup; // forward decl for pack_heat
+
+struct placement_plan_assignment {
+    int32_t     layer_start = 0; // inclusive
+    int32_t     layer_end   = 0; // exclusive
+    std::string backend_id;      // "cpu" or canonical backend_id
+};
+
+struct placement_plan_override {
+    std::string match;
+    std::string backend_id;
+};
+
+struct placement_plan_heat_layer {
+    int32_t     idx = 0;
+    double      ms = 0;
+    uint64_t    us = 0;
+    int         rank = -1; // heat rank (0 = hottest)
+    int32_t     n_nodes = 0;
+};
+
+struct placement_plan_heat {
+    std::string status = "none"; // full | partial | none
+    std::string task;            // tg | pp | empty
+    int         schema_version = 1;
+    std::vector<placement_plan_heat_layer> layers;
+};
+
+struct placement_plan {
+    int         schema_version = 1;
+    std::string created_at;
+    std::string model_path;
+    int32_t     n_layer = 0; // required for validate; may come from plan or caller
+    std::string split_mode = "layer"; // layer | tensor
+    std::string capacity_snapshot_at;
+    std::string reserve_mode = "table";
+    std::string reserve_model_version = PLACEMENT_RESERVE_MODEL_TABLE_V1;
+    std::vector<placement_plan_assignment> assignments;
+    std::vector<placement_plan_override>   overrides;
+    placement_plan_heat heat;
+    // optional backends snapshot from generator (usable_weight_mib for budget checks)
+    struct backend_snapshot {
+        std::string backend_id;
+        uint64_t    usable_weight_mib = 0;
+        uint64_t    free_mib = 0;
+        uint64_t    total_mib = 0;
+    };
+    std::vector<backend_snapshot> backends;
+};
+
+struct placement_plan_error {
+    std::string message;
+};
+
+// Per-layer map after expand: length n_layer; "cpu" or backend_id
+using placement_layer_map = std::vector<std::string>;
+
+// Parse plan JSON text. Returns false + errors on hard parse failure.
+bool placement_plan_parse_json(const std::string & json_text, placement_plan & out, std::vector<placement_plan_error> & errors);
+
+bool placement_plan_load_file(const std::string & path, placement_plan & out, std::vector<placement_plan_error> & errors);
+
+// Validate structure + full partition of [0, n_layer). Uses plan.n_layer or n_layer_override if > 0.
+// Rejects non-empty overrides (issue 09 / slice 10).
+// Rejects illegal tensor split_mode for multi-backend mixed topologies (caller passes mixed flag).
+bool placement_plan_validate(
+    const placement_plan & plan,
+    int32_t n_layer,
+    bool topology_has_mixed_rpc_and_local,
+    std::vector<placement_plan_error> & errors);
+
+// Expand assignments to per-layer backend_id strings (length n_layer). Requires successful validate.
+bool placement_plan_expand_layers(
+    const placement_plan & plan,
+    int32_t n_layer,
+    placement_layer_map & out_layers,
+    std::vector<placement_plan_error> & errors);
+
+// Resolve backend_id -> device using discover inventory.
+// "cpu" resolves to nullptr device (CPU path).
+// Fills missing_ids for any backend_id not present (except cpu).
+// Also matches local:NAME when inventory has local:pci:... for same live device name via aliases map.
+struct placement_backend_resolve {
+    std::string         backend_id;
+    ggml_backend_dev_t  dev = nullptr; // null => CPU
+};
+
+// Build map of inventory backend_id -> dev by walking registered devices (live).
+// Uses placement_make_* ids consistent with discover.
+std::vector<placement_backend_resolve> placement_resolve_backends_live(
+    const placement_inventory & inv);
+
+// Match plan backend_id against inventory records. Returns true if all non-cpu ids found.
+bool placement_plan_match_backends(
+    const placement_plan & plan,
+    const placement_inventory & inv,
+    std::vector<std::string> & missing_ids);
+
+// Apply preparation result: devices list + per-layer devices + tensor buft overrides.
+struct placement_apply_result {
+    std::vector<ggml_backend_dev_t> devices;       // unique GPUs used, null-terminated later
+    std::vector<ggml_backend_dev_t> layer_devices; // length n_layer; nullptr = CPU
+    placement_layer_map             layer_backend_ids;
+    std::string                     debug_dump;    // layer->backend assignment text
+
+    // Stable storage for override pattern C strings (must outlive tensor_buft_overrides pointers)
+    std::vector<std::string> override_pattern_storage;
+    // Null-terminated list for llama_model_params.tensor_buft_overrides
+    std::vector<llama_model_tensor_buft_override> tensor_buft_overrides;
+    // Informational: override wins over layer assignment for matched tensors
+    std::vector<std::string> override_notes;
+};
+
+// Build apply result from plan + live inventory. Fail-loud errors listed.
+// usable_check: if true, refuse backends with usable_weight_mib==0 that have layers.
+bool placement_plan_prepare_apply(
+    const placement_plan & plan,
+    int32_t n_layer,
+    const placement_inventory & inv,
+    bool topology_has_mixed_rpc_and_local,
+    placement_apply_result & out,
+    std::vector<placement_plan_error> & errors);
+
+// Dump layer map as multi-line string for logs / determinism checks.
+std::string placement_layer_map_to_string(const placement_layer_map & layers);
+
+// --- capacity packer (issue 11) ---
+
+// Pack layers onto inventory backends by usable_weight_mib (proportional).
+// Deterministic: backends ordered by usable desc, then backend_id asc.
+// Small cards with usable > 0 get at least 1 layer when n_layer >= n_usable_backends.
+// Backends with usable_weight_mib == 0 and free_mib == 0 are skipped.
+// heat.status = none; empty overrides; split_mode = layer.
+// Returns false if n_layer <= 0 or no usable backends.
+bool placement_plan_pack_capacity(
+    const placement_inventory & inv,
+    int32_t n_layer,
+    const std::string & model_path,
+    placement_plan & out,
+    std::vector<placement_plan_error> & errors);
+
+// --- min-hop contiguous packer ---
+
+// Like pack_capacity but respects backend speed ordering and layer-type affinity
+// to minimize cross-backend transitions (hops) while placing attention layers on
+// the local GPU and SSM/recurrent layers on remote backends.
+//
+// Backend sort order: local GPU(s) first, then RPC backends by usable weight desc.
+// Contiguous block assignment: each backend gets a single contiguous range of layers,
+// exactly (n_backends - 1) hops in total, regardless of model architecture.
+//
+// For hybrid models (is_layer_recurrent non-empty and has true entries):
+//   Scans for contiguous regions by layer-type affinity; assigns the attention-heaviest
+//   block(s) to the local GPU and SSM-heaviest to remote backends.
+// For non-hybrid models: proportional capacity split, local first.
+//
+// Falls back to placement_plan_pack_capacity when no local GPU backend is found.
+bool placement_plan_pack_capacity_min_hop(
+    const placement_inventory & inv,
+    int32_t n_layer,
+    const std::string & model_path,
+    const std::vector<bool> & is_layer_recurrent,
+    placement_plan & out,
+    std::vector<placement_plan_error> & errors);
+
+// --- attention-local packer (attn + MTP on local client GPU) ---
+
+// Like pack_capacity, but aware of per-layer recurrent (SSM) vs attention architecture.
+// Attention layers and all MTP/NextN layers are preferentially placed on the local
+// client-attached GPU backend for best stability and inference speed. SSM/recurrent
+// layers are placed on remote RPC backends.
+//
+// is_layer_recurrent: per-layer recurrent flag for layers 0..n_layer-1.
+//   When empty or all-false (no SSM model), falls back to pack_capacity.
+//   When no local GPU backend is found, falls back to pack_capacity.
+//
+// The algorithm produces contiguous assignment ranges per backend, potentially
+// interleaved (multiple ranges per backend) to respect layer-type affinity.
+// heat.status = none; empty overrides; split_mode = layer.
+// Returns false if n_layer <= 0 or no usable backends.
+bool placement_plan_pack_capacity_attn_local(
+    const placement_inventory & inv,
+    int32_t n_layer,
+    const std::string & model_path,
+    const std::vector<bool> & is_layer_recurrent,
+    placement_plan & out,
+    std::vector<placement_plan_error> & errors);
+
+// --- heat-aware packer (issue 13 / P3) ---
+
+// Parse heatmap JSON file (from llama-gpipe-profiler) and extract per-layer TG rollup.
+// Supports tasks.tg.layer_rollup[] and tasks.tg.layers[] formats.
+// Returns false on parse failure (missing file, invalid JSON, no layer data).
+bool placement_plan_parse_heatmap_file(
+    const std::string & path,
+    std::vector<heatmap_layer_rollup> & rollup,
+    std::vector<placement_plan_error> & errors);
+
+// Pack layers onto inventory backends using per-layer heat scores.
+// Hot layers prefer faster backends (sorted by usable_weight desc, then backend_id).
+// Falls back to capacity-only packing when heat vector is empty.
+// Sets heat.status = "full" only when rollup covers all n_layers.
+// Refuses to set heat.status = "full" on stub/device-count input (too few entries).
+// Deterministic: same inputs => same plan.
+bool placement_plan_pack_heat(
+    const placement_inventory & inv,
+    int32_t n_layer,
+    const std::string & model_path,
+    const std::vector<heatmap_layer_rollup> & rollup,
+    placement_plan & out,
+    std::vector<placement_plan_error> & errors);
+
+// Serialize plan to JSON string (schema v1).
+std::string placement_plan_to_json(const placement_plan & plan, int indent = 2);
+
+// Write plan JSON to path.
+bool placement_plan_write_file(const placement_plan & plan, const std::string & path);

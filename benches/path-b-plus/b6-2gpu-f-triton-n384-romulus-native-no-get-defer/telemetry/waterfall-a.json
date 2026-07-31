@@ -1,0 +1,22 @@
+{
+  "label": "b6-2gpu-f-triton-n384-romulus-native-no-get-defer",
+  "gen_tokens": 0,
+  "overlap_pct": 0.3,
+  "token_wall_ms": {
+    "p50": 0.0,
+    "p95": 0.0,
+    "p99": 0.0
+  },
+  "per_token_avg_ms": {
+    "input_wait_copy": 0.0,
+    "event_record": 0.0,
+    "rpc_blocking": 0.0
+  },
+  "straggler_backend": "?",
+  "straggler_role": "backend?",
+  "straggler_ms_per_tok": 0.0,
+  "sample_waterfalls": [],
+  "verdict_flags": [
+    "NO_GEN_TOKENS"
+  ]
+}

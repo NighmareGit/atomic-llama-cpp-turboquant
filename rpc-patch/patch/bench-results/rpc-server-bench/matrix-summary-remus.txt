@@ -1,0 +1,12 @@
+=== RPC path matrix config=remus ts=15,85 2026-06-26T08:12:35Z ===
+--- remus-5060-27b-qwen-pathb-ts1585 08:12:35Z config=remus ---
+PASS 27b pathb avg_G=30.9 runs=[31.0, 30.9, 30.9]
+--- remus-5060-31b-gemma-pathb-ts1585 08:13:09Z config=remus ---
+PASS 31b pathb avg_G=29.1 runs=[29.4, 29.1, 28.9]
+--- remus-5060-35b-a3b-pathb-ts1585 08:13:39Z config=remus ---
+PASS 35b pathb avg_G=81.1 runs=[79.7, 81.2, 82.5]
+--- remus-5060-36b-a3b-pathb-ts1585 08:14:04Z config=remus ---
+PASS 36b pathb avg_G=79.9 runs=[81.1, 77.4, 81.2]
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  451G  243G  66% /
+=== done config=remus ===

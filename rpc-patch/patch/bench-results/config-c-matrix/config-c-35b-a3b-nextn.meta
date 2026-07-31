@@ -1,0 +1,27 @@
+=== config-c-35b-a3b-nextn ===
+variant=pathb proto=Path B (v4.2.2 workspace) rpc_mode=multi endpoint=127.0.0.1:50051,192.168.8.176:50051
+model=/mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf ctx=4096 ctk=q8_0 ctv=turbo3 ngl=99 ts=10,25,65 ncmoe=8 np=1 no_warmup=1 load_timeout=900s
+server_extra=--no-warmup -np 1 --n-cpu-moe 8 --fit off --fit-target 900,900,900 --verbose -lv 2 --spec-type nextn -md /mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf --draft-max 2 --draft-min 1 -ngld 99
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda3       696G  451G  242G  66% /
+2026-06-26T09:06:01Z
+using remote/multi RPC at 127.0.0.1:50051,192.168.8.176:50051 (no local bench-rpc)
+Connection to 127.0.0.1 50051 port [tcp/*] succeeded!
+RPC reachable: 127.0.0.1:50051
+Connection to 192.168.8.176 50051 port [tcp/*] succeeded!
+RPC reachable: 192.168.8.176:50051
+starting llama-server (ROCm HIP device 0)...
+82c9f6143d64ec2eda988006c0661d031e835a46ab55a9b3c1ef808d5b347485
+polling server health (max 900s)...
+ERROR: llama-server container exited during load
+error while handling argument "--spec-type": unknown speculative type: nextn
+
+usage:
+--spec-type none,draft-simple,draft-eagle3,draft-mtp,ngram-simple,ngram-map-k,ngram-map-k4v,ngram-mod,ngram-cache
+                                        comma-separated list of types of speculative decoding to use (default:
+                                        none)
+                                        
+                                        (env: LLAMA_ARG_SPEC_TYPE)
+
+
+to show complete usage, run with -h

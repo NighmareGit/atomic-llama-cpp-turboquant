@@ -1,0 +1,2 @@
+{"avg_ts":73.2046,"G_tps":73.2046,"g_method":"wall_n_gen","n_gen_tokens":384,"n_eval":1,"n_reused":381,"elapsed_ns":5245572122,"rep":1,"reps":1,"GGML_PIPELINE_PLUS":1}
+{"avg_ts":76.2854,"G_tps":76.2854,"g_method":"wall_n_gen","n_gen_tokens":384,"n_eval":1,"n_reused":381,"elapsed_ns":5033728553,"rep":1,"reps":1,"GGML_PIPELINE_PLUS":1}

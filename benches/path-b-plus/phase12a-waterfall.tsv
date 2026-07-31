@@ -1,0 +1,7 @@
+label	gen_tokens	token_p50_ms	token_p95_ms	token_p99_ms	straggler_backend	straggler_ms_per_tok	input_wait_ms_per_tok	event_record_ms_per_tok	rpc_blocking_ms_per_tok	overlap_pct	verdict
+b6-2gpu-f-triton-n384-romulus-native	384	15.31	15.38	15.65	1	8.45	7.31	0.0	0.56	0.2	INPUT_WAIT_DOMINATES,RPC_STRAGGLER
+b6-2gpu-f-triton-n384-romulus-native-no-get-defer	0	0.0	0.0	0.0	?	0.0	0.0	0.0	0.0	0.3	NO_GEN_TOKENS
+b6-2gpu-f-triton-guard-n128	128	14.82	15.45	51.97	1	12.94	9.02	0.01	0.0	0.9	INPUT_WAIT_DOMINATES,RPC_STRAGGLER,TAIL_TOKEN_SPIKE
+b6-2gpu-f-triton-n384-no-partial	384	9.5	10.85	19.31	1	5.59	5.15	0.0	0.0	0.2	INPUT_WAIT_DOMINATES,RPC_STRAGGLER
+b6-2gpu-f-triton-n384-remus-docker	384	14.83	15.24	23.8	1	8.19	7.39	0.01	0.0	0.2	INPUT_WAIT_DOMINATES,RPC_STRAGGLER
+b6-4gpu-g-n384-romulus-native	384	17.03	23.08	60.41	1	6.59	18.32	0.0	0.0	0.2	INPUT_WAIT_DOMINATES,RPC_STRAGGLER,TAIL_TOKEN_SPIKE

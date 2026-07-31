@@ -1,0 +1,7 @@
+=== qwen72b-fit-verbose ===
+model=/mnt/models/Qwen3-72B-Instruct.IQ4_XS.gguf ctx=1024 ctk=q4_0 ctv=q4_0 ts=10,90 ngl=0 fit=on fitt=512,1024 ncmoe=8
+extra=-lv 1 variant=pathb
+starting rpc-server...
+docker: Error response from daemon: Conflict. The container name "/bench-rpc" is already in use by container "d3a3050f5692b3b6b62ddd3151c289f93c5f1304b26fc73c40b5eb900372529f". You have to remove (or rename) that container to be able to reuse that name.
+
+Run 'docker run --help' for more information
