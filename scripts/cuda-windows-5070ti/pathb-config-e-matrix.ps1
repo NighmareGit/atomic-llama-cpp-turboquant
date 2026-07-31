@@ -18,7 +18,8 @@ $Presets = @{
 
 if ($EnsureRemusRpc) {
     & (Join-Path $PSScriptRoot "invoke-wsl.ps1") -BashCommand @"
-sshpass -p 12345 ssh -o StrictHostKeyChecking=accept-new hunter@192.168.8.176 'docker stop rx6600-rpc 2>/dev/null || true'
+export SSHPASS="\${SSHPASS:-\${PATHB_REMUS_SSH_PASS:-\${PATHB_ROMULUS_SSH_PASS}}}"
+sshpass -e ssh -o StrictHostKeyChecking=accept-new hunter@192.168.8.176 'docker stop rx6600-rpc 2>/dev/null || true'
 cd /mnt/d/projects/atomic-llama-cpp-5070ti/atomic-llama-cpp-turboquant && ./rpc-patch/scripts/pathb-remus-rpc.sh start
 "@
 }
