@@ -454,7 +454,7 @@ static bool rpc_udp_env_enabled() {
     static int v = -1;
     if (v < 0) {
         const char * e = getenv("GGML_RPC_UDP");
-        v = e ? atoi(e) : 1; // default ON (was 0 before Loop 5)
+        v = e ? atoi(e) : 0; // default OFF (reverted by BUG-011: UDP recompute broken by design)
     }
     return v != 0;
 }
