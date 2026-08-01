@@ -88,6 +88,10 @@
 #include <string>
 #include <vector>
 
+#ifdef __linux__
+#include <sys/mman.h>
+#endif
+
 static_assert(sizeof(half) == sizeof(ggml_fp16_t), "wrong fp16 size");
 
 #define GGML_LOG_WARN_ONCE(str) \
@@ -1618,9 +1622,67 @@ static void ggml_backend_cuda_host_buffer_free_buffer(ggml_backend_buffer_t buff
     dev_ctx->active_count--;
 #endif // !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
 
+#ifdef __linux__
+    CUDA_CHECK(cudaHostUnregister(buffer->context));
+    munmap(buffer->context, buffer->size);
+#else
     CUDA_CHECK(cudaFreeHost(buffer->context));
+#endif
 }
 
+#ifdef __linux__
+static void * ggml_cuda_host_malloc(size_t size) {
+    if (getenv("GGML_CUDA_NO_PINNED") != nullptr) {
+        return nullptr;
+    }
+
+    ggml_cuda_set_device(0); // cudaMallocHost can create the implicit CUDA device context, make sure that this is consistently done on device 0.
+
+    constexpr double k_warn_limit = 8.0;
+    double size_GiB = size/(1024.*1024.*1024.);
+    auto tim1 = ggml_time_us();
+    if (size_GiB > k_warn_limit) {
+        GGML_CUDA_LOG_INFO("\n\nAllocating %.2f GiB of pinned host memory, this may take a while.\n", size_GiB);
+        GGML_CUDA_LOG_INFO("Using pinned host memory improves PP performance by a significant margin.\n");
+        GGML_CUDA_LOG_INFO("But if it takes too long for your model and amount of patience, kill the process and run using\n\n");
+        GGML_CUDA_LOG_INFO("GGML_CUDA_NO_PINNED=1 your_command_goes_here\n");
+    }
+
+    void * ptr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (ptr == MAP_FAILED) {
+        GGML_CUDA_LOG_WARN("%s: mmap of %.2f MiB failed\n", __func__, size/1024.0/1024.0);
+        return nullptr;
+    }
+
+    // prefault the whole region. If the kernel knows how to do this then let it do so.
+    int needs_manual_prefault = 1;
+#ifdef MADV_POPULATE_WRITE
+    needs_manual_prefault = madvise(ptr, size, MADV_POPULATE_WRITE);
+#endif
+    if (needs_manual_prefault)
+    {
+        char * p = (char *) ptr;
+        for (size_t off = 0; off < size; off += 4096) {
+            p[off] = 0;
+        }
+    }
+
+    cudaError_t err = cudaHostRegister(ptr, size, cudaHostRegisterPortable);
+    if (err != cudaSuccess) {
+        cudaGetLastError(); // clear the error
+        GGML_CUDA_LOG_WARN("%s: cudaHostRegister of %.2f MiB failed: %s\n", __func__,
+                           size/1024.0/1024.0, cudaGetErrorString(err));
+        munmap(ptr, size);
+        return nullptr;
+    }
+
+    if (size_GiB > k_warn_limit) {
+        auto tim2 = ggml_time_us();
+        GGML_CUDA_LOG_INFO("    done allocating %.2f GiB in %.1f ms\n\n", size_GiB, 1e-3*(tim2-tim1));
+    }
+    return ptr;
+}
+#else // !__linux__
 static void * ggml_cuda_host_malloc(size_t size) {
     if (getenv("GGML_CUDA_NO_PINNED") != nullptr) {
         return nullptr;
@@ -1640,6 +1702,7 @@ static void * ggml_cuda_host_malloc(size_t size) {
 
     return ptr;
 }
+#endif // __linux__
 
 static ggml_backend_buffer_t ggml_backend_cuda_host_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
     void * ptr = ggml_cuda_host_malloc(size);
