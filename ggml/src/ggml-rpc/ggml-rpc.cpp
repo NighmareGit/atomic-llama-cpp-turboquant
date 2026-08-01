@@ -4433,10 +4433,11 @@ static void filter_null_src_nodes(struct ggml_cgraph * graph) {
 }
 
 // VVRAM staging pass: copy RAM-tier weight tensors into VRAM before compute.
-// For each unique RAM-tier buffer referenced by the graph, allocate a VRAM
-// staging buffer of the same size, copy the host data into it, and redirect
-// all tensors that point to that buffer. Returns the list of staging buffers
-// (owned by the caller, freed after compute or on invalidate).
+// For each tensor in the graph that references a RAM-tier buffer, allocate a
+// small VRAM staging buffer, copy just that tensor's data, and redirect the
+// tensor's data pointer. This per-tensor approach works even when the total
+// RAM-tier data far exceeds VRAM (the model is staged layer-by-layer).
+// Returns the list of staging buffers (owned by the caller, freed on invalidate).
 static std::vector<ggml_backend_buffer_t> vvram_stage_graph(
     struct ggml_cgraph * graph,
     const std::unordered_set<ggml_backend_buffer_t> & ram_buffers,
@@ -4446,62 +4447,76 @@ static std::vector<ggml_backend_buffer_t> vvram_stage_graph(
     if (!graph || ram_buffers.empty()) {
         return staging;
     }
-    // Collect unique RAM-tier buffers actually referenced by this graph.
-    std::unordered_set<ggml_backend_buffer_t> ram_refs;
+    ggml_backend_buffer_type_t gpu_buft = ggml_backend_get_default_buffer_type(backend);
+
+    // Collect unique (buffer, offset) pairs to avoid staging the same tensor twice.
+    struct ram_ref_t {
+        ggml_backend_buffer_t buf;
+        size_t offset;
+        size_t nbytes;
+        bool operator==(const ram_ref_t & o) const {
+            return buf == o.buf && offset == o.offset && nbytes == o.nbytes;
+        }
+    };
+    struct ref_hash {
+        size_t operator()(const ram_ref_t & r) const {
+            return std::hash<ggml_backend_buffer_t>{}(r.buf) ^ (std::hash<size_t>{}(r.offset) << 1);
+        }
+    };
+    std::unordered_set<ram_ref_t, ref_hash> seen;
+
     for (int i = 0; i < (int)graph->n_nodes; i++) {
         struct ggml_tensor * node = graph->nodes[i];
         if (!node) continue;
         for (int j = 0; j < GGML_MAX_SRC; j++) {
-            if (node->src[j] && node->src[j]->buffer && ram_buffers.count(node->src[j]->buffer)) {
-                ram_refs.insert(node->src[j]->buffer);
+            struct ggml_tensor * src = node->src[j];
+            if (!src || !src->buffer || !ram_buffers.count(src->buffer)) continue;
+            size_t nbytes = ggml_nbytes(src);
+            size_t offset = (size_t)src->data - (size_t)ggml_backend_buffer_get_base(src->buffer);
+            ram_ref_t ref {src->buffer, offset, nbytes};
+            if (seen.count(ref)) continue;
+            seen.insert(ref);
+
+            // Allocate a VRAM staging buffer for just this tensor.
+            ggml_backend_buffer_t stage = ggml_backend_buft_alloc_buffer(gpu_buft, nbytes);
+            if (!stage) {
+                GGML_LOG_ERROR("[VVRAM] staging alloc failed (%zu MiB) for tensor %s\n",
+                    nbytes / (1024*1024), src->name);
+                for (auto s : staging) ggml_backend_buffer_free(s);
+                staging.clear();
+                return staging;
             }
-        }
-    }
-    if (ram_refs.empty()) {
-        return staging;
-    }
-    ggml_backend_buffer_type_t gpu_buft = ggml_backend_get_default_buffer_type(backend);
-    for (ggml_backend_buffer_t ram_buf : ram_refs) {
-        size_t size = ggml_backend_buffer_get_size(ram_buf);
-        ggml_backend_buffer_t stage = ggml_backend_buft_alloc_buffer(gpu_buft, size);
-        if (!stage) {
-            GGML_LOG_ERROR("[VVRAM] staging alloc failed (%zu MiB)\n", size / (1024*1024));
-            for (auto s : staging) ggml_backend_buffer_free(s);
-            staging.clear();
-            return staging;
-        }
-        // Copy host RAM -> VRAM via the buffer's own set_tensor interface.
-        // Use a minimal tensor wrapping the staging buffer; the backend's
-        // set_tensor does a synchronous host->device copy.
-        struct ggml_tensor tmp{};
-        tmp.type = GGML_TYPE_F32;
-        tmp.ne[0] = (int64_t)((size + sizeof(float) - 1) / sizeof(float));
-        tmp.ne[1] = 1;
-        tmp.ne[2] = 1;
-        tmp.ne[3] = 1;
-        tmp.nb[0] = sizeof(float);
-        tmp.buffer = stage;
-        tmp.data = ggml_backend_buffer_get_base(stage);
-        ggml_backend_tensor_set(&tmp, ggml_backend_buffer_get_base(ram_buf), 0, size);
-        staging.push_back(stage);
-        // Redirect all tensors referencing this RAM buffer to the staging buffer.
-        for (int i = 0; i < (int)graph->n_nodes; i++) {
-            struct ggml_tensor * node = graph->nodes[i];
-            if (!node) continue;
-            for (int j = 0; j < GGML_MAX_SRC; j++) {
-                struct ggml_tensor * src = node->src[j];
-                if (src && src->buffer == ram_buf) {
-                    size_t off = (size_t)src->data - (size_t)ggml_backend_buffer_get_base(ram_buf);
-                    src->buffer = stage;
-                    src->data = (void *)((size_t)ggml_backend_buffer_get_base(stage) + off);
+            // Copy host RAM -> VRAM.
+            struct ggml_tensor tmp{};
+            tmp.type = GGML_TYPE_F32;
+            tmp.ne[0] = (int64_t)((nbytes + sizeof(float) - 1) / sizeof(float));
+            tmp.ne[1] = 1; tmp.ne[2] = 1; tmp.ne[3] = 1;
+            tmp.nb[0] = sizeof(float);
+            tmp.buffer = stage;
+            tmp.data = ggml_backend_buffer_get_base(stage);
+            ggml_backend_tensor_set(&tmp, (char *)ggml_backend_buffer_get_base(src->buffer) + offset, 0, nbytes);
+            staging.push_back(stage);
+
+            // Redirect this tensor (and any aliases) to the staging buffer.
+            for (int ii = 0; ii < (int)graph->n_nodes; ii++) {
+                struct ggml_tensor * n2 = graph->nodes[ii];
+                if (!n2) continue;
+                for (int jj = 0; jj < GGML_MAX_SRC; jj++) {
+                    struct ggml_tensor * s2 = n2->src[jj];
+                    if (s2 && s2->buffer == src->buffer) {
+                        size_t o2 = (size_t)s2->data - (size_t)ggml_backend_buffer_get_base(src->buffer);
+                        if (o2 == offset) {
+                            s2->buffer = stage;
+                            s2->data = ggml_backend_buffer_get_base(stage);
+                        }
+                    }
                 }
             }
+            GGML_LOG_DEBUG("[VVRAM] staged tensor %s (%zu MiB) RAM -> VRAM\n",
+                src->name, nbytes / (1024*1024));
         }
-        GGML_LOG_DEBUG("[VVRAM] staged %zu MiB RAM -> VRAM (buf %p -> stage %p)\n",
-            size / (1024*1024), (void*)ram_buf, (void*)stage);
     }
-    // Synchronize the backend to ensure all staging copies are complete
-    // before graph compute begins.
+    // Synchronize to ensure all copies complete before compute.
     ggml_backend_synchronize(backend);
     return staging;
 }
