@@ -22,6 +22,7 @@
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
+#include <map>
 #include <cstring>
 #include <fstream>
 #include <filesystem>
@@ -4438,6 +4439,11 @@ static void filter_null_src_nodes(struct ggml_cgraph * graph) {
 // tensor's data pointer. This per-tensor approach works even when the total
 // RAM-tier data far exceeds VRAM (the model is staged layer-by-layer).
 // Returns the list of staging buffers (owned by the caller, freed on invalidate).
+static std::vector<ggml_backend_buffer_t> vvram_stage_graph_lru(
+    struct ggml_cgraph * graph,
+    const std::unordered_set<ggml_backend_buffer_t> & ram_buffers,
+    ggml_backend_t backend);
+
 static std::vector<ggml_backend_buffer_t> vvram_stage_graph(
     struct ggml_cgraph * graph,
     const std::unordered_set<ggml_backend_buffer_t> & ram_buffers,
@@ -4521,6 +4527,332 @@ static std::vector<ggml_backend_buffer_t> vvram_stage_graph(
     return staging;
 }
 
+// VVRAM LRU eviction: extract layer number from a tensor name.
+// Matches patterns like:
+//   "blk.48.attn_k_norm.weight" -> 48 (weight tensor)
+//   "norm-0", "attn_norm-0", "Qcur-0" -> 0 (intermediate tensor)
+// Returns -1 if no layer number found.
+static int vvram_extract_layer(const char * name) {
+    if (!name) return -1;
+    // First try "blk.N." pattern (weight tensors).
+    const char * p = strstr(name, "blk.");
+    if (p) {
+        p += 4; // skip "blk."
+        if (*p >= '0' && *p <= '9') return atoi(p);
+    }
+    // Then try "name-N" pattern (intermediate tensors).
+    // Find the last dash followed by a number.
+    const char * last_dash = strrchr(name, '-');
+    if (last_dash && last_dash[1] >= '0' && last_dash[1] <= '9') {
+        return atoi(last_dash + 1);
+    }
+    return -1;
+}
+
+// VVRAM LRU eviction: staging entry tracking for LRU eviction.
+struct vvram_staging_entry {
+    ggml_backend_buffer_t stage;   // VRAM staging buffer
+    ggml_backend_buffer_t ram_buf;  // original RAM buffer
+    size_t ram_offset;             // offset within RAM buffer
+    size_t nbytes;                 // tensor size
+    int layer;                     // layer number (-1 for shared)
+    uint64_t last_use;             // monotonic counter for LRU
+    struct ggml_tensor * tensor;    // the tensor this entry tracks
+};
+
+// VVRAM LRU eviction: stage a single tensor with LRU eviction.
+// Maintains a VRAM budget; evicts least-recently-used staging buffers when full.
+// Returns the staging buffer, or nullptr on failure.
+static ggml_backend_buffer_t vvram_stage_tensor_lru(
+    struct ggml_tensor * src,
+    ggml_backend_t backend,
+    std::vector<vvram_staging_entry> & lru_cache,
+    size_t & lru_vram_used,
+    size_t lru_vram_budget,
+    uint64_t & lru_counter) {
+
+    if (!src || !src->buffer) return nullptr;
+    size_t nbytes = ggml_nbytes(src);
+    size_t offset = (size_t)src->data - (size_t)ggml_backend_buffer_get_base(src->buffer);
+    int layer = vvram_extract_layer(src->name);
+
+    // Check if already staged (dedup by buffer+offset).
+    for (auto & e : lru_cache) {
+        if (e.ram_buf == src->buffer && e.ram_offset == offset) {
+            e.last_use = ++lru_counter;
+            // Redirect tensor to existing staging buffer.
+            src->buffer = e.stage;
+            src->data = ggml_backend_buffer_get_base(e.stage);
+            return e.stage;
+        }
+    }
+
+    // Evict LRU entries until we have enough VRAM.
+    while (lru_vram_used + nbytes > lru_vram_budget && !lru_cache.empty()) {
+        // Find LRU entry (oldest last_use).
+        size_t lru_idx = 0;
+        uint64_t lru_time = lru_cache[0].last_use;
+        for (size_t i = 1; i < lru_cache.size(); i++) {
+            if (lru_cache[i].last_use < lru_time) {
+                lru_time = lru_cache[i].last_use;
+                lru_idx = i;
+            }
+        }
+        auto & evict = lru_cache[lru_idx];
+        GGML_LOG_DEBUG("[VVRAM-LRU] evict tensor %s (%zu MiB, layer %d) to free VRAM\n",
+            evict.tensor->name, evict.nbytes / (1024*1024), evict.layer);
+        // Restore the evicted tensor's pointer to RAM.
+        evict.tensor->buffer = evict.ram_buf;
+        evict.tensor->data = (char *)ggml_backend_buffer_get_base(evict.ram_buf) + evict.ram_offset;
+        lru_vram_used -= evict.nbytes;
+        ggml_backend_buffer_free(evict.stage);
+        lru_cache.erase(lru_cache.begin() + lru_idx);
+    }
+
+    // Allocate VRAM staging buffer.
+    ggml_backend_buffer_type_t gpu_buft = ggml_backend_get_default_buffer_type(backend);
+    ggml_backend_buffer_t stage = ggml_backend_buft_alloc_buffer(gpu_buft, nbytes);
+    if (!stage) {
+        GGML_LOG_ERROR("[VVRAM-LRU] alloc failed (%zu MiB) for tensor %s\n",
+            nbytes / (1024*1024), src->name);
+        return nullptr;
+    }
+
+    // Copy RAM -> VRAM.
+    struct ggml_tensor tmp{};
+    tmp.type = GGML_TYPE_F32;
+    tmp.ne[0] = (int64_t)((nbytes + sizeof(float) - 1) / sizeof(float));
+    tmp.ne[1] = 1; tmp.ne[2] = 1; tmp.ne[3] = 1;
+    tmp.nb[0] = sizeof(float);
+    tmp.buffer = stage;
+    tmp.data = ggml_backend_buffer_get_base(stage);
+    ggml_backend_tensor_set(&tmp, (char *)ggml_backend_buffer_get_base(src->buffer) + offset, 0, nbytes);
+
+    // Redirect tensor to staging buffer.
+    src->buffer = stage;
+    src->data = ggml_backend_buffer_get_base(stage);
+
+    // Track in LRU cache.
+    lru_cache.push_back({stage, src->buffer, offset, nbytes, layer, ++lru_counter, src});
+    lru_vram_used += nbytes;
+
+    GGML_LOG_DEBUG("[VVRAM-LRU] staged tensor %s (%zu MiB, layer %d) RAM -> VRAM (vram_used=%zu/%zu MiB)\n",
+        src->name, nbytes / (1024*1024), layer,
+        lru_vram_used / (1024*1024), lru_vram_budget / (1024*1024));
+    return stage;
+}
+
+// VVRAM LRU eviction: per-layer graph compute.
+// Instead of staging ALL tensors at once (OOM for large models), this splits
+// the graph into per-layer subgraphs and computes them sequentially. For each
+// layer, it stages the layer's tensors (evicting previous layer's), computes
+// the layer subgraph, then moves to the next.
+//
+// This is the key insight: a single decode pass processes layers sequentially.
+// At any point, only ONE layer's weights need to be in VRAM (~500 MiB for 72B).
+// This leaves plenty of room for activations and intermediate tensors.
+static bool vvram_compute_graph_layered(
+    struct ggml_cgraph * graph,
+    const std::unordered_set<ggml_backend_buffer_t> & ram_buffers,
+    ggml_backend_t backend) {
+
+    if (!graph || ram_buffers.empty()) {
+        // No RAM-tier buffers, compute normally.
+        ggml_status status = ggml_backend_graph_compute(backend, graph);
+        return status == GGML_STATUS_SUCCESS;
+    }
+
+    // Determine VRAM budget: 60% of total VRAM (leave room for activations).
+    size_t vram_total = 0, vram_free = 0;
+    ggml_backend_dev_t dev = ggml_backend_get_device(backend);
+    if (dev) ggml_backend_dev_memory(dev, &vram_free, &vram_total);
+    size_t vram_budget = (vram_total * 6) / 10; // 60% of total
+    GGML_LOG_INFO("[VVRAM-LAYERED] VRAM budget = %zu MiB (total=%zu MiB)\n",
+        vram_budget / (1024*1024), vram_total / (1024*1024));
+
+    // Group nodes by layer.
+    std::map<int, std::vector<int>> layer_nodes;
+    for (int i = 0; i < (int)graph->n_nodes; i++) {
+        struct ggml_tensor * node = graph->nodes[i];
+        if (!node) continue;
+        int layer = -1; // default: shared
+        for (int j = 0; j < GGML_MAX_SRC; j++) {
+            if (node->src[j]) {
+                int l = vvram_extract_layer(node->src[j]->name);
+                if (l >= 0) { layer = l; break; }
+            }
+        }
+        layer_nodes[layer].push_back(i);
+    }
+
+    GGML_LOG_INFO("[VVRAM-LAYERED] graph has %zu layers (including shared)\n", layer_nodes.size());
+    // Debug: show layer distribution.
+    for (auto & [layer, node_indices] : layer_nodes) {
+        GGML_LOG_INFO("[VVRAM-LAYERED]   layer %d: %zu nodes\n", layer, node_indices.size());
+    }
+    // Debug: show first few tensor names.
+    for (int i = 0; i < std::min(10, (int)graph->n_nodes); i++) {
+        struct ggml_tensor * node = graph->nodes[i];
+        if (!node) continue;
+        GGML_LOG_INFO("[VVRAM-LAYERED]   node %d: %s (op=%d)\n", i, node->name, node->op);
+        for (int j = 0; j < GGML_MAX_SRC; j++) {
+            if (node->src[j]) {
+                GGML_LOG_INFO("[VVRAM-LAYERED]     src[%d]: %s\n", j, node->src[j]->name);
+            }
+        }
+    }
+
+    // LRU cache state.
+    std::vector<vvram_staging_entry> lru_cache;
+    size_t lru_vram_used = 0;
+    uint64_t lru_counter = 0;
+    std::vector<ggml_backend_buffer_t> all_staging;
+
+    // Process layers in order.
+    for (auto & [layer, node_indices] : layer_nodes) {
+        GGML_LOG_DEBUG("[VVRAM-LAYERED] processing layer %d (%zu nodes)\n", layer, node_indices.size());
+
+        // Stage all RAM-tier tensors needed by this layer's nodes.
+        for (int idx : node_indices) {
+            struct ggml_tensor * node = graph->nodes[idx];
+            if (!node) continue;
+            for (int j = 0; j < GGML_MAX_SRC; j++) {
+                struct ggml_tensor * src = node->src[j];
+                if (!src || !src->buffer || !ram_buffers.count(src->buffer)) continue;
+
+                ggml_backend_buffer_t stage = vvram_stage_tensor_lru(
+                    src, backend, lru_cache, lru_vram_used, vram_budget, lru_counter);
+                if (stage) {
+                    bool found = false;
+                    for (auto s : all_staging) { if (s == stage) { found = true; break; } }
+                    if (!found) all_staging.push_back(stage);
+                }
+            }
+        }
+
+        // Synchronize to ensure staging copies complete.
+        ggml_backend_synchronize(backend);
+
+        // Compute this layer's nodes as a batch.
+        // We create a temporary subgraph with just this layer's nodes.
+        // This is more efficient than per-node compute.
+        if (!node_indices.empty()) {
+            // Find the range of nodes for this layer.
+            int min_idx = node_indices[0];
+            int max_idx = node_indices[0];
+            for (int idx : node_indices) {
+                if (idx < min_idx) min_idx = idx;
+                if (idx > max_idx) max_idx = idx;
+            }
+            // Create a subgraph with the contiguous range of nodes.
+            // This works because nodes are in topological order.
+            struct ggml_cgraph subgraph;
+            memset(&subgraph, 0, sizeof(subgraph));
+            subgraph.n_nodes = max_idx - min_idx + 1;
+            for (int i = 0; i < subgraph.n_nodes; i++) {
+                subgraph.nodes[i] = graph->nodes[min_idx + i];
+            }
+            ggml_status status = ggml_backend_graph_compute(backend, &subgraph);
+            if (status != GGML_STATUS_SUCCESS) {
+                GGML_LOG_ERROR("[VVRAM-LAYERED] compute failed for layer %d (nodes %d-%d)\n",
+                    layer, min_idx, max_idx);
+                return false;
+            }
+        }
+    }
+
+    GGML_LOG_INFO("[VVRAM-LAYERED] completed %zu layers (vram_used=%zu MiB)\n",
+        layer_nodes.size(), lru_vram_used / (1024*1024));
+
+    // Free all staging buffers.
+    for (auto & e : lru_cache) {
+        ggml_backend_buffer_free(e.stage);
+    }
+    lru_cache.clear();
+
+    return true;
+}
+
+// VVRAM LRU eviction: per-layer staging pass (legacy, kept for reference).
+// This stages ALL tensors with LRU eviction but still requires all tensors
+// during compute. Use vvram_compute_graph_layered instead for large models.
+static std::vector<ggml_backend_buffer_t> vvram_stage_graph_lru(
+    struct ggml_cgraph * graph,
+    const std::unordered_set<ggml_backend_buffer_t> & ram_buffers,
+    ggml_backend_t backend) {
+
+    std::vector<ggml_backend_buffer_t> staging;
+    if (!graph || ram_buffers.empty()) {
+        return staging;
+    }
+
+    // Determine VRAM budget: 80% of total VRAM (leave room for activations).
+    size_t vram_total = 0, vram_free = 0;
+    ggml_backend_dev_t dev = ggml_backend_get_device(backend);
+    if (dev) ggml_backend_dev_memory(dev, &vram_free, &vram_total);
+    size_t vram_budget = (vram_total * 8) / 10; // 80% of total
+    GGML_LOG_INFO("[VVRAM-LRU] VRAM budget = %zu MiB (total=%zu MiB)\n",
+        vram_budget / (1024*1024), vram_total / (1024*1024));
+
+    // Group nodes by layer. Nodes with no layer (shared tensors like embeddings)
+    // go to layer -1 and are staged once at the start.
+    // We classify each node by examining ALL its source tensors and picking
+    // the maximum layer number. This correctly handles intermediate tensors
+    // (like attn_out-0) that don't have a layer number but are produced by
+    // layer-specific nodes.
+    std::map<int, std::vector<int>> layer_nodes;
+    for (int i = 0; i < (int)graph->n_nodes; i++) {
+        struct ggml_tensor * node = graph->nodes[i];
+        if (!node) continue;
+        int layer = -1; // default: shared
+        for (int j = 0; j < GGML_MAX_SRC; j++) {
+            if (node->src[j]) {
+                int l = vvram_extract_layer(node->src[j]->name);
+                if (l > layer) { layer = l; }
+            }
+        }
+        layer_nodes[layer].push_back(i);
+    }
+
+    GGML_LOG_INFO("[VVRAM-LRU] graph has %zu layers (including shared)\n", layer_nodes.size());
+
+    // LRU cache state.
+    std::vector<vvram_staging_entry> lru_cache;
+    size_t lru_vram_used = 0;
+    uint64_t lru_counter = 0;
+
+    // Process layers in order.
+    for (auto & [layer, node_indices] : layer_nodes) {
+        GGML_LOG_DEBUG("[VVRAM-LRU] processing layer %d (%zu nodes)\n", layer, node_indices.size());
+
+        // Stage all RAM-tier tensors needed by this layer's nodes.
+        for (int idx : node_indices) {
+            struct ggml_tensor * node = graph->nodes[idx];
+            if (!node) continue;
+            for (int j = 0; j < GGML_MAX_SRC; j++) {
+                struct ggml_tensor * src = node->src[j];
+                if (!src || !src->buffer || !ram_buffers.count(src->buffer)) continue;
+
+                // Stage with LRU eviction.
+                ggml_backend_buffer_t stage = vvram_stage_tensor_lru(
+                    src, backend, lru_cache, lru_vram_used, vram_budget, lru_counter);
+                if (stage) {
+                    // Track for later cleanup (dedup).
+                    bool found = false;
+                    for (auto s : staging) { if (s == stage) { found = true; break; } }
+                    if (!found) staging.push_back(stage);
+                }
+            }
+        }
+    }
+
+    // Synchronize to ensure all copies complete before compute.
+    ggml_backend_synchronize(backend);
+    GGML_LOG_INFO("[VVRAM-LRU] staged %zu tensors (vram_used=%zu MiB)\n",
+        staging.size(), lru_vram_used / (1024*1024));
+    return staging;
+}
+
 bool rpc_compute_engine::graph_compute(const std::vector<uint8_t> & input,
                        const std::unordered_set<ggml_backend_buffer_t> & buffers,
                        const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas,
@@ -4569,6 +4901,13 @@ bool rpc_compute_engine::graph_compute(const std::vector<uint8_t> & input,
     ggml_context * ctx = ctx_ptr.get();
     struct ggml_cgraph * graph = ggml_new_graph_custom(ctx, n_nodes, false);
     graph->n_nodes = n_nodes;
+
+    // VVRAM LRU: check env once at function scope.
+    static bool use_lru = []() {
+        const char * e = std::getenv("GGML_RPC_VVRAM_LRU");
+        return e && e[0] == '1';
+    }();
+
     std::unordered_map<uint64_t, const rpc_tensor*> tensor_ptrs;
     tensor_ptrs.reserve(n_tensors);
     for (uint32_t i = 0; i < n_tensors; i++) {
@@ -4597,10 +4936,19 @@ bool rpc_compute_engine::graph_compute(const std::vector<uint8_t> & input,
     // reuse them without re-copying. They are freed on invalidate/destructor.
     stored_graphs[device].vvram_staging_buffers.clear();
     if (!ram_buffers.empty()) {
-        stored_graphs[device].vvram_staging_buffers = vvram_stage_graph(graph, ram_buffers, backends[device]);
-        if (!stored_graphs[device].vvram_staging_buffers.empty()) {
-            GGML_LOG_INFO("[VVRAM] staged %zu RAM-tier buffers for compute\n",
-                stored_graphs[device].vvram_staging_buffers.size());
+        // Use layered compute path if GGML_RPC_VVRAM_LRU=1 is set.
+        if (use_lru) {
+            // Layered compute: stage + compute + evict per layer.
+            // This is slower (per-node sync) but avoids OOM.
+            GGML_LOG_INFO("[VVRAM] using layered compute (LRU) for RAM-tier buffers\n");
+            // Staging and compute happen in vvram_compute_graph_layered.
+            // We skip the normal staging pass and compute below.
+        } else {
+            stored_graphs[device].vvram_staging_buffers = vvram_stage_graph(graph, ram_buffers, backends[device]);
+            if (!stored_graphs[device].vvram_staging_buffers.empty()) {
+                GGML_LOG_INFO("[VVRAM] staged %zu RAM-tier buffers for compute\n",
+                    stored_graphs[device].vvram_staging_buffers.size());
+            }
         }
     }
 
@@ -4614,7 +4962,14 @@ bool rpc_compute_engine::graph_compute(const std::vector<uint8_t> & input,
 
     const auto t0 = std::chrono::steady_clock::now();
     ggml_status status;
-    if (sample_nodes) {
+    if (use_lru && !ram_buffers.empty()) {
+        // Layered compute: stage + compute + evict per layer.
+        // This is slower (per-node sync) but avoids OOM for large models.
+        bool ok = vvram_compute_graph_layered(graph, ram_buffers, backends[device]);
+        status = ok ? GGML_STATUS_SUCCESS : GGML_STATUS_FAILED;
+        us = (uint64_t) std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - t0).count();
+    } else if (sample_nodes) {
         us = compute_graph_per_node(backends[device], graph, node_timings);
         status = GGML_STATUS_SUCCESS;
     } else {
