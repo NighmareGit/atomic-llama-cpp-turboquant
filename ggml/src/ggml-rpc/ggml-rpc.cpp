@@ -398,6 +398,19 @@ static int rpc_hash_defer_env_enabled() {
     return v;
 }
 
+// V1b: GET_TENSOR_BATCH opt-in. Default OFF (correctness-first — individual
+// GET_TENSOR is the well-tested path). Set GGML_RPC_GET_TENSOR_BATCH=1 to
+// enable. Even when enabled, batching only fires if the server advertises
+// RPC_CAP_GET_TENSOR_BATCH (see server_supports_get_tensor_batch).
+static int rpc_get_tensor_batch_env_enabled() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_RPC_GET_TENSOR_BATCH");
+        v = e ? atoi(e) : 0;
+    }
+    return v;
+}
+
 static bool rpc_event_defer_barrier() {
     return ggml_backend_rpc_event_defer_barrier();
 }
@@ -1547,6 +1560,8 @@ static bool negotiate_hello(const std::shared_ptr<socket_t> & sock, const char *
     sock->server_supports_telemetry = (response.conn_caps[0] & RPC_CAP_SERVER_TELEMETRY) != 0;
     // F1 (T2a): server supports graph_hash in GRAPH_RECOMPUTE + hit/miss response
     sock->server_supports_recompute_hash = (response.conn_caps[0] & RPC_CAP_RECOMPUTE_HASH) != 0;
+    // V1b: server supports RPC_CMD_GET_TENSOR_BATCH (value 25)
+    sock->server_supports_get_tensor_batch = (response.conn_caps[0] & RPC_CAP_GET_TENSOR_BATCH) != 0;
     // D4.10 debug
     GGML_LOG_INFO("RPC %s: telemetry=%d conn_caps[0]=%d\n", endpoint,
                   sock->server_supports_telemetry ? 1 : 0,
@@ -1838,10 +1853,19 @@ static void ggml_backend_rpc_buffer_get_tensor_async(ggml_backend_buffer_t buffe
                                                      void * data, size_t offset, size_t size, bool batch_send) {
     ggml_backend_rpc_buffer_context * ctx = (ggml_backend_rpc_buffer_context *)buffer->context;
     auto sock = ctx->sock;
-    if (!batch_send && !rpc_event_defer_barrier()) {
+
+    // V1b: batching requires BOTH opt-in (GGML_RPC_GET_TENSOR_BATCH=1) AND server
+    // capability negotiation (RPC_CAP_GET_TENSOR_BATCH). Without both, fall back
+    // to the well-tested individual GET_TENSOR path. This guarantees an old
+    // server (no batch handler) never receives RPC_CMD_GET_TENSOR_BATCH (25),
+    // which would otherwise hit "Unknown command: 25" and drop the connection.
+    const bool use_batch = batch_send && rpc_get_tensor_batch_env_enabled() != 0
+                            && sock->server_supports_get_tensor_batch;
+
+    if (!use_batch && !rpc_event_defer_barrier()) {
         drain_pending_event_response(sock);
     }
-    if (!batch_send) {
+    if (!use_batch) {
         flush_pending_get_tensor_for_socket(sock);
         flush_pending_hash_for_socket(sock);
         flush_set_tensor_batch();
@@ -1856,7 +1880,7 @@ static void ggml_backend_rpc_buffer_get_tensor_async(ggml_backend_buffer_t buffe
 
     // V1b: when batching is enabled, accumulate instead of sending immediately.
     // This eliminates per-call TCP overhead and server dispatch cost.
-    if (batch_send) {
+    if (use_batch) {
         get_tensor_batch_append(sock, request, data, size);
         return;
     }
@@ -5302,6 +5326,8 @@ static void rpc_serve_client(std::shared_ptr<rpc_compute_engine> engine, socket_
         if (rpc_server_telemetry_env_enabled()) {
             rsp3.conn_caps[0] |= RPC_CAP_SERVER_TELEMETRY;
         }
+        // V1b: advertise GET_TENSOR_BATCH support (server handler is always present in this build)
+        rsp3.conn_caps[0] |= RPC_CAP_GET_TENSOR_BATCH;
         sock->server_supports_trace_id = (rsp3.patch >= 3) || (req_conn_caps[0] & RPC_CAP_TRACE_ID);
         // F1 (T2a): does the client understand graph_hash in GRAPH_RECOMPUTE?
         sock->server_supports_recompute_hash = (req_conn_caps[0] & RPC_CAP_RECOMPUTE_HASH) != 0;
@@ -5324,6 +5350,8 @@ static void rpc_serve_client(std::shared_ptr<rpc_compute_engine> engine, socket_
         if (rpc_server_telemetry_env_enabled()) {
             rsp.conn_caps[0] |= RPC_CAP_SERVER_TELEMETRY;
         }
+        // V1b: advertise GET_TENSOR_BATCH support (server handler is always present in this build)
+        rsp.conn_caps[0] |= RPC_CAP_GET_TENSOR_BATCH;
         // trace_id support from client caps (for deciding 20B vs 12B recv on EVENT_RECORD)
         sock->server_supports_trace_id = (rsp.patch >= 3) || (req.conn_caps[0] & RPC_CAP_TRACE_ID);
         // F1 (T2a): does the client understand graph_hash in GRAPH_RECOMPUTE?
