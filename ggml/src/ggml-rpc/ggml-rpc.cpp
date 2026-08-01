@@ -3282,9 +3282,12 @@ public:
     // --- Graph computation (shared across all connections) ---
     // deserialize_tensor / create_node need the connection's buffer sets for
     // the split-buffer warning check; passed explicitly.
+    // ram_buffers: VVRAM — set of buffers backed by host RAM (tier=RAM). The
+    // staging pass copies these into VRAM just-in-time before compute.
     bool graph_compute(const std::vector<uint8_t> & input,
                        const std::unordered_set<ggml_backend_buffer_t> & buffers,
-                       const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas);
+                       const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas,
+                       const std::unordered_set<ggml_backend_buffer_t> & ram_buffers = {});
     bool graph_recompute(const rpc_msg_graph_recompute_req & request);
     bool graph_compute_all(const std::vector<uint8_t> & input,
                            const std::unordered_set<ggml_backend_buffer_t> & buffers,
@@ -3308,7 +3311,8 @@ public:
 
     void enqueue_graph_compute(std::vector<uint8_t> input,
                                const std::unordered_set<ggml_backend_buffer_t> & buffers,
-                               const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas);
+                               const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas,
+                               const std::unordered_set<ggml_backend_buffer_t> & ram_buffers = {});
     void enqueue_graph_recompute(rpc_msg_graph_recompute_req request);
     void enqueue_graph_compute_all(std::vector<uint8_t> input,
                                    const std::unordered_set<ggml_backend_buffer_t> & buffers,
@@ -3363,17 +3367,23 @@ public:
         ggml_cgraph             * graph;
         std::atomic<uint64_t>     uid{0}; // F1 (T2a): uid bound to this cached graph (0 = unset)
 
+        // VVRAM: staging buffers allocated during graph_compute to hold RAM-tier
+        // weights copied into VRAM just-in-time. Freed in invalidate/destructor.
+        std::vector<ggml_backend_buffer_t> vvram_staging_buffers;
+
         // std::atomic is not movable, so define explicit move constructor
         // for vector<stored_graph>::resize() to work.
         stored_graph() = default;
         stored_graph(stored_graph && other) noexcept
             : buffer(std::move(other.buffer)),
               graph(other.graph),
-              uid(other.uid.load(std::memory_order_relaxed)) {}
+              uid(other.uid.load(std::memory_order_relaxed)),
+              vvram_staging_buffers(std::move(other.vvram_staging_buffers)) {}
         stored_graph & operator=(stored_graph && other) noexcept {
             buffer = std::move(other.buffer);
             graph = other.graph;
             uid.store(other.uid.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            vvram_staging_buffers = std::move(other.vvram_staging_buffers);
             return *this;
         }
         // Non-copyable (atomic member)
@@ -3433,6 +3443,14 @@ public:
     rpc_connection(std::shared_ptr<rpc_compute_engine> engine, const char * cache_dir)
         : engine(std::move(engine)), cache_dir(cache_dir),
           telemetry_enabled(rpc_server_telemetry_env_enabled()) {
+        // VVRAM: read RAM budget from env (default 32000 MiB). 0 disables VVRAM.
+        const char * ram_budget_env = std::getenv("GGML_RPC_VVRAM_RAM_BUDGET_MB");
+        if (ram_budget_env && ram_budget_env[0]) {
+            vvram_ram_budget = (size_t)atoll(ram_budget_env) * 1024 * 1024;
+            if (vvram_ram_budget > 0) {
+                GGML_LOG_INFO("[VVRAM] enabled — RAM budget = %zu MiB\n", vvram_ram_budget / (1024*1024));
+            }
+        }
         if (telemetry_enabled) {
             const auto & backends = engine->get_backends();
             for (size_t i = 0; i < backends.size() && i < RPC_TELEMETRY_MAX_DEVICES; i++) {
@@ -3477,7 +3495,7 @@ public:
     bool recompute_all_allowed(const rpc_msg_graph_recompute_all_req & request) const { return engine->recompute_all_allowed(request); }
     bool try_enqueue_graph_recompute(const rpc_msg_graph_recompute_req & request) { return engine->try_enqueue_graph_recompute(request); }
     bool try_enqueue_graph_recompute_all(const rpc_msg_graph_recompute_all_req & request) { return engine->try_enqueue_graph_recompute_all(request); }
-    void enqueue_graph_compute(std::vector<uint8_t> input) { engine->enqueue_graph_compute(std::move(input), buffers, split_buffer_metas); }
+    void enqueue_graph_compute(std::vector<uint8_t> input) { engine->enqueue_graph_compute(std::move(input), buffers, split_buffer_metas, vvram_ram_buffers); }
     void enqueue_graph_recompute(rpc_msg_graph_recompute_req request) { engine->enqueue_graph_recompute(std::move(request)); }
     void enqueue_graph_compute_all(std::vector<uint8_t> input) { engine->enqueue_graph_compute_all(std::move(input), buffers, split_buffer_metas); }
     void enqueue_graph_recompute_all(rpc_msg_graph_recompute_all_req request) { engine->enqueue_graph_recompute_all(std::move(request)); }
@@ -3495,6 +3513,14 @@ private:
     std::mutex buffers_mtx;
 
     std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> split_buffer_metas;
+
+    // VVRAM: virtual VRAM state — RPC backend presents a flat virtual VRAM space
+    // (GPU VRAM + host RAM budget). Buffers that don't fit in VRAM are placed in
+    // pinned host RAM (tier=RAM) and staged into VRAM just-in-time during graph_compute.
+    size_t vvram_ram_budget = 0;    // total RAM budget in bytes (env GGML_RPC_VVRAM_RAM_BUDGET_MB)
+    size_t vvram_ram_used  = 0;     // bytes currently allocated to RAM-tier buffers
+    size_t vvram_vram_used = 0;     // bytes currently allocated to VRAM-tier buffers
+    std::unordered_set<ggml_backend_buffer_t> vvram_ram_buffers; // set of RAM-tier buffers
 
     // D4.10: per-connection telemetry state (for collect_telemetry calls from connection)
     const bool                telemetry_enabled;
@@ -3557,14 +3583,66 @@ bool rpc_connection::alloc_buffer(const rpc_msg_alloc_buffer_req & request, rpc_
         return false;
     }
     ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(engine->get_backends()[dev_id]);
-    ggml_backend_buffer_t buffer = ggml_backend_buft_alloc_buffer(buft, request.size);
+
+    // VVRAM tiering: decide VRAM vs RAM based on current free VRAM.
+    // If the allocation fits in remaining VRAM, use the GPU buffer type.
+    // Otherwise, fall back to pinned host RAM (CUDA/HIP host buffer type).
+    bool use_ram = false;
+    if (vvram_ram_budget > 0) {
+        size_t vram_free = 0, vram_total = 0;
+        ggml_backend_dev_t dev = ggml_backend_get_device(engine->get_backends()[dev_id]);
+        ggml_backend_dev_memory(dev, &vram_free, &vram_total);
+        // vram_free is the actual free VRAM (already accounts for all allocations).
+        size_t ram_remaining = (vvram_ram_budget > vvram_ram_used) ? (vvram_ram_budget - vvram_ram_used) : 0;
+        if (request.size <= vram_free) {
+            use_ram = false;
+        } else if (request.size <= ram_remaining) {
+            use_ram = true;
+        } else {
+            // Doesn't fit in either — let the VRAM alloc attempt fail gracefully
+            // (it will return nullptr and the client will error out).
+            use_ram = false;
+        }
+    }
+
+    ggml_backend_buffer_t buffer = nullptr;
+    if (use_ram) {
+        // RAM tier: allocate pinned host memory. Prefer the GPU device's host
+        // buffer type (pinned, faster H2D copy in staging). Fall back to the
+        // plain CPU buffer type (non-pinned, still correct).
+        ggml_backend_buffer_type_t host_buft = nullptr;
+        ggml_backend_dev_t dev = ggml_backend_get_device(engine->get_backends()[dev_id]);
+        if (dev) {
+            host_buft = ggml_backend_dev_host_buffer_type(dev);
+        }
+        if (!host_buft) {
+            host_buft = ggml_backend_cpu_buffer_type();
+        }
+        buffer = ggml_backend_buft_alloc_buffer(host_buft, request.size);
+        if (buffer) {
+            std::lock_guard<std::mutex> lock(buffers_mtx);
+            vvram_ram_used += request.size;
+            vvram_ram_buffers.insert(buffer);
+            GGML_LOG_INFO("[VVRAM] alloc_buffer: %zu MiB -> RAM tier (ram_used=%zu/%zu MiB)\n",
+                request.size / (1024*1024), vvram_ram_used / (1024*1024), vvram_ram_budget / (1024*1024));
+        }
+    } else {
+        // VRAM tier: normal GPU buffer.
+        buffer = ggml_backend_buft_alloc_buffer(buft, request.size);
+        if (buffer) {
+            std::lock_guard<std::mutex> lock(buffers_mtx);
+            vvram_vram_used += request.size;
+        }
+    }
+
     response.remote_ptr = 0;
     response.remote_size = 0;
     if (buffer != nullptr) {
         response.remote_ptr = reinterpret_cast<uint64_t>(buffer);
         response.remote_size = buffer->size;
-        LOG_DBG("[%s] device: %d, size: %" PRIu64 " -> remote_ptr: %" PRIx64 ", remote_size: %" PRIu64 "\n",
-            __func__, dev_id, request.size, response.remote_ptr, response.remote_size);
+        LOG_DBG("[%s] device: %d, size: %" PRIu64 " -> remote_ptr: %" PRIx64 ", remote_size: %" PRIu64 " (%s)\n",
+            __func__, dev_id, request.size, response.remote_ptr, response.remote_size,
+            use_ram ? "RAM" : "VRAM");
         {
             std::lock_guard<std::mutex> lock(buffers_mtx);
             buffers.insert(buffer);
@@ -3688,7 +3766,18 @@ bool rpc_connection::get_max_size(const rpc_msg_get_max_size_req & request, rpc_
     }
     ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(engine->get_backends()[dev_id]);
     size_t max_size = ggml_backend_buft_get_max_size(buft);
-    LOG_DBG("[%s] device: %d, max_size: %lu\n", __func__, dev_id, max_size);
+    // VVRAM: report virtual max = VRAM max + RAM budget. The client sees a flat
+    // virtual VRAM space and allocates against it. Cap to avoid SIZE_MAX overflow
+    // when the underlying buft reports SIZE_MAX (CUDA default).
+    if (vvram_ram_budget > 0) {
+        const size_t cap = (SIZE_MAX / 4) * 3; // avoid overflow
+        if (max_size > cap) {
+            max_size = cap;
+        }
+        max_size += vvram_ram_budget;
+    }
+    LOG_DBG("[%s] device: %d, max_size: %lu (vram=%zu + ram_budget=%zu)\n", __func__, dev_id, max_size,
+            max_size - (vvram_ram_budget > 0 ? vvram_ram_budget : 0), vvram_ram_budget);
     response.max_size = max_size;
     return true;
 }
@@ -3718,11 +3807,32 @@ bool rpc_connection::free_buffer(const rpc_msg_free_buffer_req & request) {
             return false;
         }
     }
+    // VVRAM: track tier usage before freeing.
+    bool was_ram = false;
+    size_t buf_size = buffer->size;
+    {
+        std::lock_guard<std::mutex> lock(buffers_mtx);
+        was_ram = (vvram_ram_buffers.find(buffer) != vvram_ram_buffers.end());
+    }
     ggml_backend_buffer_free(buffer);
     {
         std::lock_guard<std::mutex> lock(buffers_mtx);
         buffers.erase(buffer);
         split_buffer_metas.erase(buffer); // clean up split metadata if present
+        if (was_ram) {
+            vvram_ram_buffers.erase(buffer);
+            if (vvram_ram_used >= buf_size) {
+                vvram_ram_used -= buf_size;
+            } else {
+                vvram_ram_used = 0;
+            }
+        } else {
+            if (vvram_vram_used >= buf_size) {
+                vvram_vram_used -= buf_size;
+            } else {
+                vvram_vram_used = 0;
+            }
+        }
     }
     return true;
 }
@@ -3944,6 +4054,17 @@ bool rpc_connection::set_tensor(const std::vector<uint8_t> & input) {
         // size==ggml_nbytes(tensor), so skip the standard bounds check.
         if (rpc_buft_is_cuda_split(tensor->buffer->buft)) {
             tensor->buffer->iface.set_tensor(tensor->buffer, tensor, data, offset, size);
+        } else if (vvram_ram_buffers.count(tensor->buffer)) {
+            // VVRAM RAM-tier buffer: the client sends GPU-padded data but the
+            // host buffer's tensor has unpadded dimensions. Write directly to
+            // the buffer base (the buffer was allocated with the padded size).
+            const size_t buf_size = ggml_backend_buffer_get_size(tensor->buffer);
+            if (offset + size > buf_size) {
+                GGML_LOG_ERROR("[%s] RAM-tier tensor data (offset=%" PRIu64 ", size=%zu) exceeds buffer %zu\n",
+                               __func__, offset, size, buf_size);
+                return false;
+            }
+            memcpy((char *)ggml_backend_buffer_get_base(tensor->buffer) + offset, data, size);
         } else {
             const size_t buf_size = ggml_backend_buffer_get_size(tensor->buffer);
             if (offset + size > buf_size) {
@@ -4311,9 +4432,84 @@ static void filter_null_src_nodes(struct ggml_cgraph * graph) {
     }
 }
 
+// VVRAM staging pass: copy RAM-tier weight tensors into VRAM before compute.
+// For each unique RAM-tier buffer referenced by the graph, allocate a VRAM
+// staging buffer of the same size, copy the host data into it, and redirect
+// all tensors that point to that buffer. Returns the list of staging buffers
+// (owned by the caller, freed after compute or on invalidate).
+static std::vector<ggml_backend_buffer_t> vvram_stage_graph(
+    struct ggml_cgraph * graph,
+    const std::unordered_set<ggml_backend_buffer_t> & ram_buffers,
+    ggml_backend_t backend) {
+
+    std::vector<ggml_backend_buffer_t> staging;
+    if (!graph || ram_buffers.empty()) {
+        return staging;
+    }
+    // Collect unique RAM-tier buffers actually referenced by this graph.
+    std::unordered_set<ggml_backend_buffer_t> ram_refs;
+    for (int i = 0; i < (int)graph->n_nodes; i++) {
+        struct ggml_tensor * node = graph->nodes[i];
+        if (!node) continue;
+        for (int j = 0; j < GGML_MAX_SRC; j++) {
+            if (node->src[j] && node->src[j]->buffer && ram_buffers.count(node->src[j]->buffer)) {
+                ram_refs.insert(node->src[j]->buffer);
+            }
+        }
+    }
+    if (ram_refs.empty()) {
+        return staging;
+    }
+    ggml_backend_buffer_type_t gpu_buft = ggml_backend_get_default_buffer_type(backend);
+    for (ggml_backend_buffer_t ram_buf : ram_refs) {
+        size_t size = ggml_backend_buffer_get_size(ram_buf);
+        ggml_backend_buffer_t stage = ggml_backend_buft_alloc_buffer(gpu_buft, size);
+        if (!stage) {
+            GGML_LOG_ERROR("[VVRAM] staging alloc failed (%zu MiB)\n", size / (1024*1024));
+            for (auto s : staging) ggml_backend_buffer_free(s);
+            staging.clear();
+            return staging;
+        }
+        // Copy host RAM -> VRAM via the buffer's own set_tensor interface.
+        // Use a minimal tensor wrapping the staging buffer; the backend's
+        // set_tensor does a synchronous host->device copy.
+        struct ggml_tensor tmp{};
+        tmp.type = GGML_TYPE_F32;
+        tmp.ne[0] = (int64_t)((size + sizeof(float) - 1) / sizeof(float));
+        tmp.ne[1] = 1;
+        tmp.ne[2] = 1;
+        tmp.ne[3] = 1;
+        tmp.nb[0] = sizeof(float);
+        tmp.buffer = stage;
+        tmp.data = ggml_backend_buffer_get_base(stage);
+        ggml_backend_tensor_set(&tmp, ggml_backend_buffer_get_base(ram_buf), 0, size);
+        staging.push_back(stage);
+        // Redirect all tensors referencing this RAM buffer to the staging buffer.
+        for (int i = 0; i < (int)graph->n_nodes; i++) {
+            struct ggml_tensor * node = graph->nodes[i];
+            if (!node) continue;
+            for (int j = 0; j < GGML_MAX_SRC; j++) {
+                struct ggml_tensor * src = node->src[j];
+                if (src && src->buffer == ram_buf) {
+                    size_t off = (size_t)src->data - (size_t)ggml_backend_buffer_get_base(ram_buf);
+                    src->buffer = stage;
+                    src->data = (void *)((size_t)ggml_backend_buffer_get_base(stage) + off);
+                }
+            }
+        }
+        GGML_LOG_DEBUG("[VVRAM] staged %zu MiB RAM -> VRAM (buf %p -> stage %p)\n",
+            size / (1024*1024), (void*)ram_buf, (void*)stage);
+    }
+    // Synchronize the backend to ensure all staging copies are complete
+    // before graph compute begins.
+    ggml_backend_synchronize(backend);
+    return staging;
+}
+
 bool rpc_compute_engine::graph_compute(const std::vector<uint8_t> & input,
                        const std::unordered_set<ggml_backend_buffer_t> & buffers,
-                       const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas) {
+                       const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas,
+                       const std::unordered_set<ggml_backend_buffer_t> & ram_buffers) {
     GGML_LOG_DEBUG("[rpc-server] graph_compute (single-device) called, input.size=%zu\n", input.size());
     // serialization format:
     // | device (4 bytes) | n_nodes (4 bytes) | nodes (n_nodes * sizeof(uint64_t) | n_tensors (4 bytes) | tensors (n_tensors * sizeof(rpc_tensor)) |
@@ -4380,6 +4576,18 @@ bool rpc_compute_engine::graph_compute(const std::vector<uint8_t> & input,
     }
     // Filter out nodes with null src data (non-RPC buffers on client)
     filter_null_src_nodes(graph);
+
+    // VVRAM: staging pass — copy RAM-tier weight tensors into VRAM before compute.
+    // The staging buffers are stored alongside the cached graph so recompute can
+    // reuse them without re-copying. They are freed on invalidate/destructor.
+    stored_graphs[device].vvram_staging_buffers.clear();
+    if (!ram_buffers.empty()) {
+        stored_graphs[device].vvram_staging_buffers = vvram_stage_graph(graph, ram_buffers, backends[device]);
+        if (!stored_graphs[device].vvram_staging_buffers.empty()) {
+            GGML_LOG_INFO("[VVRAM] staged %zu RAM-tier buffers for compute\n",
+                stored_graphs[device].vvram_staging_buffers.size());
+        }
+    }
 
     // issue 12: on sampled decodes, compute per-node for placement-grade heatmaps.
     // Sampled to bound overhead; produces correct output (same ops + order).
@@ -4855,9 +5063,20 @@ bool rpc_connection::get_device_memory(const rpc_msg_get_device_memory_req & req
     size_t free, total;
     ggml_backend_dev_t dev = ggml_backend_get_device(engine->get_backends()[dev_id]);
     ggml_backend_dev_memory(dev, &free, &total);
-    response.free_mem = free;
-    response.total_mem = total;
-    LOG_DBG("[%s] device: %u, free_mem: %" PRIu64 ", total_mem: %" PRIu64 "\n", __func__, dev_id, response.free_mem, response.total_mem);
+    // VVRAM: report virtual free/total = real VRAM + remaining RAM budget.
+    // The scheduler uses this to decide how much it can allocate; the RAM budget
+    // is "free" address space that the backend can tier into.
+    size_t ram_free = 0;
+    if (vvram_ram_budget > 0) {
+        ram_free = (vvram_ram_budget > vvram_ram_used) ? (vvram_ram_budget - vvram_ram_used) : 0;
+        response.free_mem = free + ram_free;
+        response.total_mem = total + vvram_ram_budget;
+    } else {
+        response.free_mem = free;
+        response.total_mem = total;
+    }
+    LOG_DBG("[%s] device: %u, free_mem: %" PRIu64 " (vram_free=%zu + ram_free=%zu), total_mem: %" PRIu64 "\n",
+        __func__, dev_id, response.free_mem, free, ram_free, response.total_mem);
     return true;
 }
 
@@ -4894,13 +5113,15 @@ void rpc_compute_engine::compute_worker_loop() {
 
 void rpc_compute_engine::enqueue_graph_compute(std::vector<uint8_t> input,
                                const std::unordered_set<ggml_backend_buffer_t> & buffers,
-                               const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas) {
-    // Capture buffers + split_metas by value: the connection that owns them may
-    // be destroyed before the compute job runs (shared engine across connections).
+                               const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas,
+                               const std::unordered_set<ggml_backend_buffer_t> & ram_buffers) {
+    // Capture buffers + split_metas + ram_buffers by value: the connection that
+    // owns them may be destroyed before the compute job runs (shared engine).
     submit_compute_job([this, input = std::move(input),
                         buffers = std::unordered_set<ggml_backend_buffer_t>(buffers),
-                        split_metas = std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta>(split_metas)]() mutable {
-        if (!graph_compute(input, buffers, split_metas)) {
+                        split_metas = std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta>(split_metas),
+                        ram_buffers = std::unordered_set<ggml_backend_buffer_t>(ram_buffers)]() mutable {
+        if (!graph_compute(input, buffers, split_metas, ram_buffers)) {
             GGML_LOG_ERROR("[%s] async graph_compute failed\n", __func__);
         }
     });
@@ -5012,7 +5233,16 @@ void rpc_compute_engine::drain_and_invalidate() {
         // sees a miss and the next graph_compute reuses the pool.
         sg.graph = nullptr;
         sg.uid.store(0, std::memory_order_release);
+        // VVRAM: free staging buffers (VRAM copies of RAM-tier weights).
+        for (auto stage : sg.vvram_staging_buffers) {
+            ggml_backend_buffer_free(stage);
+        }
+        sg.vvram_staging_buffers.clear();
     }
+    for (auto stage : all_graph.vvram_staging_buffers) {
+        ggml_backend_buffer_free(stage);
+    }
+    all_graph.vvram_staging_buffers.clear();
     all_graph.graph = nullptr;
     all_graph.uid.store(0, std::memory_order_release);
     for (auto & kv : all_scheds) {
@@ -5040,7 +5270,16 @@ void rpc_compute_engine::invalidate_cached_graphs() {
     for (auto & sg : stored_graphs) {
         sg.graph = nullptr;
         sg.uid.store(0, std::memory_order_release);
+        // VVRAM: free staging buffers on invalidation.
+        for (auto stage : sg.vvram_staging_buffers) {
+            ggml_backend_buffer_free(stage);
+        }
+        sg.vvram_staging_buffers.clear();
     }
+    for (auto stage : all_graph.vvram_staging_buffers) {
+        ggml_backend_buffer_free(stage);
+    }
+    all_graph.vvram_staging_buffers.clear();
     all_graph.graph = nullptr;
     all_graph.uid.store(0, std::memory_order_release);
     LOG_DBG("[%s] invalidated cached graphs for new client\n", __func__);
