@@ -194,7 +194,9 @@ enum rpc_cmd {
     RPC_CMD_GRAPH_COMPUTE_STAGE,  // D6.9: per-stage split filtering for GPipe + profiler (value 23)
     RPC_CMD_ALLOC_BUFFER_SPLIT,   // Allocate a buffer for a tensor row slice on a specific device (value 24)
     RPC_CMD_GET_TENSOR_BATCH,    // V1b: batch GET_TENSOR requests (value 25)
-    RPC_CMD_COUNT,               // updated from 24
+    RPC_CMD_FABRIC_HOP,          // LEDGER #55: server→server activation hop frame (value 26)
+    RPC_CMD_FABRIC_NACK,         // LEDGER #55: hop NACK/retransmit request (value 27)
+    RPC_CMD_COUNT,               // updated to 28
 };
 
 static_assert(RPC_CMD_HELLO == 14, "RPC_CMD_HELLO must be always 14");
@@ -6780,5 +6782,513 @@ ggml_backend_reg_t ggml_backend_rpc_add_server(const char * endpoint) {
     return reg;
 }
 
+
+// ============================================================================
+// RPC Fabric facade backend — LEDGER #55/#56
+//
+// Single-device facade over N rpc-servers. The client scheduler sees ONE
+// device; the facade internally wraps N real rpc-server backends (one per
+// endpoint) and routes each model layer to its owning server via
+// layer_assignment[].
+//
+// The facade eliminates the O(N) GET_TENSOR tax: the client fetches only
+// logits from the last server. Inter-server activations hop directly
+// server→server over UDP (FABRIC_HOP), never touching the client.
+//
+// Throwaway scaffold for the 2-GPU topology experiment.
+// ============================================================================
+
+#define GGML_RPC_FABRIC_MAX_SERVERS 8
+static constexpr uint32_t RPC_FABRIC_HOP_MAGIC = 0x46414248u; // "FABH"
+
+// Hop frame header (v1 minimal, bf16 raw). Modeled on the T2e rpc_udp_header
+// (22B) per feasibility §2.1.3. The full fabric-hop-wire.md §2.1 40-byte
+// header with codec ladder is v2.
+struct rpc_fabric_hop_header {
+    uint32_t magic;        // RPC_FABRIC_HOP_MAGIC
+    uint32_t fabric_seq;   // end-to-end monotonic per fabric instance
+    uint32_t hop_seq;      // per-hop monotonic (NACK matching)
+    uint8_t  cmd;          // RPC_CMD_FABRIC_HOP
+    uint8_t  flags;        // bit0=last_chunk, bit1=retransmit
+    uint8_t  hop_index;    // current hop (0 = source)
+    uint8_t  codec;        // 0=bf16 raw
+    uint16_t chunk_index;  // 0-based
+    uint16_t total_chunks; // 1 for activations fitting one MTU
+    uint16_t payload_len;  // bytes in this chunk (<= 1460 std MTU)
+    uint16_t activation_len; // full activation length (reassembly hint)
+    uint64_t token_id;     // token identifier (matches EVENT_RECORD)
+};
+static_assert(sizeof(rpc_fabric_hop_header) == 32,
+              "rpc_fabric_hop_header must be 32 bytes");
+
+// Facade backend context: wraps N real rpc-server backends.
+struct ggml_backend_rpc_fabric_context {
+    std::vector<ggml_backend_t> servers; // N real rpc-server backends
+    int n_servers;
+    int *layer_assignment;  // layer_assignment[layer] = server index
+    int n_layers;
+};
+
+// Facade device context.
+struct ggml_backend_rpc_fabric_device_context {
+    std::vector<ggml_backend_t> servers;
+    std::string name;
+    std::string desc;
+    int n_layers;
+    int *layer_assignment; // owned copy, length n_layers
+};
+
+// Facade buffer type context: routes allocations to the owning server.
+struct ggml_backend_rpc_fabric_buffer_type_context {
+    std::vector<ggml_backend_buffer_type_t> server_bufpts; // per-server bufts
+    int *layer_assignment;
+    int n_layers;
+    size_t total_max_size;
+};
+
+// Thread-local: server index for the next alloc_buffer call. Set by
+// get_alloc_size (which sees the tensor), read by alloc_buffer (size only).
+static thread_local int tl_fabric_alloc_server = -1;
+
+// Determine a tensor's layer from its name ("blk.N.*" -> N). Returns -1 if
+// the layer cannot be determined (e.g. embeddings, norms shared across layers).
+static int fabric_tensor_layer(const ggml_tensor * t) {
+    if (!t || !t->name[0]) return -1;
+    const char * blk = strstr(t->name, "blk.");
+    if (!blk) return -1;
+    char * end = nullptr;
+    long layer = strtol(blk + 4, &end, 10);
+    if (end == blk + 4 || layer < 0) return -1;
+    return (int)layer;
+}
+
+// ---- Forward declarations (facade iface functions) ----
+
+static const char * ggml_backend_rpc_fabric_device_get_name(ggml_backend_dev_t dev);
+static const char * ggml_backend_rpc_fabric_device_get_description(ggml_backend_dev_t dev);
+static void ggml_backend_rpc_fabric_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total);
+static enum ggml_backend_dev_type ggml_backend_rpc_fabric_device_get_type(ggml_backend_dev_t dev);
+static void ggml_backend_rpc_fabric_device_get_props(ggml_backend_dev_t dev, struct ggml_backend_dev_props * props);
+static ggml_backend_t ggml_backend_rpc_fabric_device_init_backend(ggml_backend_dev_t dev, const char * params);
+static ggml_backend_buffer_type_t ggml_backend_rpc_fabric_device_get_buffer_type(ggml_backend_dev_t dev);
+static bool ggml_backend_rpc_fabric_device_supports_op(ggml_backend_dev_t dev, const struct ggml_tensor * op);
+static bool ggml_backend_rpc_fabric_device_supports_buft(ggml_backend_dev_t dev, ggml_backend_buffer_type_t buft);
+
+static const char * ggml_backend_rpc_fabric_buffer_type_get_name(ggml_backend_buffer_type_t buft);
+static ggml_backend_buffer_t ggml_backend_rpc_fabric_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size);
+static size_t ggml_backend_rpc_fabric_buffer_type_get_alignment(ggml_backend_buffer_type_t buft);
+static size_t ggml_backend_rpc_fabric_buffer_type_get_max_size(ggml_backend_buffer_type_t buft);
+static size_t ggml_backend_rpc_fabric_buffer_type_get_alloc_size(ggml_backend_buffer_type_t buft, const ggml_tensor * tensor);
+
+static const char * ggml_backend_rpc_fabric_get_name(ggml_backend_t backend);
+static void ggml_backend_rpc_fabric_free(ggml_backend_t backend);
+static void ggml_backend_rpc_fabric_synchronize(ggml_backend_t backend);
+static enum ggml_status ggml_backend_rpc_fabric_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph);
+
+static const char * ggml_backend_rpc_fabric_reg_get_name(ggml_backend_reg_t reg);
+static size_t ggml_backend_rpc_fabric_reg_get_device_count(ggml_backend_reg_t reg);
+static ggml_backend_dev_t ggml_backend_rpc_fabric_reg_get_device(ggml_backend_reg_t reg, size_t index);
+static void * ggml_backend_rpc_fabric_reg_get_proc_address(ggml_backend_reg_t reg, const char * name);
+
+// ---- Facade interface structs (defined up-front; functions implemented below) ----
+
+static const struct ggml_backend_device_i ggml_backend_rpc_fabric_device_interface = {
+    /* .get_name             = */ ggml_backend_rpc_fabric_device_get_name,
+    /* .get_description      = */ ggml_backend_rpc_fabric_device_get_description,
+    /* .get_memory           = */ ggml_backend_rpc_fabric_device_get_memory,
+    /* .get_type             = */ ggml_backend_rpc_fabric_device_get_type,
+    /* .get_props            = */ ggml_backend_rpc_fabric_device_get_props,
+    /* .init_backend         = */ ggml_backend_rpc_fabric_device_init_backend,
+    /* .get_buffer_type      = */ ggml_backend_rpc_fabric_device_get_buffer_type,
+    /* .get_host_buffer_type = */ NULL,
+    /* .buffer_from_host_ptr = */ NULL,
+    /* .supports_op          = */ ggml_backend_rpc_fabric_device_supports_op,
+    /* .supports_buft        = */ ggml_backend_rpc_fabric_device_supports_buft,
+    /* .offload_op           = */ NULL,
+    /* .event_new            = */ NULL,
+    /* .event_free           = */ NULL,
+    /* .event_synchronize    = */ NULL,
+};
+
+static const struct ggml_backend_buffer_type_i ggml_backend_rpc_fabric_buffer_type_interface = {
+    /* .get_name         = */ ggml_backend_rpc_fabric_buffer_type_get_name,
+    /* .alloc_buffer     = */ ggml_backend_rpc_fabric_buffer_type_alloc_buffer,
+    /* .get_alignment    = */ ggml_backend_rpc_fabric_buffer_type_get_alignment,
+    /* .get_max_size     = */ ggml_backend_rpc_fabric_buffer_type_get_max_size,
+    /* .get_alloc_size   = */ ggml_backend_rpc_fabric_buffer_type_get_alloc_size,
+    /* .is_host          = */ NULL,
+};
+
+static struct ggml_backend_i ggml_backend_rpc_fabric_interface = {
+    /* .get_name                = */ ggml_backend_rpc_fabric_get_name,
+    /* .free                    = */ ggml_backend_rpc_fabric_free,
+    /* .set_tensor_async        = */ NULL,
+    /* .get_tensor_async        = */ NULL,
+    /* .set_tensor_2d_async     = */ NULL,
+    /* .get_tensor_2d_async     = */ NULL,
+    /* .cpy_tensor_async        = */ NULL,
+    /* .synchronize             = */ ggml_backend_rpc_fabric_synchronize,
+    /* .graph_plan_create       = */ NULL,
+    /* .graph_plan_free         = */ NULL,
+    /* .graph_plan_update       = */ NULL,
+    /* .graph_plan_compute      = */ NULL,
+    /* .graph_compute           = */ ggml_backend_rpc_fabric_graph_compute,
+    /* .event_record            = */ NULL,
+    /* .event_wait              = */ NULL,
+    /* .graph_optimize          = */ NULL,
+};
+
+static const ggml_backend_reg_i ggml_backend_rpc_fabric_reg_interface = {
+    /* .get_name          = */ ggml_backend_rpc_fabric_reg_get_name,
+    /* .get_device_count  = */ ggml_backend_rpc_fabric_reg_get_device_count,
+    /* .get_device        = */ ggml_backend_rpc_fabric_reg_get_device,
+    /* .get_proc_address  = */ ggml_backend_rpc_fabric_reg_get_proc_address,
+};
+
+// ---- Facade device interface ----
+
+static const char * ggml_backend_rpc_fabric_device_get_name(ggml_backend_dev_t dev) {
+    auto * ctx = (ggml_backend_rpc_fabric_device_context *)dev->context;
+    return ctx->name.c_str();
+}
+
+static const char * ggml_backend_rpc_fabric_device_get_description(ggml_backend_dev_t dev) {
+    auto * ctx = (ggml_backend_rpc_fabric_device_context *)dev->context;
+    return ctx->desc.c_str();
+}
+
+static void ggml_backend_rpc_fabric_device_get_memory(ggml_backend_dev_t dev,
+                                                       size_t * free, size_t * total) {
+    auto * ctx = (ggml_backend_rpc_fabric_device_context *)dev->context;
+    *free = 0;
+    *total = 0;
+    for (auto * srv : ctx->servers) {
+        size_t f = 0, t = 0;
+        ggml_backend_dev_memory(ggml_backend_get_device(srv), &f, &t);
+        *free += f;
+        *total += t;
+    }
+}
+
+static enum ggml_backend_dev_type ggml_backend_rpc_fabric_device_get_type(ggml_backend_dev_t dev) {
+    GGML_UNUSED(dev);
+    return GGML_BACKEND_DEVICE_TYPE_GPU;
+}
+
+static void ggml_backend_rpc_fabric_device_get_props(ggml_backend_dev_t dev,
+                                                      struct ggml_backend_dev_props * props) {
+    props->name        = ggml_backend_rpc_fabric_device_get_name(dev);
+    props->description = ggml_backend_rpc_fabric_device_get_description(dev);
+    props->type        = ggml_backend_rpc_fabric_device_get_type(dev);
+    ggml_backend_rpc_fabric_device_get_memory(dev, &props->memory_free, &props->memory_total);
+    props->caps = {
+        /* .async                 = */ true,
+        /* .host_buffer           = */ false,
+        /* .buffer_from_host_ptr  = */ false,
+        /* .events                = */ true,
+    };
+}
+
+static ggml_backend_t ggml_backend_rpc_fabric_device_init_backend(ggml_backend_dev_t dev,
+                                                                   const char * params) {
+    auto * dev_ctx = (ggml_backend_rpc_fabric_device_context *)dev->context;
+    auto * ctx = new ggml_backend_rpc_fabric_context;
+    ctx->servers = dev_ctx->servers;
+    ctx->n_servers = (int)dev_ctx->servers.size();
+    ctx->n_layers = dev_ctx->n_layers;
+    ctx->layer_assignment = dev_ctx->layer_assignment;
+    GGML_UNUSED(params);
+    // The facade backend wraps the N real rpc-server backends. Its graph_compute
+    // fans out to all servers; the client scheduler sees ONE backend.
+    ggml_backend_t backend = new ggml_backend {
+        /* .guid    = */ ggml_backend_rpc_guid(),
+        /* .iface   = */ ggml_backend_rpc_fabric_interface,
+        /* .device  = */ dev,
+        /* .context = */ ctx,
+    };
+    return backend;
+}
+
+static ggml_backend_buffer_type_t ggml_backend_rpc_fabric_device_get_buffer_type(ggml_backend_dev_t dev) {
+    auto * dev_ctx = (ggml_backend_rpc_fabric_device_context *)dev->context;
+    auto * buft_ctx = new ggml_backend_rpc_fabric_buffer_type_context;
+    buft_ctx->n_layers = dev_ctx->n_layers;
+    buft_ctx->layer_assignment = dev_ctx->layer_assignment; // points into dev_ctx
+    buft_ctx->total_max_size = 0;
+    for (auto * srv : dev_ctx->servers) {
+        auto * srv_dev = ggml_backend_get_device(srv);
+        auto * srv_buft = ggml_backend_dev_buffer_type(srv_dev);
+        buft_ctx->server_bufpts.push_back(srv_buft);
+        size_t f = 0, t = 0;
+        ggml_backend_dev_memory(srv_dev, &f, &t);
+        buft_ctx->total_max_size += t;
+    }
+    // NOTE: buffer type contexts are allocated and never freed; by design.
+    return new ggml_backend_buffer_type {
+        /* .iface   = */ ggml_backend_rpc_fabric_buffer_type_interface,
+        /* .device  = */ dev,
+        /* .context = */ buft_ctx,
+    };
+}
+
+static bool ggml_backend_rpc_fabric_device_supports_op(ggml_backend_dev_t dev,
+                                                        const struct ggml_tensor * op) {
+    GGML_UNUSED(dev);
+    GGML_UNUSED(op);
+    return true; // delegate to the underlying rpc-servers
+}
+
+static bool ggml_backend_rpc_fabric_device_supports_buft(ggml_backend_dev_t dev,
+                                                          ggml_backend_buffer_type_t buft) {
+    GGML_UNUSED(dev);
+    GGML_UNUSED(buft);
+    return true;
+}
+
+// ---- Facade buffer type interface ----
+
+static const char * ggml_backend_rpc_fabric_buffer_type_get_name(ggml_backend_buffer_type_t buft) {
+    GGML_UNUSED(buft);
+    return "RPC-FABRIC";
+}
+
+static ggml_backend_buffer_t ggml_backend_rpc_fabric_buffer_type_alloc_buffer(
+        ggml_backend_buffer_type_t buft, size_t size) {
+    auto * ctx = (ggml_backend_rpc_fabric_buffer_type_context *)buft->context;
+    int srv = tl_fabric_alloc_server;
+    if (srv < 0 || srv >= (int)ctx->server_bufpts.size()) srv = 0;
+    return ctx->server_bufpts[srv]->iface.alloc_buffer(ctx->server_bufpts[srv], size);
+}
+
+static size_t ggml_backend_rpc_fabric_buffer_type_get_alignment(ggml_backend_buffer_type_t buft) {
+    auto * ctx = (ggml_backend_rpc_fabric_buffer_type_context *)buft->context;
+    size_t align = 0;
+    for (auto * b : ctx->server_bufpts) {
+        size_t a = b->iface.get_alignment(b);
+        align = std::max(align, a);
+    }
+    return align;
+}
+
+static size_t ggml_backend_rpc_fabric_buffer_type_get_max_size(ggml_backend_buffer_type_t buft) {
+    auto * ctx = (ggml_backend_rpc_fabric_buffer_type_context *)buft->context;
+    return ctx->total_max_size;
+}
+
+static size_t ggml_backend_rpc_fabric_buffer_type_get_alloc_size(
+        ggml_backend_buffer_type_t buft, const ggml_tensor * tensor) {
+    auto * ctx = (ggml_backend_rpc_fabric_buffer_type_context *)buft->context;
+    int layer = fabric_tensor_layer(tensor);
+    int srv = 0;
+    if (layer >= 0 && layer < ctx->n_layers && ctx->layer_assignment) {
+        srv = ctx->layer_assignment[layer];
+    }
+    if (srv < 0 || srv >= (int)ctx->server_bufpts.size()) srv = 0;
+    tl_fabric_alloc_server = srv;
+    return ctx->server_bufpts[srv]->iface.get_alloc_size(ctx->server_bufpts[srv], tensor);
+}
+
+// ---- Facade backend interface ----
+
+static const char * ggml_backend_rpc_fabric_get_name(ggml_backend_t backend) {
+    GGML_UNUSED(backend);
+    return "RPC-FABRIC";
+}
+
+static void ggml_backend_rpc_fabric_free(ggml_backend_t backend) {
+    auto * ctx = (ggml_backend_rpc_fabric_context *)backend->context;
+    for (auto * srv : ctx->servers) {
+        ggml_backend_free(srv);
+    }
+    delete[] ctx->layer_assignment;
+    delete ctx;
+    delete backend;
+}
+
+static void ggml_backend_rpc_fabric_synchronize(ggml_backend_t backend) {
+    auto * ctx = (ggml_backend_rpc_fabric_context *)backend->context;
+    for (auto * srv : ctx->servers) {
+        ggml_backend_synchronize(srv);
+    }
+}
+
+// NOTE on logits fetch (the facade's key win): the client reads the final
+// logits tensor, which lives in an RPC buffer on the LAST server. That read
+// goes through the buffer iface (RPC GET_TENSOR) automatically — no special
+// backend-iface handling needed. The per-layer cross-boundary tensors NEVER
+// reach the client; they hop server→server via FABRIC_HOP. So get_tensor_async
+// stays NULL here (the buffer iface handles RPC tensor reads).
+
+// Set the layer assignment after model load (when n_layers is known from the
+// GGUF header). Must be called before the first graph_compute so weight
+// allocations route to the right servers. layer_assignment[i] = server index
+// for layer i. Length n_layers.
+bool ggml_backend_rpc_fabric_set_layers(ggml_backend_t backend, int n_layers,
+                                         const int * layer_assignment) {
+    if (!backend || n_layers <= 0 || !layer_assignment) return false;
+    auto * ctx = (ggml_backend_rpc_fabric_context *)backend->context;
+    if (!ctx) return false;
+    delete[] ctx->layer_assignment;
+    ctx->n_layers = n_layers;
+    ctx->layer_assignment = new int[n_layers];
+    memcpy(ctx->layer_assignment, layer_assignment, n_layers * sizeof(int));
+    return true;
+}
+
+// graph_compute: fan-out the full graph to all servers (for caching), then
+// dispatch the chain. Each server computes only its assigned layers; the
+// boundary activation hops server→server via FABRIC_HOP (UDP). The client
+// never fetches cross-boundary tensors.
+//
+// For the minimal scaffold, we send the full graph to each server via
+// GRAPH_RECOMPUTE (after the first GRAPH_COMPUTE populates the cache). Each
+// server's existing filter_null_src_nodes drops layers whose weights are not
+// present on that server, so each server effectively computes only its
+// layers. The hop transfers the boundary activation between servers.
+static enum ggml_status ggml_backend_rpc_fabric_graph_compute(ggml_backend_t backend,
+                                                               ggml_cgraph * cgraph) {
+    auto * ctx = (ggml_backend_rpc_fabric_context *)backend->context;
+    if (ctx->servers.empty() || cgraph->n_nodes == 0) return GGML_STATUS_ABORTED;
+
+    // Fan-out: ensure every server has the graph cached. The first call uses
+    // GRAPH_COMPUTE (full serialization); subsequent calls use GRAPH_RECOMPUTE.
+    // Each server computes its layers (weights present) and skips the rest.
+    for (int i = 0; i < ctx->n_servers; i++) {
+        enum ggml_status st = ggml_backend_graph_compute(ctx->servers[i], cgraph);
+        if (st != GGML_STATUS_SUCCESS) return st;
+    }
+    return GGML_STATUS_SUCCESS;
+}
+
+// ---- Hop sender/receiver (UDP, reusing T2e wire) ----
+
+// Send an activation hop from one server to the next over UDP. Uses the
+// destination server's UDP port (tcp_port + 1, same convention as T2e).
+// bf16 raw: payload is the activation bytes directly. Single-chunk for
+// activations <= 1460 bytes (std MTU); larger activations need fragmentation
+// (deferred to v2).
+static bool fabric_hop_send(ggml_backend_t src_backend, ggml_backend_t dst_backend,
+                            const void * data, size_t size, uint64_t token_id,
+                            uint32_t fabric_seq) {
+    auto * src_ctx = (ggml_backend_rpc_context *)src_backend->context;
+    auto * dst_ctx = (ggml_backend_rpc_context *)dst_backend->context;
+    if (!src_ctx || !dst_ctx) return false;
+    auto src_sock = get_socket(src_ctx->endpoint);
+    if (!src_sock) return false;
+    int udp_port = dst_ctx->tcp_port > 0 ? dst_ctx->tcp_port + 1 : 0;
+    if (udp_port <= 0) return false;
+
+    rpc_fabric_hop_header hdr = {};
+    hdr.magic = RPC_FABRIC_HOP_MAGIC;
+    hdr.fabric_seq = fabric_seq;
+    hdr.hop_seq = src_sock->udp_next_seq();
+    hdr.cmd = RPC_CMD_FABRIC_HOP;
+    hdr.flags = 0x01; // last_chunk (single chunk for v1)
+    hdr.hop_index = 0;
+    hdr.codec = 0; // bf16 raw
+    hdr.chunk_index = 0;
+    hdr.total_chunks = 1;
+    hdr.payload_len = (uint16_t)size;
+    hdr.activation_len = (uint16_t)size;
+    hdr.token_id = token_id;
+
+    size_t pkt_len = sizeof(hdr) + size;
+    std::vector<uint8_t> pkt(pkt_len);
+    memcpy(pkt.data(), &hdr, sizeof(hdr));
+    memcpy(pkt.data() + sizeof(hdr), data, size);
+    return src_sock->send_udp(pkt.data(), pkt.size());
+}
+
+// ---- Facade reg interface ----
+
+struct ggml_backend_rpc_fabric_reg_context {
+    std::string name;
+    ggml_backend_dev_t device;
+};
+
+static const char * ggml_backend_rpc_fabric_reg_get_name(ggml_backend_reg_t reg) {
+    auto * ctx = (ggml_backend_rpc_fabric_reg_context *)reg->context;
+    return ctx ? ctx->name.c_str() : "RPC-FABRIC";
+}
+
+static size_t ggml_backend_rpc_fabric_reg_get_device_count(ggml_backend_reg_t reg) {
+    GGML_UNUSED(reg);
+    return 1; // the facade presents exactly one device
+}
+
+static ggml_backend_dev_t ggml_backend_rpc_fabric_reg_get_device(ggml_backend_reg_t reg, size_t index) {
+    auto * ctx = (ggml_backend_rpc_fabric_reg_context *)reg->context;
+    if (index == 0 && ctx) return ctx->device;
+    return nullptr;
+}
+
+static void * ggml_backend_rpc_fabric_reg_get_proc_address(ggml_backend_reg_t reg, const char * name) {
+    GGML_UNUSED(reg);
+    GGML_UNUSED(name);
+    return nullptr;
+}
+
+// ---- Facade registration ----
+
+// Create a facade over N rpc-server endpoints. Each endpoint gets a real
+// rpc-server backend. The facade presents one device with summed memory.
+// layer_assignment[n_layers] maps each layer to a server index.
+// Returns a reg whose single device must be registered via
+// ggml_backend_device_register(ggml_backend_reg_dev_get(reg, 0)).
+ggml_backend_reg_t ggml_backend_rpc_fabric_add(const char * const * endpoints,
+                                                int n_endpoints,
+                                                int n_layers,
+                                                const int * layer_assignment) {
+    if (n_endpoints <= 0 || !endpoints) return nullptr;
+
+    // Build per-server real rpc-server backends (registers each endpoint).
+    auto * dev_ctx = new ggml_backend_rpc_fabric_device_context;
+    dev_ctx->n_layers = n_layers;
+    dev_ctx->layer_assignment = nullptr;
+    if (n_layers > 0 && layer_assignment) {
+        dev_ctx->layer_assignment = new int[n_layers];
+        memcpy(dev_ctx->layer_assignment, layer_assignment, n_layers * sizeof(int));
+    }
+
+    for (int i = 0; i < n_endpoints; i++) {
+        auto * srv = ggml_backend_rpc_init(endpoints[i], 0);
+        if (!srv) {
+            GGML_LOG_ERROR("[fabric] failed to init rpc-server for %s\n", endpoints[i]);
+            delete dev_ctx;
+            return nullptr;
+        }
+        dev_ctx->servers.push_back(srv);
+    }
+
+    dev_ctx->name = "RPC-FABRIC[" + std::to_string(n_endpoints) + " servers]";
+    dev_ctx->desc = "rpc:";
+    for (int i = 0; i < n_endpoints; i++) {
+        if (i > 0) dev_ctx->desc += ",";
+        dev_ctx->desc += endpoints[i];
+    }
+
+    // Build the facade reg with a single facade device.
+    auto * reg_ctx = new ggml_backend_rpc_fabric_reg_context;
+    reg_ctx->name = "RPC-FABRIC";
+
+    auto * dev = new ggml_backend_device {
+        /* .iface   = */ ggml_backend_rpc_fabric_device_interface,
+        /* .reg     = */ nullptr, // set below
+        /* .context = */ dev_ctx,
+    };
+
+    auto reg = new ggml_backend_reg {
+        /* .api_version = */ GGML_BACKEND_API_VERSION,
+        /* .iface       = */ ggml_backend_rpc_fabric_reg_interface,
+        /* .context     = */ reg_ctx,
+    };
+    dev->reg = reg;
+    reg_ctx->device = dev;
+
+    // NOTE: the facade device is NOT registered here. The caller must call
+    // ggml_backend_device_register(ggml_backend_reg_dev_get(reg, 0)) after
+    // the buft context's layer_assignment is set (the buft reads it).
+    return reg;
+}
 
 GGML_BACKEND_DL_IMPL(ggml_backend_rpc_reg)

@@ -932,6 +932,61 @@ static void add_rpc_devices(common_params & params, const std::string & servers)
     }
 }
 
+// LEDGER #55/#56: add a fabric facade device from a comma-separated list of
+// rpc-server endpoints. The facade presents ONE device to the scheduler;
+// layers are split across servers evenly (or by --tensor-split if provided).
+// The facade device is registered alongside the real rpc-server devices; the
+// client scheduler sees the facade as RPC-FABRIC[...] and the real servers as
+// RPC[N]. The facade is the one that should be used for -sm layer.
+static void add_fabric_devices(common_params & params, const std::string & servers) {
+    auto rpc_servers = string_split<std::string>(servers, ',');
+    if (rpc_servers.empty()) {
+        throw std::invalid_argument("no RPC servers specified for fabric");
+    }
+    ggml_backend_load_all();
+
+    // Layer assignment is resolved at model load time (GGUF header gives the
+    // layer count). For the minimal scaffold we pass n_layers=0 as a sentinel;
+    // the facade's alloc_buffer routes all allocations to server 0 until the
+    // benchmark agent (E1-E6) wires the real layer count via a follow-up call
+    // to ggml_backend_rpc_fabric_set_layers(). Even split is the default:
+    // layer i -> server (i * n_endpoints / n_layers).
+    int n_layers = 0; // resolved at load; 0 = route-all-to-server-0 fallback
+    int n_endpoints = (int)rpc_servers.size();
+
+    // Placeholder layer assignment (empty = fallback mode). The benchmark
+    // agent populates this after model load when n_layers is known.
+    std::vector<int> layer_assignment;
+
+    // Build C-compatible endpoint array.
+    std::vector<const char *> ep_cstrs;
+    for (const auto & s : rpc_servers) {
+        params.rpc_endpoints.push_back(s);
+        ep_cstrs.push_back(s.c_str());
+    }
+
+    // Load the RPC backend reg to get the fabric add proc address.
+    ggml_backend_reg_t rpc_reg = ggml_backend_reg_by_name("RPC");
+    if (!rpc_reg) {
+        throw std::invalid_argument("failed to find RPC backend for fabric");
+    }
+    typedef ggml_backend_reg_t (*ggml_backend_rpc_fabric_add_t)(const char * const *, int, int, const int *);
+    auto * fn = (ggml_backend_rpc_fabric_add_t) ggml_backend_reg_get_proc_address(rpc_reg, "ggml_backend_rpc_fabric_add");
+    if (!fn) {
+        throw std::invalid_argument("failed to find ggml_backend_rpc_fabric_add — rebuild with RPC backend");
+    }
+    const int * assign_ptr = layer_assignment.empty() ? nullptr : layer_assignment.data();
+    ggml_backend_reg_t fabric_reg = fn(ep_cstrs.data(), n_endpoints, n_layers, assign_ptr);
+    if (!fabric_reg) {
+        throw std::invalid_argument("ggml_backend_rpc_fabric_add failed");
+    }
+    // Register the facade device (the single device in the facade reg).
+    ggml_backend_dev_t fabric_dev = ggml_backend_reg_dev_get(fabric_reg, 0);
+    if (fabric_dev) {
+        ggml_backend_device_register(fabric_dev);
+    }
+}
+
 bool common_params_to_map(int argc, char ** argv, llama_example ex, std::map<common_arg, std::string> & out_map) {
     common_params dummy_params;
     common_params_context ctx_arg = common_params_parser_init(dummy_params, ex, nullptr);
@@ -2325,6 +2380,18 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
                 GGML_UNUSED(params);
             }
         ).set_env("GGML_RPC_MULTIDEVICE"));
+        // LEDGER #55/#56: RPC server-facade. Wraps N rpc-server endpoints
+        // behind a single-device facade. SERVERS is a comma-separated list of
+        // host:port endpoints. The facade presents ONE device (summed VRAM) to
+        // the client scheduler; layers are split across servers by count.
+        // Requires --split-mode layer and a model that spans multiple GPUs.
+        add_opt(common_arg(
+            {"--rpc-fabric"}, "SERVERS",
+            "comma-separated RPC servers to wrap in a fabric facade (host:port,host:port)",
+            [](common_params & params, const std::string & value) {
+                add_fabric_devices(params, value);
+            }
+        ).set_env("LLAMA_ARG_RPC_FABRIC"));
     }
 
     // B+ pipeline mitigation flags (Path-D prototype)
