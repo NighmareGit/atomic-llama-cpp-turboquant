@@ -3228,34 +3228,205 @@ void ggml_backend_rpc_get_device_memory(const char * endpoint, uint32_t device, 
     get_device_memory(sock, device, free, total);
 }
 
-// RPC server-side implementation
+// Forward declaration of rpc_compute_engine and its nested split_buffer_meta type
+class rpc_compute_engine;
 
-class rpc_server {
+// ============================================================================
+// rpc_compute_engine: process-wide shared compute state (T2b extraction).
+//
+// Owns the GPU backends, the per-device stored_graphs cache, the multi-device
+// scheduler cache, the single compute worker thread + queue, and all telemetry
+// state. One instance is created in ggml_backend_rpc_start_server and shared
+// (via shared_ptr) across all TCP connection handlers and the UDP listener.
+//
+// This resolves BUG-011a (UDP cache miss) and BUG-011b (event coupling): the
+// UDP listener now hits the SAME stored_graphs + compute queue as TCP.
+//
+// NIT-1: stored_graph::uid is std::atomic<uint64_t> — read in recompute_allowed()
+// from dispatch + UDP-listener threads, written by graph_compute() in the worker.
+// NIT-2: try_enqueue_graph_recompute() makes check+enqueue atomic under compute_mtx.
+// ============================================================================
+
+// Split buffer metadata type — defined at global scope so both rpc_compute_engine
+// and rpc_connection can reference it without nested-type issues.
+struct rpc_split_buffer_meta {
+    int64_t ne[GGML_MAX_DIMS];
+    int64_t nrows_split;
+    int64_t row_low;
+    int64_t row_high;
+};
+
+class rpc_compute_engine {
 public:
-    rpc_server(std::vector<ggml_backend_t> all_backends, const char * cache_dir)
+    rpc_compute_engine(std::vector<ggml_backend_t> all_backends, const char * cache_dir)
         : backends(std::move(all_backends)), cache_dir(cache_dir),
           telemetry_enabled(rpc_server_telemetry_env_enabled()) {
         stored_graphs.resize(backends.size());
         if (telemetry_enabled) {
-            // populate device_meta once at startup
             for (size_t i = 0; i < backends.size() && i < RPC_TELEMETRY_MAX_DEVICES; i++) {
                 ggml_backend_dev_t dev = ggml_backend_get_device(backends[i]);
                 rpc_telemetry_device_meta & meta = startup_device_meta[i];
                 memset(&meta, 0, sizeof(meta));
-                if (!dev) {
-                    continue;
-                }
+                if (!dev) continue;
                 struct ggml_backend_dev_props props;
                 ggml_backend_dev_get_props(dev, &props);
                 snprintf(meta.name, sizeof(meta.name), "%s", props.name);
                 meta.vram_mib = props.memory_total / (1024 * 1024);
                 meta.backend_type = (int32_t) ggml_backend_dev_type(dev);
-                // pcie_gen/pcie_width not exposed via ggml api; leave 0
             }
         }
         compute_worker = std::thread([this]() { compute_worker_loop(); });
     }
-    ~rpc_server();
+    ~rpc_compute_engine();
+
+    // --- Graph computation (shared across all connections) ---
+    // deserialize_tensor / create_node need the connection's buffer sets for
+    // the split-buffer warning check; passed explicitly.
+    bool graph_compute(const std::vector<uint8_t> & input,
+                       const std::unordered_set<ggml_backend_buffer_t> & buffers,
+                       const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas);
+    bool graph_recompute(const rpc_msg_graph_recompute_req & request);
+    bool graph_compute_all(const std::vector<uint8_t> & input,
+                           const std::unordered_set<ggml_backend_buffer_t> & buffers,
+                           const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas);
+    bool graph_recompute_all(const rpc_msg_graph_recompute_all_req & request);
+    bool graph_compute_stage(const std::vector<uint8_t> & input, uint32_t stage_id,
+                             const std::unordered_set<ggml_backend_buffer_t> & buffers,
+                             const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas);
+    bool recompute_allowed(const rpc_msg_graph_recompute_req & request) const;
+    bool recompute_all_allowed(const rpc_msg_graph_recompute_all_req & request) const;
+
+    // NIT-2: atomic check+enqueue under compute_mtx (fixes the multi-client race
+    // where recompute_allowed() and enqueue_graph_recompute() could be split by
+    // a concurrent graph_compute() uid-reset).
+    bool try_enqueue_graph_recompute(const rpc_msg_graph_recompute_req & request);
+    bool try_enqueue_graph_recompute_all(const rpc_msg_graph_recompute_all_req & request);
+
+    ggml_backend_sched_t create_multi_device_sched(
+        const uint32_t * devices, uint32_t n_devices,
+        const ggml_cgraph * graph);
+
+    void enqueue_graph_compute(std::vector<uint8_t> input,
+                               const std::unordered_set<ggml_backend_buffer_t> & buffers,
+                               const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas);
+    void enqueue_graph_recompute(rpc_msg_graph_recompute_req request);
+    void enqueue_graph_compute_all(std::vector<uint8_t> input,
+                                   const std::unordered_set<ggml_backend_buffer_t> & buffers,
+                                   const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas);
+    void enqueue_graph_recompute_all(rpc_msg_graph_recompute_all_req request);
+    void enqueue_graph_compute_stage(std::vector<uint8_t> input, uint32_t stage_id,
+                                     const std::unordered_set<ggml_backend_buffer_t> & buffers,
+                                     const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas);
+    void wait_compute_idle();
+
+    // Deserialization helpers (called by both engine and connection)
+    ggml_tensor * deserialize_tensor(struct ggml_context * ctx, const rpc_tensor * tensor,
+                                     const std::unordered_set<ggml_backend_buffer_t> & buffers,
+                                     const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas);
+
+    void collect_telemetry(const uint32_t * devices, uint32_t n_devices,
+                           const int64_t * per_device_us);
+    bool get_last_telemetry(rpc_msg_server_telemetry & out) const;
+
+    const char * get_cache_dir() const { return cache_dir; }
+
+    // Public accessors for rpc_connection (which delegates to engine)
+    const std::vector<ggml_backend_t> & get_backends() const { return backends; }
+    size_t get_backend_count() const { return backends.size(); }
+
+    // NIT-1: uid is atomic — read in recompute_allowed() from dispatch + UDP
+    // threads, written by graph_compute() in the worker thread.
+    struct stored_graph {
+        std::vector<uint8_t>      buffer;
+        ggml_cgraph             * graph;
+        std::atomic<uint64_t>     uid{0}; // F1 (T2a): uid bound to this cached graph (0 = unset)
+
+        // std::atomic is not movable, so define explicit move constructor
+        // for vector<stored_graph>::resize() to work.
+        stored_graph() = default;
+        stored_graph(stored_graph && other) noexcept
+            : buffer(std::move(other.buffer)),
+              graph(other.graph),
+              uid(other.uid.load(std::memory_order_relaxed)) {}
+        stored_graph & operator=(stored_graph && other) noexcept {
+            buffer = std::move(other.buffer);
+            graph = other.graph;
+            uid.store(other.uid.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            return *this;
+        }
+        // Non-copyable (atomic member)
+        stored_graph(const stored_graph &) = delete;
+        stored_graph & operator=(const stored_graph &) = delete;
+    };
+
+    // Split buffer metadata type (shared with rpc_connection)
+    // NOTE: this is a type alias for the global rpc_split_buffer_meta.
+    using split_buffer_meta = rpc_split_buffer_meta;
+
+private:
+    ggml_tensor * create_node(uint64_t id,
+                              struct ggml_context * ctx,
+                              const std::unordered_map<uint64_t, const rpc_tensor*> & tensor_ptrs,
+                              std::unordered_map<uint64_t, struct ggml_tensor*> & tensor_map,
+                              const std::unordered_set<ggml_backend_buffer_t> & buffers,
+                              const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas);
+
+    void compute_worker_loop();
+    void submit_compute_job(std::function<void()> job);
+
+    std::vector<ggml_backend_t> backends;
+    const char * cache_dir;
+
+    // store the last computed graph for each backend
+    std::vector<stored_graph> stored_graphs;
+    stored_graph all_graph; // D4.5: dedicated ALL-mode storage
+    std::unordered_map<uint64_t, ggml_backend_sched_t> all_scheds;
+
+    std::mutex                    compute_mtx;
+    std::condition_variable       compute_cv;
+    std::deque<std::function<void()>> compute_queue;
+    std::thread                   compute_worker;
+    std::atomic<bool>             compute_shutdown{false};
+    std::atomic<int>              compute_inflight{0};
+
+    // D4.10: telemetry state
+    const bool                telemetry_enabled;
+    rpc_telemetry_device_meta startup_device_meta[RPC_TELEMETRY_MAX_DEVICES];
+    rpc_msg_server_telemetry  last_telemetry;
+    mutable std::mutex        telemetry_mtx;
+    std::atomic<uint64_t>     telemetry_decode_count{0};
+    std::atomic<uint64_t>     telemetry_node_sample_count{0};
+};
+
+// ============================================================================
+// rpc_connection: per-connection server state (T2b extraction).
+//
+// Holds the per-connection buffer set + split metadata, and a shared_ptr to the
+// process-wide rpc_compute_engine. Buffer/tensor management methods live here;
+// graph computation is delegated to the engine.
+// ============================================================================
+
+class rpc_connection {
+public:
+    rpc_connection(std::shared_ptr<rpc_compute_engine> engine, const char * cache_dir)
+        : engine(std::move(engine)), cache_dir(cache_dir),
+          telemetry_enabled(rpc_server_telemetry_env_enabled()) {
+        if (telemetry_enabled) {
+            const auto & backends = engine->get_backends();
+            for (size_t i = 0; i < backends.size() && i < RPC_TELEMETRY_MAX_DEVICES; i++) {
+                ggml_backend_dev_t dev = ggml_backend_get_device(backends[i]);
+                rpc_telemetry_device_meta & meta = startup_device_meta[i];
+                memset(&meta, 0, sizeof(meta));
+                if (!dev) continue;
+                struct ggml_backend_dev_props props;
+                ggml_backend_dev_get_props(dev, &props);
+                snprintf(meta.name, sizeof(meta.name), "%s", props.name);
+                meta.vram_mib = props.memory_total / (1024 * 1024);
+                meta.backend_type = (int32_t) ggml_backend_dev_type(dev);
+            }
+        }
+    }
+    ~rpc_connection();
 
     void hello(rpc_msg_hello_rsp & response);
     bool alloc_buffer(const rpc_msg_alloc_buffer_req & request, rpc_msg_alloc_buffer_rsp & response);
@@ -3270,103 +3441,57 @@ public:
     bool get_tensor(const rpc_msg_get_tensor_req & request, std::vector<uint8_t> & response);
     bool copy_tensor(const rpc_msg_copy_tensor_req & request, rpc_msg_copy_tensor_rsp & response);
     bool copy_tensor_peer(const rpc_msg_copy_tensor_peer_req & request, rpc_msg_copy_tensor_rsp & response);
-    bool graph_compute(const std::vector<uint8_t> & input);
-    bool graph_recompute(const rpc_msg_graph_recompute_req & request);
-    bool graph_compute_all(const std::vector<uint8_t> & input);
-    bool graph_recompute_all(const rpc_msg_graph_recompute_all_req & request);
-    bool graph_compute_stage(const std::vector<uint8_t> & input, uint32_t stage_id);  // D6.9
-    // F1 (T2a): synchronous cache+uid check for GRAPH_RECOMPUTE. Returns true if the
-    // server's cached graph slot is non-null and its bound uid matches the request
-    // (or the uid is unbound/unknown, i.e. first recompute after a fresh compute).
-    bool recompute_allowed(const rpc_msg_graph_recompute_req & request) const;
-    // F1 (T2a): same, for the multi-device GRAPH_RECOMPUTE_ALL path.
-    bool recompute_all_allowed(const rpc_msg_graph_recompute_all_req & request) const;
-    ggml_backend_sched_t create_multi_device_sched(
-        const uint32_t * devices, uint32_t n_devices,
-        const ggml_cgraph * graph);
     bool init_tensor(const rpc_msg_init_tensor_req & request);
     bool get_alloc_size(const rpc_msg_get_alloc_size_req & request, rpc_msg_get_alloc_size_rsp & response);
     bool get_device_memory(const rpc_msg_get_device_memory_req & request, rpc_msg_get_device_memory_rsp & response);
 
-    void enqueue_graph_compute(std::vector<uint8_t> input);
-    void enqueue_graph_recompute(rpc_msg_graph_recompute_req request);
-    void enqueue_graph_compute_all(std::vector<uint8_t> input);
-    void enqueue_graph_recompute_all(rpc_msg_graph_recompute_all_req request);
-    void enqueue_graph_compute_stage(std::vector<uint8_t> input, uint32_t stage_id);  // D6.9
-    void wait_compute_idle();
-    void collect_telemetry(const uint32_t * devices, uint32_t n_devices,
-                           const int64_t * per_device_us);
-    bool get_last_telemetry(rpc_msg_server_telemetry & out) const;
+    // Accessors for the engine's graph methods
+    const std::unordered_set<ggml_backend_buffer_t> & get_buffers() const { return buffers; }
+    const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & get_split_metas() const { return split_buffer_metas; }
+    std::shared_ptr<rpc_compute_engine> get_engine() const { return engine; }
 
-    struct stored_graph {
-        std::vector<uint8_t>   buffer;
-        ggml_cgraph          * graph;
-        uint64_t               uid = 0; // F1 (T2a): uid bound to this cached graph (0 = unset)
-    };
+    // Direct engine passthroughs (used by rpc_serve_client)
+    bool recompute_allowed(const rpc_msg_graph_recompute_req & request) const { return engine->recompute_allowed(request); }
+    bool recompute_all_allowed(const rpc_msg_graph_recompute_all_req & request) const { return engine->recompute_all_allowed(request); }
+    bool try_enqueue_graph_recompute(const rpc_msg_graph_recompute_req & request) { return engine->try_enqueue_graph_recompute(request); }
+    bool try_enqueue_graph_recompute_all(const rpc_msg_graph_recompute_all_req & request) { return engine->try_enqueue_graph_recompute_all(request); }
+    void enqueue_graph_compute(std::vector<uint8_t> input) { engine->enqueue_graph_compute(std::move(input), buffers, split_buffer_metas); }
+    void enqueue_graph_recompute(rpc_msg_graph_recompute_req request) { engine->enqueue_graph_recompute(std::move(request)); }
+    void enqueue_graph_compute_all(std::vector<uint8_t> input) { engine->enqueue_graph_compute_all(std::move(input), buffers, split_buffer_metas); }
+    void enqueue_graph_recompute_all(rpc_msg_graph_recompute_all_req request) { engine->enqueue_graph_recompute_all(std::move(request)); }
+    void enqueue_graph_compute_stage(std::vector<uint8_t> input, uint32_t stage_id) { engine->enqueue_graph_compute_stage(std::move(input), stage_id, buffers, split_buffer_metas); }
+    void wait_compute_idle() { engine->wait_compute_idle(); }
+    bool get_last_telemetry(rpc_msg_server_telemetry & out) const { return engine->get_last_telemetry(out); }
 
 private:
     bool get_cached_file(uint64_t hash, std::vector<uint8_t> & data);
     ggml_tensor * deserialize_tensor(struct ggml_context * ctx, const rpc_tensor * tensor);
-    ggml_tensor * create_node(uint64_t id,
-                              struct ggml_context * ctx,
-                              const std::unordered_map<uint64_t, const rpc_tensor*> & tensor_ptrs,
-                              std::unordered_map<uint64_t, struct ggml_tensor*> & tensor_map);
 
-
-    void compute_worker_loop();
-    void submit_compute_job(std::function<void()> job);
-
-    std::vector<ggml_backend_t> backends;
+    std::shared_ptr<rpc_compute_engine> engine;
     const char * cache_dir;
     std::unordered_set<ggml_backend_buffer_t> buffers;
-    std::mutex buffers_mtx; // protects buffers from concurrent access
+    std::mutex buffers_mtx;
 
-    // Split buffer metadata: stores original tensor dimensions for buffers
-    // allocated via ALLOC_BUFFER_SPLIT, so deserialize_tensor can adjust ne[]
-    // to match the actual buffer size during graph_compute.
-    struct split_buffer_meta {
-        int64_t ne[GGML_MAX_DIMS]; // original (full, unsplit) tensor dimensions
-        int64_t nrows_split;       // ne[0] for this device's row slice
-        int64_t row_low;
-        int64_t row_high;
-    };
-    std::unordered_map<ggml_backend_buffer_t, split_buffer_meta> split_buffer_metas;
+    std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> split_buffer_metas;
 
-    // store the last computed graph for each backend
-    std::vector<stored_graph> stored_graphs;
-    // D4.5: dedicated storage for ALL-mode graph (separate from per-device stored_graphs)
-    stored_graph all_graph;
-
-    // D4.5: cached multi-device schedulers keyed by device set hash
-    std::unordered_map<uint64_t, ggml_backend_sched_t> all_scheds;
-
-    std::mutex                    compute_mtx;
-    std::condition_variable         compute_cv;
-    std::deque<std::function<void()>> compute_queue;
-    std::thread                     compute_worker;
-    std::atomic<bool>               compute_shutdown{false};
-    std::atomic<int>                compute_inflight{0};
-
-    // D4.10: telemetry state
+    // D4.10: per-connection telemetry state (for collect_telemetry calls from connection)
     const bool                telemetry_enabled;
     rpc_telemetry_device_meta startup_device_meta[RPC_TELEMETRY_MAX_DEVICES];
-    rpc_msg_server_telemetry  last_telemetry;
-    mutable std::mutex        telemetry_mtx;
-    std::atomic<uint64_t>     telemetry_decode_count{0};
-    // issue 12: sampled per-node timing (node_timings events). Bounded overhead.
-    std::atomic<uint64_t>     telemetry_node_sample_count{0};
 };
 
-void rpc_server::hello(rpc_msg_hello_rsp & response) {
+// OUT-OF-CLASS DESTRUCTOR DEFINITION below
+using rpc_server = rpc_connection;
+
+void rpc_connection::hello(rpc_msg_hello_rsp & response) {
     response.major = RPC_PROTO_MAJOR_VERSION;
     response.minor = RPC_PROTO_MINOR_VERSION;
     response.patch = RPC_PROTO_PATCH_VERSION;
     LOG_DBG("[%s] version: %d.%d.%d\n", __func__, response.major, response.minor, response.patch);
 }
 
-bool rpc_server::get_alloc_size(const rpc_msg_get_alloc_size_req & request, rpc_msg_get_alloc_size_rsp & response) {
+bool rpc_connection::get_alloc_size(const rpc_msg_get_alloc_size_req & request, rpc_msg_get_alloc_size_rsp & response) {
     uint32_t dev_id = request.device;
-    if (dev_id >= backends.size()) {
+    if (dev_id >= engine->get_backends().size()) {
         return false;
     }
     ggml_backend_buffer_type_t buft;
@@ -3394,7 +3519,7 @@ bool rpc_server::get_alloc_size(const rpc_msg_get_alloc_size_req & request, rpc_
     LOG_DBG("[%s] device: %d, buffer: %p, data: %p\n", __func__, dev_id, (void*)tensor->buffer, tensor->data);
     if (tensor->buffer == nullptr) {
         //No buffer allocated.
-        buft = ggml_backend_get_default_buffer_type(backends[dev_id]);
+        buft = ggml_backend_get_default_buffer_type(engine->get_backends()[dev_id]);
     } else {
         buft = tensor->buffer->buft;
     }
@@ -3404,12 +3529,12 @@ bool rpc_server::get_alloc_size(const rpc_msg_get_alloc_size_req & request, rpc_
     return true;
 }
 
-bool rpc_server::alloc_buffer(const rpc_msg_alloc_buffer_req & request, rpc_msg_alloc_buffer_rsp & response) {
+bool rpc_connection::alloc_buffer(const rpc_msg_alloc_buffer_req & request, rpc_msg_alloc_buffer_rsp & response) {
     uint32_t dev_id = request.device;
-    if (dev_id >= backends.size()) {
+    if (dev_id >= engine->get_backends().size()) {
         return false;
     }
-    ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(backends[dev_id]);
+    ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(engine->get_backends()[dev_id]);
     ggml_backend_buffer_t buffer = ggml_backend_buft_alloc_buffer(buft, request.size);
     response.remote_ptr = 0;
     response.remote_size = 0;
@@ -3428,9 +3553,9 @@ bool rpc_server::alloc_buffer(const rpc_msg_alloc_buffer_req & request, rpc_msg_
     return true;
 }
 
-bool rpc_server::alloc_buffer_split(const rpc_msg_alloc_buffer_split_req & request, rpc_msg_alloc_buffer_split_rsp & response) {
+bool rpc_connection::alloc_buffer_split(const rpc_msg_alloc_buffer_split_req & request, rpc_msg_alloc_buffer_split_rsp & response) {
     uint32_t dev_id = request.device;
-    if (dev_id >= backends.size()) {
+    if (dev_id >= engine->get_backends().size()) {
         return false;
     }
 
@@ -3483,7 +3608,7 @@ bool rpc_server::alloc_buffer_split(const rpc_msg_alloc_buffer_split_req & reque
 #endif
     if (buffer == nullptr) {
         // Fallback: plain default buffer type (non-split path)
-        ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(backends[dev_id]);
+        ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(engine->get_backends()[dev_id]);
         buffer = ggml_backend_buft_alloc_buffer(buft, alloc_size);
     }
 
@@ -3505,7 +3630,7 @@ bool rpc_server::alloc_buffer_split(const rpc_msg_alloc_buffer_split_req & reque
             // CUDA split buffers carry their own row_low/row_high context
             // in tensor->extra, so no metadata is needed for them.
             if (!rpc_buft_is_cuda_split(buffer->buft)) {
-                split_buffer_meta meta;
+                rpc_split_buffer_meta meta;
                 for (int i = 0; i < GGML_MAX_DIMS; i++) {
                     meta.ne[i] = tensor->ne[i];
                 }
@@ -3522,31 +3647,31 @@ bool rpc_server::alloc_buffer_split(const rpc_msg_alloc_buffer_split_req & reque
     return true;
 }
 
-bool rpc_server::get_alignment(const rpc_msg_get_alignment_req & request, rpc_msg_get_alignment_rsp & response) {
+bool rpc_connection::get_alignment(const rpc_msg_get_alignment_req & request, rpc_msg_get_alignment_rsp & response) {
     uint32_t dev_id = request.device;
-    if (dev_id >= backends.size()) {
+    if (dev_id >= engine->get_backends().size()) {
         return false;
     }
-    ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(backends[dev_id]);
+    ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(engine->get_backends()[dev_id]);
     size_t alignment = ggml_backend_buft_get_alignment(buft);
     LOG_DBG("[%s] device: %d, alignment: %lu\n", __func__, dev_id, alignment);
     response.alignment = alignment;
     return true;
 }
 
-bool rpc_server::get_max_size(const rpc_msg_get_max_size_req & request, rpc_msg_get_max_size_rsp & response) {
+bool rpc_connection::get_max_size(const rpc_msg_get_max_size_req & request, rpc_msg_get_max_size_rsp & response) {
     uint32_t dev_id = request.device;
-    if (dev_id >= backends.size()) {
+    if (dev_id >= engine->get_backends().size()) {
         return false;
     }
-    ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(backends[dev_id]);
+    ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(engine->get_backends()[dev_id]);
     size_t max_size = ggml_backend_buft_get_max_size(buft);
     LOG_DBG("[%s] device: %d, max_size: %lu\n", __func__, dev_id, max_size);
     response.max_size = max_size;
     return true;
 }
 
-bool rpc_server::buffer_get_base(const rpc_msg_buffer_get_base_req & request, rpc_msg_buffer_get_base_rsp & response) {
+bool rpc_connection::buffer_get_base(const rpc_msg_buffer_get_base_req & request, rpc_msg_buffer_get_base_rsp & response) {
     LOG_DBG("[%s] remote_ptr: %" PRIx64 "\n", __func__, request.remote_ptr);
     ggml_backend_buffer_t buffer = reinterpret_cast<ggml_backend_buffer_t>(request.remote_ptr);
     {
@@ -3561,7 +3686,7 @@ bool rpc_server::buffer_get_base(const rpc_msg_buffer_get_base_req & request, rp
     return true;
 }
 
-bool rpc_server::free_buffer(const rpc_msg_free_buffer_req & request) {
+bool rpc_connection::free_buffer(const rpc_msg_free_buffer_req & request) {
     LOG_DBG("[%s] remote_ptr: %" PRIx64 "\n", __func__, request.remote_ptr);
     ggml_backend_buffer_t buffer = reinterpret_cast<ggml_backend_buffer_t>(request.remote_ptr);
     {
@@ -3580,7 +3705,7 @@ bool rpc_server::free_buffer(const rpc_msg_free_buffer_req & request) {
     return true;
 }
 
-bool rpc_server::buffer_clear(const rpc_msg_buffer_clear_req & request) {
+bool rpc_connection::buffer_clear(const rpc_msg_buffer_clear_req & request) {
     LOG_DBG("[%s] remote_ptr: %" PRIx64 ", value: %u\n", __func__, request.remote_ptr, request.value);
     ggml_backend_buffer_t buffer = reinterpret_cast<ggml_backend_buffer_t>(request.remote_ptr);
     {
@@ -3594,7 +3719,9 @@ bool rpc_server::buffer_clear(const rpc_msg_buffer_clear_req & request) {
     return true;
 }
 
-ggml_tensor * rpc_server::deserialize_tensor(struct ggml_context * ctx, const rpc_tensor * tensor) {
+ggml_tensor * rpc_compute_engine::deserialize_tensor(struct ggml_context * ctx, const rpc_tensor * tensor,
+                                     const std::unordered_set<ggml_backend_buffer_t> & buffers,
+                                     const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas) {
     // Validate tensor type before using it
     if (tensor->type >= GGML_TYPE_COUNT) {
         GGML_LOG_ERROR("[%s] invalid tensor type received: %u\n", __func__, tensor->type);
@@ -3624,7 +3751,8 @@ ggml_tensor * rpc_server::deserialize_tensor(struct ggml_context * ctx, const rp
     bool is_cuda_split = false;
     split_buffer_meta split_meta;
     if (result->buffer) {
-        std::lock_guard<std::mutex> lock(buffers_mtx);
+        // NOTE: buffers and split_metas are passed by const reference from the
+        // connection. They are stable during graph compute (no concurrent mods).
         if (buffers.find(result->buffer) == buffers.end()) {
             static std::atomic<int> warn_count{0};
             if (warn_count.fetch_add(1, std::memory_order_relaxed) < 5) {
@@ -3636,8 +3764,8 @@ ggml_tensor * rpc_server::deserialize_tensor(struct ggml_context * ctx, const rp
             // Check if this is a native CUDA split buffer (V0 row-split fix)
             is_cuda_split = rpc_buft_is_cuda_split(result->buffer->buft);
             // Check if this buffer has split metadata (fallback path)
-            auto meta_it = split_buffer_metas.find(result->buffer);
-            if (meta_it != split_buffer_metas.end()) {
+            auto meta_it = split_metas.find(result->buffer);
+            if (meta_it != split_metas.end()) {
                 is_split = true;
                 split_meta = meta_it->second;
             }
@@ -3671,8 +3799,77 @@ ggml_tensor * rpc_server::deserialize_tensor(struct ggml_context * ctx, const rp
     return result;
 }
 
+// rpc_connection::deserialize_tensor: per-connection version that uses the
+// connection's own buffers + split_buffer_metas (locked by buffers_mtas).
+ggml_tensor * rpc_connection::deserialize_tensor(struct ggml_context * ctx, const rpc_tensor * tensor) {
+    // Validate tensor type before using it
+    if (tensor->type >= GGML_TYPE_COUNT) {
+        GGML_LOG_ERROR("[%s] invalid tensor type received: %u\n", __func__, tensor->type);
+        return nullptr;
+    }
 
-bool rpc_server::set_tensor(const std::vector<uint8_t> & input) {
+    // Fix: Prevent division by zero if blck_size is 0 (e.g., deprecated types)
+    if (ggml_blck_size((enum ggml_type)tensor->type) == 0) {
+        GGML_LOG_ERROR("[%s] invalid tensor type received (blck_size is 0): %u\n", __func__, tensor->type);
+        return nullptr;
+    }
+
+    ggml_tensor * result = ggml_new_tensor_4d(ctx, (ggml_type) tensor->type,
+        tensor->ne[0], tensor->ne[1], tensor->ne[2], tensor->ne[3]);
+
+    if (result == nullptr) {
+        GGML_LOG_ERROR("[%s] ggml_new_tensor_4d failed for type %u\n", __func__, tensor->type);
+        return nullptr;
+    }
+
+    for (uint32_t i = 0; i < GGML_MAX_DIMS; i++) {
+        result->nb[i] = tensor->nb[i];
+    }
+    result->buffer = reinterpret_cast<ggml_backend_buffer_t>(tensor->buffer);
+    bool is_split = false;
+    bool is_cuda_split = false;
+    rpc_split_buffer_meta split_meta;
+    if (result->buffer) {
+        std::lock_guard<std::mutex> lock(buffers_mtx);
+        if (buffers.find(result->buffer) == buffers.end()) {
+            static std::atomic<int> warn_count{0};
+            if (warn_count.fetch_add(1, std::memory_order_relaxed) < 5) {
+                GGML_LOG_WARN("[%s] buffer %p not found in server buffer set (%zu buffers registered)\n",
+                    __func__, (void*)result->buffer, buffers.size());
+            }
+            result->buffer = nullptr;
+        } else {
+            is_cuda_split = rpc_buft_is_cuda_split(result->buffer->buft);
+            auto meta_it = split_buffer_metas.find(result->buffer);
+            if (meta_it != split_buffer_metas.end()) {
+                is_split = true;
+                split_meta = meta_it->second;
+            }
+        }
+    }
+
+    if (is_cuda_split) {
+        if (result->extra == nullptr && result->buffer->iface.init_tensor) {
+            result->buffer->iface.init_tensor(result->buffer, result);
+        }
+        result->data = nullptr;
+    } else if (is_split) {
+        result->data = ggml_backend_buffer_get_base(result->buffer);
+    } else {
+        result->data = reinterpret_cast<void *>(tensor->data);
+    }
+
+    result->op = (ggml_op) tensor->op;
+    for (uint32_t i = 0; i < GGML_MAX_OP_PARAMS / sizeof(int32_t); i++) {
+        result->op_params[i] = tensor->op_params[i];
+    }
+    result->flags = tensor->flags;
+    ggml_set_name(result, tensor->name);
+    return result;
+}
+
+
+bool rpc_connection::set_tensor(const std::vector<uint8_t> & input) {
     // serialization format: | rpc_tensor | offset (8 bytes) | data (size bytes) |
     if (input.size() < sizeof(rpc_tensor) + sizeof(uint64_t)) {
         return false;
@@ -3738,7 +3935,7 @@ bool rpc_server::set_tensor(const std::vector<uint8_t> & input) {
     return true;
 }
 
-bool rpc_server::get_cached_file(uint64_t hash, std::vector<uint8_t> & data) {
+bool rpc_connection::get_cached_file(uint64_t hash, std::vector<uint8_t> & data) {
     if (!cache_dir) {
         return false;
     }
@@ -3758,7 +3955,7 @@ bool rpc_server::get_cached_file(uint64_t hash, std::vector<uint8_t> & data) {
     return true;
 }
 
-bool rpc_server::set_tensor_hash(const rpc_msg_set_tensor_hash_req & request, rpc_msg_set_tensor_hash_rsp & response)
+bool rpc_connection::set_tensor_hash(const rpc_msg_set_tensor_hash_req & request, rpc_msg_set_tensor_hash_rsp & response)
 {
     std::vector<uint8_t> cached_file;
     if (!get_cached_file(request.hash, cached_file)) {
@@ -3808,7 +4005,7 @@ bool rpc_server::set_tensor_hash(const rpc_msg_set_tensor_hash_req & request, rp
     return true;
 }
 
-bool rpc_server::init_tensor(const rpc_msg_init_tensor_req & request) {
+bool rpc_connection::init_tensor(const rpc_msg_init_tensor_req & request) {
     struct ggml_init_params params {
         /*.mem_size   =*/ ggml_tensor_overhead(),
         /*.mem_buffer =*/ NULL,
@@ -3846,7 +4043,7 @@ bool rpc_server::init_tensor(const rpc_msg_init_tensor_req & request) {
     return true;
 }
 
-bool rpc_server::get_tensor(const rpc_msg_get_tensor_req & request, std::vector<uint8_t> & response) {
+bool rpc_connection::get_tensor(const rpc_msg_get_tensor_req & request, std::vector<uint8_t> & response) {
     struct ggml_init_params params {
         /*.mem_size   =*/ ggml_tensor_overhead(),
         /*.mem_buffer =*/ NULL,
@@ -3892,7 +4089,7 @@ bool rpc_server::get_tensor(const rpc_msg_get_tensor_req & request, std::vector<
     return true;
 }
 
-bool rpc_server::copy_tensor(const rpc_msg_copy_tensor_req & request, rpc_msg_copy_tensor_rsp & response) {
+bool rpc_connection::copy_tensor(const rpc_msg_copy_tensor_req & request, rpc_msg_copy_tensor_rsp & response) {
     struct ggml_init_params params {
         /*.mem_size   =*/ 2*ggml_tensor_overhead(),
         /*.mem_buffer =*/ NULL,
@@ -3915,7 +4112,7 @@ bool rpc_server::copy_tensor(const rpc_msg_copy_tensor_req & request, rpc_msg_co
     uint64_t dst_buf_sz = (uint64_t) ggml_backend_buffer_get_size(dst->buffer);
 
     if (dst_data + src_size > dst_base + dst_buf_sz) {
-        GGML_LOG_ERROR("[%s] out-of-bounds write in rpc_server::copy_tensor:\n"
+        GGML_LOG_ERROR("[%s] out-of-bounds write in rpc_connection::copy_tensor:\n"
                          "    write range : [0x%" PRIx64 ", 0x%" PRIx64 "]\n"
                          "    buffer base: [0x%" PRIx64 ", 0x%" PRIx64 "]\n",
                          __func__,
@@ -3933,7 +4130,7 @@ bool rpc_server::copy_tensor(const rpc_msg_copy_tensor_req & request, rpc_msg_co
     return true;
 }
 
-bool rpc_server::copy_tensor_peer(const rpc_msg_copy_tensor_peer_req & request, rpc_msg_copy_tensor_rsp & response) {
+bool rpc_connection::copy_tensor_peer(const rpc_msg_copy_tensor_peer_req & request, rpc_msg_copy_tensor_rsp & response) {
     struct ggml_init_params params {
         /*.mem_size   =*/ 2*ggml_tensor_overhead(),
         /*.mem_buffer =*/ NULL,
@@ -3966,10 +4163,12 @@ bool rpc_server::copy_tensor_peer(const rpc_msg_copy_tensor_peer_req & request, 
     return true;
 }
 
-ggml_tensor * rpc_server::create_node(uint64_t id,
+ggml_tensor * rpc_compute_engine::create_node(uint64_t id,
                                       struct ggml_context * ctx,
                                       const std::unordered_map<uint64_t, const rpc_tensor*> & tensor_ptrs,
-                                      std::unordered_map<uint64_t, struct ggml_tensor*> & tensor_map) {
+                                      std::unordered_map<uint64_t, struct ggml_tensor*> & tensor_map,
+                                      const std::unordered_set<ggml_backend_buffer_t> & buffers,
+                                      const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas) {
     if (tensor_map.find(id) != tensor_map.end()) {
         return tensor_map[id];
     }
@@ -3980,7 +4179,7 @@ ggml_tensor * rpc_server::create_node(uint64_t id,
     }
     const rpc_tensor * tensor = it_ptr->second;
 
-    struct ggml_tensor * result = deserialize_tensor(ctx, tensor);
+    struct ggml_tensor * result = deserialize_tensor(ctx, tensor, buffers, split_metas);
     if (result == nullptr) {
         return nullptr;
     }
@@ -3997,7 +4196,7 @@ ggml_tensor * rpc_server::create_node(uint64_t id,
         if (tensor->src[i] == 0) {
             result->src[i] = nullptr;
         } else {
-            result->src[i] = create_node(tensor->src[i], ctx, tensor_ptrs, tensor_map);
+            result->src[i] = create_node(tensor->src[i], ctx, tensor_ptrs, tensor_map, buffers, split_metas);
             // If the recursive call failed for a non-zero ID, propagate the error
             if (result->src[i] == nullptr) {
                 GGML_LOG_ERROR("[%s] failed to create source node %d (src_id=%" PRIu64 ") for node id %" PRIu64 "\n",
@@ -4012,7 +4211,7 @@ ggml_tensor * rpc_server::create_node(uint64_t id,
     if (tensor->view_src == 0) {
         result->view_src = nullptr;
     } else {
-        result->view_src = create_node(tensor->view_src, ctx, tensor_ptrs, tensor_map);
+        result->view_src = create_node(tensor->view_src, ctx, tensor_ptrs, tensor_map, buffers, split_metas);
         // If the recursive call failed for a non-zero ID, propagate the error
         if (result->view_src == nullptr) {
             GGML_LOG_ERROR("[%s] failed to create view_src node (view_src_id=%" PRIu64 ") for node id %" PRIu64 "\n",
@@ -4090,7 +4289,9 @@ static void filter_null_src_nodes(struct ggml_cgraph * graph) {
     }
 }
 
-bool rpc_server::graph_compute(const std::vector<uint8_t> & input) {
+bool rpc_compute_engine::graph_compute(const std::vector<uint8_t> & input,
+                       const std::unordered_set<ggml_backend_buffer_t> & buffers,
+                       const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas) {
     GGML_LOG_DEBUG("[rpc-server] graph_compute (single-device) called, input.size=%zu\n", input.size());
     // serialization format:
     // | device (4 bytes) | n_nodes (4 bytes) | nodes (n_nodes * sizeof(uint64_t) | n_tensors (4 bytes) | tensors (n_tensors * sizeof(rpc_tensor)) |
@@ -4145,7 +4346,7 @@ bool rpc_server::graph_compute(const std::vector<uint8_t> & input) {
     for (uint32_t i = 0; i < n_nodes; i++) {
         int64_t id;
         memcpy(&id, &nodes[i], sizeof(id));
-        graph->nodes[i] = create_node(id, ctx, tensor_ptrs, tensor_map);
+        graph->nodes[i] = create_node(id, ctx, tensor_ptrs, tensor_map, buffers, split_metas);
 
         // Check if create_node failed for a *non-zero* ID.
         // If id was 0, create_node returning nullptr is expected.
@@ -4177,12 +4378,13 @@ bool rpc_server::graph_compute(const std::vector<uint8_t> & input) {
             std::chrono::steady_clock::now() - t0).count();
     }
     GGML_ASSERT(status == GGML_STATUS_SUCCESS && "Unsuccessful graph computations are not supported with RPC");
-    rpc_trace_emit("rpc_server::graph_compute", "server_compute", RPC_CMD_GRAPH_COMPUTE, input.size(), true, us);
+    rpc_trace_emit("rpc_compute_engine::graph_compute", "server_compute", RPC_CMD_GRAPH_COMPUTE, input.size(), true, us);
     stored_graphs[device].graph = graph;
     // F1 (T2a): reset the bound uid for this slot. The uid is learned lazily on
     // the first GRAPH_RECOMPUTE after a fresh compute; resetting here guarantees a
     // new graph (post-eviction or post-recompute-miss fallback) re-binds cleanly.
-    stored_graphs[device].uid = 0;
+    // NIT-1: uid is atomic — release so dispatch threads see the reset.
+    stored_graphs[device].uid.store(0, std::memory_order_release);
     // issue 12: emit per-node timings for this sampled decode.
     if (sample_nodes && !node_timings.empty()) {
         rpc_write_node_timings_jsonl(node_timings);
@@ -4196,7 +4398,7 @@ bool rpc_server::graph_compute(const std::vector<uint8_t> & input) {
     return true;
 }
 
-bool rpc_server::recompute_allowed(const rpc_msg_graph_recompute_req & request) const {
+bool rpc_compute_engine::recompute_allowed(const rpc_msg_graph_recompute_req & request) const {
     uint32_t device = request.device;
     if (device >= backends.size()) {
         return false;
@@ -4204,30 +4406,34 @@ bool rpc_server::recompute_allowed(const rpc_msg_graph_recompute_req & request) 
     if (stored_graphs[device].graph == nullptr) {
         return false;
     }
+    // NIT-1: uid is std::atomic<uint64_t> — read with acquire ordering so the
+    // dispatch thread sees the latest value written by the compute worker.
+    uint64_t slot_uid = stored_graphs[device].uid.load(std::memory_order_acquire);
     // F1 (T2a): uid gate. A zero hash means an old (pre-T2a) client that does
     // not send a hash — treat as unknown and allow (legacy behavior). Non-zero
     // hash must match the bound uid, or the slot must be unbound (lazy-bind on
     // the actual recompute). A mismatch means the cached graph is not the one the
     // client expects → signal MISS so the client falls back to GRAPH_COMPUTE.
-    if (request.graph_hash != 0 && stored_graphs[device].uid != 0 &&
-        stored_graphs[device].uid != request.graph_hash) {
+    if (request.graph_hash != 0 && slot_uid != 0 && slot_uid != request.graph_hash) {
         return false;
     }
     return true;
 }
 
-bool rpc_server::recompute_all_allowed(const rpc_msg_graph_recompute_all_req & request) const {
+bool rpc_compute_engine::recompute_all_allowed(const rpc_msg_graph_recompute_all_req & request) const {
     if (all_graph.graph == nullptr) {
         return false;
     }
+    // NIT-1: uid is atomic — read with acquire ordering.
+    uint64_t slot_uid = all_graph.uid.load(std::memory_order_acquire);
     // F1 (T2a): uid gate for the multi-device slot. Zero hash → old client, allow.
-    if (request.graph_hash != 0 && all_graph.uid != 0 && all_graph.uid != request.graph_hash) {
+    if (request.graph_hash != 0 && slot_uid != 0 && slot_uid != request.graph_hash) {
         return false;
     }
     return true;
 }
 
-bool rpc_server::graph_recompute(const rpc_msg_graph_recompute_req & request) {
+bool rpc_compute_engine::graph_recompute(const rpc_msg_graph_recompute_req & request) {
     uint32_t device = request.device;
     if (device >= backends.size()) {
         return false;
@@ -4239,18 +4445,21 @@ bool rpc_server::graph_recompute(const rpc_msg_graph_recompute_req & request) {
     // on mismatch the cached graph is NOT the one the client expects → return
     // false so the client falls back to a full GRAPH_COMPUTE. A zero hash means
     // the client is old (pre-T2a) and did not send a hash: skip verification.
+    // NIT-1: uid is atomic — use acquire/release for proper synchronization
+    // with the compute worker thread that resets uid in graph_compute().
     if (request.graph_hash != 0) {
-        if (stored_graphs[device].uid == 0) {
+        uint64_t slot_uid = stored_graphs[device].uid.load(std::memory_order_acquire);
+        if (slot_uid == 0) {
             // First recompute since the last graph_compute for this slot: bind.
-            stored_graphs[device].uid = request.graph_hash;
-        } else if (stored_graphs[device].uid != request.graph_hash) {
+            stored_graphs[device].uid.store(request.graph_hash, std::memory_order_release);
+        } else if (slot_uid != request.graph_hash) {
             LOG_DBG("[%s] device: %u uid mismatch: stored=%" PRIu64 " req=%" PRIu64 " (recompute miss)\n",
-                    __func__, device, stored_graphs[device].uid, request.graph_hash);
+                    __func__, device, slot_uid, request.graph_hash);
             return false;
         }
     }
     ggml_cgraph * graph = stored_graphs[device].graph;
-    LOG_DBG("[%s] device: %u uid=%" PRIu64 "\n", __func__, device, stored_graphs[device].uid);
+    LOG_DBG("[%s] device: %u uid=%" PRIu64 "\n", __func__, device, stored_graphs[device].uid.load(std::memory_order_relaxed));
 
     // issue 12: per-node timing on recompute path (same sampling as graph_compute).
     uint64_t us = 0;
@@ -4270,7 +4479,7 @@ bool rpc_server::graph_recompute(const rpc_msg_graph_recompute_req & request) {
             std::chrono::steady_clock::now() - t0).count();
     }
     GGML_ASSERT(status == GGML_STATUS_SUCCESS && "Unsuccessful graph computations are not supported with RPC");
-    rpc_trace_emit("rpc_server::graph_recompute", "server_compute", RPC_CMD_GRAPH_RECOMPUTE, 0, true, us);
+    rpc_trace_emit("rpc_compute_engine::graph_recompute", "server_compute", RPC_CMD_GRAPH_RECOMPUTE, 0, true, us);
     // issue 12: emit per-node timings for this sampled decode.
     if (sample_nodes && !node_timings.empty()) {
         rpc_write_node_timings_jsonl(node_timings);
@@ -4297,7 +4506,7 @@ static uint64_t hash_device_set(const uint32_t * devices, uint32_t n_devices) {
     return h;
 }
 
-ggml_backend_sched_t rpc_server::create_multi_device_sched(
+ggml_backend_sched_t rpc_compute_engine::create_multi_device_sched(
     const uint32_t * devices, uint32_t n_devices,
     const ggml_cgraph * graph) {
     // D4.5: check cache first
@@ -4335,7 +4544,9 @@ ggml_backend_sched_t rpc_server::create_multi_device_sched(
     return sched;
 }
 
-bool rpc_server::graph_compute_all(const std::vector<uint8_t> & input) {
+bool rpc_compute_engine::graph_compute_all(const std::vector<uint8_t> & input,
+                           const std::unordered_set<ggml_backend_buffer_t> & buffers,
+                           const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas) {
     GGML_LOG_DEBUG("[rpc-server] graph_compute_all (multi-device) called, input.size=%zu\n", input.size());
     // Format: | n_devices(4) | device_ids(n_devices*4) | n_nodes(4) | nodes(n_nodes*8) | n_tensors(4) | tensors(n_devices*rpc_tensor) |
     if (input.size() < sizeof(uint32_t) * 3) {
@@ -4400,7 +4611,7 @@ bool rpc_server::graph_compute_all(const std::vector<uint8_t> & input) {
     for (uint32_t i = 0; i < n_nodes; i++) {
         int64_t id;
         memcpy(&id, &nodes[i], sizeof(id));
-        graph->nodes[i] = create_node(id, ctx, tensor_ptrs, tensor_map);
+        graph->nodes[i] = create_node(id, ctx, tensor_ptrs, tensor_map, buffers, split_metas);
         if (graph->nodes[i] == nullptr && id != 0) {
             return false;
         }
@@ -4421,7 +4632,7 @@ bool rpc_server::graph_compute_all(const std::vector<uint8_t> & input) {
     GGML_ASSERT(status == GGML_STATUS_SUCCESS);
     const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - t0).count();
-    rpc_trace_emit("rpc_server::graph_compute_all", "server_compute",
+    rpc_trace_emit("rpc_compute_engine::graph_compute_all", "server_compute",
                    RPC_CMD_GRAPH_COMPUTE_ALL, input.size(), true, us);
 
     // D4.10: collect telemetry with per-device timing from scheduler when enabled
@@ -4440,24 +4651,27 @@ bool rpc_server::graph_compute_all(const std::vector<uint8_t> & input) {
     std::copy(ctx_buf.begin(), ctx_buf.end(), all_graph.buffer.begin());
     all_graph.graph = graph;
     // F1 (T2a): reset bound uid; re-learned lazily on first GRAPH_RECOMPUTE_ALL.
-    all_graph.uid = 0;
+    // NIT-1: uid is atomic — release so dispatch threads see the reset.
+    all_graph.uid.store(0, std::memory_order_release);
 
     // NOTE: sched is cached in all_scheds, freed in ~rpc_server
     return true;
 }
 
-bool rpc_server::graph_recompute_all(const rpc_msg_graph_recompute_all_req & request) {
+bool rpc_compute_engine::graph_recompute_all(const rpc_msg_graph_recompute_all_req & request) {
     if (all_graph.graph == nullptr) {
         return false;
     }
     // F1 (T2a): uid verification for the multi-device path. Lazy-bind on first
     // recompute after a fresh compute; mismatch → client falls back to GRAPH_COMPUTE_ALL.
+    // NIT-1: uid is atomic — use acquire/release for proper synchronization.
     if (request.graph_hash != 0) {
-        if (all_graph.uid == 0) {
-            all_graph.uid = request.graph_hash;
-        } else if (all_graph.uid != request.graph_hash) {
+        uint64_t slot_uid = all_graph.uid.load(std::memory_order_acquire);
+        if (slot_uid == 0) {
+            all_graph.uid.store(request.graph_hash, std::memory_order_release);
+        } else if (slot_uid != request.graph_hash) {
             LOG_DBG("[%s] uid mismatch: stored=%" PRIu64 " req=%" PRIu64 " (recompute_all miss)\n",
-                    __func__, all_graph.uid, request.graph_hash);
+                    __func__, slot_uid, request.graph_hash);
             return false;
         }
     }
@@ -4474,7 +4688,7 @@ bool rpc_server::graph_recompute_all(const rpc_msg_graph_recompute_all_req & req
     GGML_ASSERT(status == GGML_STATUS_SUCCESS);
     const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - t0).count();
-    rpc_trace_emit("rpc_server::graph_recompute_all", "server_compute",
+    rpc_trace_emit("rpc_compute_engine::graph_recompute_all", "server_compute",
                    RPC_CMD_GRAPH_RECOMPUTE_ALL, 0, true, us);
 
     // D7.8: collect telemetry for multi-device graph reuse and write directly
@@ -4495,7 +4709,9 @@ bool rpc_server::graph_recompute_all(const rpc_msg_graph_recompute_all_req & req
 // D6.9: per-stage graph compute with split filtering.
 // Identical to graph_compute_all but sets gpipe_active_stage on the scheduler
 // so only splits matching the given stage's backend_id are computed.
-bool rpc_server::graph_compute_stage(const std::vector<uint8_t> & input, uint32_t stage_id) {
+bool rpc_compute_engine::graph_compute_stage(const std::vector<uint8_t> & input, uint32_t stage_id,
+                             const std::unordered_set<ggml_backend_buffer_t> & buffers,
+                             const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas) {
     GGML_LOG_DEBUG("[rpc-server] graph_compute_stage called, stage_id=%u, input.size=%zu\n", stage_id, input.size());
     if (input.size() < sizeof(uint32_t) * 3) {
         return false;
@@ -4559,7 +4775,7 @@ bool rpc_server::graph_compute_stage(const std::vector<uint8_t> & input, uint32_
     for (uint32_t i = 0; i < n_nodes; i++) {
         int64_t id;
         memcpy(&id, &nodes[i], sizeof(id));
-        graph->nodes[i] = create_node(id, ctx, tensor_ptrs, tensor_map);
+        graph->nodes[i] = create_node(id, ctx, tensor_ptrs, tensor_map, buffers, split_metas);
         if (graph->nodes[i] == nullptr && id != 0) {
             return false;
         }
@@ -4581,7 +4797,7 @@ bool rpc_server::graph_compute_stage(const std::vector<uint8_t> & input, uint32_
     GGML_ASSERT(status == GGML_STATUS_SUCCESS);
     const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - t0).count();
-    rpc_trace_emit("rpc_server::graph_compute_stage", "server_compute_stage",
+    rpc_trace_emit("rpc_compute_engine::graph_compute_stage", "server_compute_stage",
                    RPC_CMD_GRAPH_COMPUTE_STAGE, input.size(), true, us);
 
     // Collect telemetry for this stage
@@ -4596,13 +4812,13 @@ bool rpc_server::graph_compute_stage(const std::vector<uint8_t> & input, uint32_
     return true;
 }
 
-bool rpc_server::get_device_memory(const rpc_msg_get_device_memory_req & request, rpc_msg_get_device_memory_rsp & response) {
+bool rpc_connection::get_device_memory(const rpc_msg_get_device_memory_req & request, rpc_msg_get_device_memory_rsp & response) {
     uint32_t dev_id = request.device;
-    if (dev_id >= backends.size()) {
+    if (dev_id >= engine->get_backends().size()) {
         return false;
     }
     size_t free, total;
-    ggml_backend_dev_t dev = ggml_backend_get_device(backends[dev_id]);
+    ggml_backend_dev_t dev = ggml_backend_get_device(engine->get_backends()[dev_id]);
     ggml_backend_dev_memory(dev, &free, &total);
     response.free_mem = free;
     response.total_mem = total;
@@ -4610,7 +4826,7 @@ bool rpc_server::get_device_memory(const rpc_msg_get_device_memory_req & request
     return true;
 }
 
-void rpc_server::submit_compute_job(std::function<void()> job) {
+void rpc_compute_engine::submit_compute_job(std::function<void()> job) {
     {
         std::lock_guard<std::mutex> lock(compute_mtx);
         compute_inflight++;
@@ -4619,7 +4835,7 @@ void rpc_server::submit_compute_job(std::function<void()> job) {
     compute_cv.notify_one();
 }
 
-void rpc_server::compute_worker_loop() {
+void rpc_compute_engine::compute_worker_loop() {
     while (true) {
         std::function<void()> job;
         {
@@ -4641,15 +4857,21 @@ void rpc_server::compute_worker_loop() {
     }
 }
 
-void rpc_server::enqueue_graph_compute(std::vector<uint8_t> input) {
-    submit_compute_job([this, input = std::move(input)]() mutable {
-        if (!graph_compute(input)) {
+void rpc_compute_engine::enqueue_graph_compute(std::vector<uint8_t> input,
+                               const std::unordered_set<ggml_backend_buffer_t> & buffers,
+                               const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas) {
+    // Capture buffers + split_metas by value: the connection that owns them may
+    // be destroyed before the compute job runs (shared engine across connections).
+    submit_compute_job([this, input = std::move(input),
+                        buffers = std::unordered_set<ggml_backend_buffer_t>(buffers),
+                        split_metas = std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta>(split_metas)]() mutable {
+        if (!graph_compute(input, buffers, split_metas)) {
             GGML_LOG_ERROR("[%s] async graph_compute failed\n", __func__);
         }
     });
 }
 
-void rpc_server::enqueue_graph_recompute(rpc_msg_graph_recompute_req request) {
+void rpc_compute_engine::enqueue_graph_recompute(rpc_msg_graph_recompute_req request) {
     submit_compute_job([this, request]() {
         if (!graph_recompute(request)) {
             GGML_LOG_ERROR("[%s] async graph_recompute failed\n", __func__);
@@ -4657,15 +4879,21 @@ void rpc_server::enqueue_graph_recompute(rpc_msg_graph_recompute_req request) {
     });
 }
 
-void rpc_server::enqueue_graph_compute_all(std::vector<uint8_t> input) {
-    submit_compute_job([this, input = std::move(input)]() {
-        if (!graph_compute_all(input)) {
+void rpc_compute_engine::enqueue_graph_compute_all(std::vector<uint8_t> input,
+                                   const std::unordered_set<ggml_backend_buffer_t> & buffers,
+                                   const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas) {
+    // Capture buffers + split_metas by value: the connection that owns them may
+    // be destroyed before the compute job runs (shared engine across connections).
+    submit_compute_job([this, input = std::move(input),
+                        buffers = std::unordered_set<ggml_backend_buffer_t>(buffers),
+                        split_metas = std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta>(split_metas)]() {
+        if (!graph_compute_all(input, buffers, split_metas)) {
             GGML_LOG_ERROR("[%s] async graph_compute_all failed\n", __func__);
         }
     });
 }
 
-void rpc_server::enqueue_graph_recompute_all(rpc_msg_graph_recompute_all_req request) {
+void rpc_compute_engine::enqueue_graph_recompute_all(rpc_msg_graph_recompute_all_req request) {
     submit_compute_job([this, request]() {
         if (!graph_recompute_all(request)) {
             GGML_LOG_ERROR("[%s] async graph_recompute_all failed\n", __func__);
@@ -4673,16 +4901,61 @@ void rpc_server::enqueue_graph_recompute_all(rpc_msg_graph_recompute_all_req req
     });
 }
 
+// NIT-2: atomic check+enqueue for GRAPH_RECOMPUTE. Locks compute_mtx, verifies
+// the cached graph slot, and enqueues the recompute job — all under the same
+// lock. This prevents the multi-client race where recompute_allowed() and
+// enqueue_graph_recompute() could be split by a concurrent graph_compute()
+// uid-reset. Returns true if the recompute was enqueued (hit), false if the
+// caller should fall back to GRAPH_COMPUTE (miss).
+bool rpc_compute_engine::try_enqueue_graph_recompute(const rpc_msg_graph_recompute_req & request) {
+    std::lock_guard<std::mutex> lock(compute_mtx);
+    if (!recompute_allowed(request)) {
+        return false;
+    }
+    // Directly enqueue the job (we already hold the lock, so we can't call
+    // submit_compute_job which also tries to lock). Inline the enqueue.
+    compute_inflight++;
+    compute_queue.push_back([this, request]() {
+        if (!graph_recompute(request)) {
+            GGML_LOG_ERROR("[%s] async graph_recompute failed\n", __func__);
+        }
+    });
+    compute_cv.notify_one();
+    return true;
+}
+
+// NIT-2: atomic check+enqueue for GRAPH_RECOMPUTE_ALL (multi-device path).
+bool rpc_compute_engine::try_enqueue_graph_recompute_all(const rpc_msg_graph_recompute_all_req & request) {
+    std::lock_guard<std::mutex> lock(compute_mtx);
+    if (!recompute_all_allowed(request)) {
+        return false;
+    }
+    compute_inflight++;
+    compute_queue.push_back([this, request]() {
+        if (!graph_recompute_all(request)) {
+            GGML_LOG_ERROR("[%s] async graph_recompute_all failed\n", __func__);
+        }
+    });
+    compute_cv.notify_one();
+    return true;
+}
+
 // D6.9: enqueue per-stage compute with split filtering
-void rpc_server::enqueue_graph_compute_stage(std::vector<uint8_t> input, uint32_t stage_id) {
-    submit_compute_job([this, input = std::move(input), stage_id]() {
-        if (!graph_compute_stage(input, stage_id)) {
+void rpc_compute_engine::enqueue_graph_compute_stage(std::vector<uint8_t> input, uint32_t stage_id,
+                                     const std::unordered_set<ggml_backend_buffer_t> & buffers,
+                                     const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas) {
+    // Capture buffers + split_metas by value: the connection that owns them may
+    // be destroyed before the compute job runs (shared engine across connections).
+    submit_compute_job([this, input = std::move(input), stage_id,
+                        buffers = std::unordered_set<ggml_backend_buffer_t>(buffers),
+                        split_metas = std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta>(split_metas)]() {
+        if (!graph_compute_stage(input, stage_id, buffers, split_metas)) {
             GGML_LOG_ERROR("[%s] async graph_compute_stage(%u) failed\n", __func__, stage_id);
         }
     });
 }
 
-void rpc_server::wait_compute_idle() {
+void rpc_compute_engine::wait_compute_idle() {
     std::unique_lock<std::mutex> lock(compute_mtx);
     compute_cv.wait(lock, [this] {
         return compute_queue.empty() && compute_inflight.load() == 0;
@@ -4692,7 +4965,7 @@ void rpc_server::wait_compute_idle() {
 // D4.10: sample every Nth decode to keep overhead <1%
 static constexpr int TELEMETRY_SAMPLE_INTERVAL = 1;
 
-void rpc_server::collect_telemetry(const uint32_t * devices, uint32_t n_devices,
+void rpc_compute_engine::collect_telemetry(const uint32_t * devices, uint32_t n_devices,
                                    const int64_t * per_device_us) {
     uint64_t decode_id = telemetry_decode_count.fetch_add(1, std::memory_order_relaxed);
     if (TELEMETRY_SAMPLE_INTERVAL > 1 && (decode_id % TELEMETRY_SAMPLE_INTERVAL) != 0) {
@@ -4729,7 +5002,7 @@ void rpc_server::collect_telemetry(const uint32_t * devices, uint32_t n_devices,
     }
 }
 
-bool rpc_server::get_last_telemetry(rpc_msg_server_telemetry & out) const {
+bool rpc_compute_engine::get_last_telemetry(rpc_msg_server_telemetry & out) const {
     std::lock_guard<std::mutex> lock(telemetry_mtx);
     if (!telemetry_enabled) {
         return false;
@@ -4738,7 +5011,7 @@ bool rpc_server::get_last_telemetry(rpc_msg_server_telemetry & out) const {
     return true;
 }
 
-rpc_server::~rpc_server() {
+rpc_compute_engine::~rpc_compute_engine() {
     {
         std::lock_guard<std::mutex> lock(compute_mtx);
         compute_shutdown = true;
@@ -4747,9 +5020,6 @@ rpc_server::~rpc_server() {
     if (compute_worker.joinable()) {
         compute_worker.join();
     }
-    for (auto buffer : buffers) {
-        ggml_backend_buffer_free(buffer);
-    }
     // D4.5: free cached multi-device schedulers
     for (auto & kv : all_scheds) {
         ggml_backend_sched_free(kv.second);
@@ -4757,11 +5027,20 @@ rpc_server::~rpc_server() {
     all_scheds.clear();
 }
 
-static void rpc_serve_channel_bind(socket_ptr sock);
-static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const char * cache_dir,
-                             socket_ptr sock);
+rpc_connection::~rpc_connection() {
+    // Free all buffers allocated by this connection.
+    std::lock_guard<std::mutex> lock(buffers_mtx);
+    for (auto buffer : buffers) {
+        ggml_backend_buffer_free(buffer);
+    }
+    buffers.clear();
+    split_buffer_metas.clear();
+}
 
-static void rpc_connection_thread(std::vector<ggml_backend_t> backends, std::string cache_dir, socket_ptr sock) {
+static void rpc_serve_channel_bind(socket_ptr sock);
+static void rpc_serve_client(std::shared_ptr<rpc_compute_engine> engine, socket_ptr sock);
+
+static void rpc_connection_thread(std::shared_ptr<rpc_compute_engine> engine, socket_ptr sock) {
     uint8_t cmd = 0;
     if (!sock->recv_data(&cmd, 1)) {
         return;
@@ -4774,7 +5053,7 @@ static void rpc_connection_thread(std::vector<ggml_backend_t> backends, std::str
         GGML_LOG_ERROR("Expected HELLO or CHANNEL_BIND, got %d\n", cmd);
         return;
     }
-    rpc_serve_client(backends, cache_dir.c_str(), sock);
+    rpc_serve_client(engine, sock);
 }
 
 static void rpc_serve_channel_bind(socket_ptr sock) {
@@ -4802,9 +5081,8 @@ static void rpc_serve_channel_bind(socket_ptr sock) {
     pending->cv.notify_all();
 }
 
-static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const char * cache_dir,
-                             socket_ptr sock) {
-    rpc_server server(backends, cache_dir);
+static void rpc_serve_client(std::shared_ptr<rpc_compute_engine> engine, socket_ptr sock) {
+    rpc_connection connection(engine, engine->get_cache_dir());
 
     // Read input_size and validate protocol version (HELLO cmd byte already consumed)
     uint64_t hello_input_size;
@@ -4847,7 +5125,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
         rpc_msg_hello_rsp_v3 rsp3 = {};
         {
             rpc_msg_hello_rsp tmp = {};
-            server.hello(tmp);
+            connection.hello(tmp);
             rsp3.major = tmp.major;
             rsp3.minor = tmp.minor;
             rsp3.patch = tmp.patch;
@@ -4869,7 +5147,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
         }
     } else {
         rpc_msg_hello_rsp rsp = {};
-        server.hello(rsp);
+        connection.hello(rsp);
         if (pending) {
             rsp.flags |= 1;
             rsp.session_id = session_id;
@@ -4929,7 +5207,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                     return;
                 }
                 rpc_msg_device_count_rsp response;
-                response.device_count = backends.size();
+                response.device_count = connection.get_engine()->get_backend_count();
                 if (!send_response(sock, &response, sizeof(response))) {
                     return;
                 }
@@ -4941,7 +5219,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                     return;
                 }
                 rpc_msg_alloc_buffer_rsp response;
-                if (!server.alloc_buffer(request, response)) {
+                if (!connection.alloc_buffer(request, response)) {
                     return;
                 }
                 if (!send_response(sock, &response, sizeof(response))) {
@@ -4955,7 +5233,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                     return;
                 }
                 rpc_msg_alloc_buffer_split_rsp response;
-                if (!server.alloc_buffer_split(request, response)) {
+                if (!connection.alloc_buffer_split(request, response)) {
                     return;
                 }
                 if (!send_response(sock, &response, sizeof(response))) {
@@ -4969,7 +5247,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                     return;
                 }
                 rpc_msg_get_alloc_size_rsp response;
-                if (!server.get_alloc_size(request, response)) {
+                if (!connection.get_alloc_size(request, response)) {
                     return;
                 }
                 if (!send_response(sock, &response, sizeof(response))) {
@@ -4983,7 +5261,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                     return;
                 }
                 rpc_msg_get_alignment_rsp response;
-                if (!server.get_alignment(request, response)) {
+                if (!connection.get_alignment(request, response)) {
                     return;
                 }
                 if (!send_response(sock, &response, sizeof(response))) {
@@ -4997,7 +5275,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                     return;
                 }
                 rpc_msg_get_max_size_rsp response;
-                if (!server.get_max_size(request, response)) {
+                if (!connection.get_max_size(request, response)) {
                     return;
                 }
                 if (!send_response(sock, &response, sizeof(response))) {
@@ -5011,7 +5289,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                     return;
                 }
                 rpc_msg_buffer_get_base_rsp response;
-                if (!server.buffer_get_base(request, response)) {
+                if (!connection.buffer_get_base(request, response)) {
                     return;
                 }
                 if (!send_response(sock, &response, sizeof(response))) {
@@ -5024,7 +5302,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!recv_msg(sock, &request, sizeof(request))) {
                     return;
                 }
-                if (!server.free_buffer(request)) {
+                if (!connection.free_buffer(request)) {
                     return;
                 }
                 if (!send_response(sock, nullptr, 0)) {
@@ -5037,7 +5315,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!recv_msg(sock, &request, sizeof(request))) {
                     return;
                 }
-                if (!server.buffer_clear(request)) {
+                if (!connection.buffer_clear(request)) {
                     return;
                 }
                 if (!send_response(sock, nullptr, 0)) {
@@ -5050,7 +5328,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!recv_msg(sock, input)) {
                     return;
                 }
-                if (!server.set_tensor(input)) {
+                if (!connection.set_tensor(input)) {
                     return;
                 }
                 break;
@@ -5061,7 +5339,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                     return;
                 }
                 rpc_msg_set_tensor_hash_rsp response;
-                if (!server.set_tensor_hash(request, response)) {
+                if (!connection.set_tensor_hash(request, response)) {
                     return;
                 }
                 if (!send_response(sock, &response, sizeof(response))) {
@@ -5074,7 +5352,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!recv_msg(sock, &request,sizeof(request))) {
                     return;
                 }
-                if (!server.init_tensor(request)) {
+                if (!connection.init_tensor(request)) {
                     return;
                 }
                 if (!send_response(sock, nullptr, 0)) {
@@ -5088,7 +5366,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                     return;
                 }
                 std::vector<uint8_t> response;
-                if (!server.get_tensor(request, response)) {
+                if (!connection.get_tensor(request, response)) {
                     return;
                 }
                 if (!send_response(sock, response.data(), response.size())) {
@@ -5123,7 +5401,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                     pos += sizeof(request);
 
                     std::vector<uint8_t> response;
-                    if (!server.get_tensor(request, response)) {
+                    if (!connection.get_tensor(request, response)) {
                         return;
                     }
                     // Send individual response on response socket
@@ -5139,7 +5417,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                     return;
                 }
                 rpc_msg_copy_tensor_rsp response;
-                if (!server.copy_tensor(request, response)) {
+                if (!connection.copy_tensor(request, response)) {
                     return;
                 }
                 if (!send_response(sock, &response, sizeof(response))) {
@@ -5153,7 +5431,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                     return;
                 }
                 rpc_msg_copy_tensor_rsp response;
-                if (!server.copy_tensor_peer(request, response)) {
+                if (!connection.copy_tensor_peer(request, response)) {
                     return;
                 }
                 if (!send_response(sock, &response, sizeof(response))) {
@@ -5166,13 +5444,13 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!recv_msg(sock, input)) {
                     return;
                 }
-                server.enqueue_graph_compute(std::move(input));
-                server.wait_compute_idle();
+                connection.enqueue_graph_compute(std::move(input));
+                connection.wait_compute_idle();
                 // D4.10: send response (with telemetry appended if enabled)
                 rpc_msg_graph_compute_rsp rsp = {};
                 rsp.result = 0;
                 rpc_msg_server_telemetry telem = {};
-                if (server.get_last_telemetry(telem)) {
+                if (connection.get_last_telemetry(telem)) {
                     size_t resp_size = sizeof(rsp) + sizeof(telem);
                     std::vector<uint8_t> resp_buf(resp_size);
                     memcpy(resp_buf.data(), &rsp, sizeof(rsp));
@@ -5196,8 +5474,10 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 // The client needs to know whether to proceed (EVENT_RECORD) or fall
                 // back to a full GRAPH_COMPUTE.
                 rpc_msg_graph_recompute_rsp rsp = {};
-                if (server.recompute_allowed(request)) {
-                    server.enqueue_graph_recompute(request);
+                // NIT-2: atomic check+enqueue (fixes multi-client race where
+                // recompute_allowed() and enqueue_graph_recompute() could be
+                // split by a concurrent graph_compute() uid-reset).
+                if (connection.try_enqueue_graph_recompute(request)) {
                     rsp.result = 0; // hit → server will recompute
                 } else {
                     rsp.result = 1; // miss → client must fall back to GRAPH_COMPUTE
@@ -5258,7 +5538,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                     memcpy(single_input.data() + sizeof(rpc_tensor) + sizeof(offset), input.data() + pos, (size_t)data_size);
                     pos += (size_t)data_size;
 
-                    if (!server.set_tensor(single_input)) {
+                    if (!connection.set_tensor(single_input)) {
                         GGML_LOG_ERROR("[%s] RPC_CMD_SET_TENSOR_BATCH: set_tensor failed for entry %u\n", __func__, i);
                         return;
                     }
@@ -5273,7 +5553,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!recv_msg(sock, &request, req_sz)) {
                     return;
                 }
-                server.wait_compute_idle();
+                connection.wait_compute_idle();
                 rpc_msg_event_record_rsp response = {request.event_id, 0, request.trace_id};
                 size_t rsp_sz = sock->server_supports_trace_id ? sizeof(response) : 12;
                 if (!send_response(sock, &response, rsp_sz)) {
@@ -5289,7 +5569,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                     return;
                 }
                 rpc_msg_get_device_memory_rsp response;
-                if (!server.get_device_memory(request, response)) {
+                if (!connection.get_device_memory(request, response)) {
                     return;
                 }
                 if (!send_response(sock, &response, sizeof(response))) {
@@ -5302,13 +5582,13 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!recv_msg(sock, input)) {
                     return;
                 }
-                server.enqueue_graph_compute_all(std::move(input));
-                server.wait_compute_idle();
+                connection.enqueue_graph_compute_all(std::move(input));
+                connection.wait_compute_idle();
                 // D4.10: send response (with telemetry appended if enabled)
                 rpc_msg_graph_compute_all_rsp rsp = {};
                 rsp.result = 0;
                 rpc_msg_server_telemetry telem = {};
-                if (server.get_last_telemetry(telem)) {
+                if (connection.get_last_telemetry(telem)) {
                     size_t resp_size = sizeof(rsp) + sizeof(telem);
                     std::vector<uint8_t> resp_buf(resp_size);
                     memcpy(resp_buf.data(), &rsp, sizeof(rsp));
@@ -5330,8 +5610,8 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 // result=0 (hit) / result=1 (miss). Only respond when the client
                 // advertises recompute-hash support (it always sends graph_hash then).
                 rpc_msg_graph_recompute_all_rsp rsp = {};
-                if (server.recompute_all_allowed(request)) {
-                    server.enqueue_graph_recompute_all(request);
+                // NIT-2: atomic check+enqueue for multi-device path.
+                if (connection.try_enqueue_graph_recompute_all(request)) {
                     rsp.result = 0; // hit
                 } else {
                     rsp.result = 1; // miss → client falls back to GRAPH_COMPUTE_ALL
@@ -5357,12 +5637,12 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 memcpy(&stage_id, input.data(), sizeof(stage_id));
                 // Shift input to strip the stage_id prefix for graph_compute_stage
                 std::vector<uint8_t> graph_input(input.begin() + sizeof(uint32_t), input.end());
-                server.enqueue_graph_compute_stage(std::move(graph_input), stage_id);
-                server.wait_compute_idle();
+                connection.enqueue_graph_compute_stage(std::move(graph_input), stage_id);
+                connection.wait_compute_idle();
                 rpc_msg_graph_compute_all_rsp rsp = {};
                 rsp.result = 0;
                 rpc_msg_server_telemetry telem = {};
-                if (server.get_last_telemetry(telem)) {
+                if (connection.get_last_telemetry(telem)) {
                     size_t resp_size = sizeof(rsp) + sizeof(telem);
                     std::vector<uint8_t> resp_buf(resp_size);
                     memcpy(resp_buf.data(), &rsp, sizeof(rsp));
@@ -5390,7 +5670,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
 // silently. Sequence gaps (detected via seq number) are logged at most once
 // per second. Out-of-order and duplicate frames are accepted — the server's
 // graph_recompute is idempotent and the next token's frame supersedes.
-static void rpc_udp_listener(rpc_server & server, int udp_port) {
+static void rpc_udp_listener(rpc_compute_engine & engine, int udp_port) {
     if (udp_port <= 0 || udp_port > 65535) {
         return;
     }
@@ -5465,10 +5745,13 @@ static void rpc_udp_listener(rpc_server & server, int udp_port) {
             rpc_msg_graph_recompute_req req = {};
             req.device = hdr.device;
             req.graph_hash = hdr.graph_uid;
-            if (!server.recompute_allowed(req)) {
+            // NIT-2: atomic check+enqueue (fixes multi-client race).
+            // UDP is fire-and-forget (no response channel), so a uid miss here
+            // means the server will silently not recompute — acceptable for the
+            // UDP best-effort path; the TCP path returns an explicit hit/miss.
+            if (!engine.try_enqueue_graph_recompute(req)) {
                 continue; // uid miss → drop (client proceeds; may read stale output)
             }
-            server.enqueue_graph_recompute(req);
         } else if (hdr.cmd == RPC_CMD_GRAPH_RECOMPUTE_ALL) {
             // Parse the device list that follows the header.
             const uint32_t n_devices = (got > hdr_sz) ?
@@ -5484,10 +5767,10 @@ static void rpc_udp_listener(rpc_server & server, int udp_port) {
                 req.n_devices++;
             }
             // F1 (T2a): drop on uid miss (UDP has no response channel).
-            if (!server.recompute_all_allowed(req)) {
+            // NIT-2: atomic check+enqueue for multi-device path.
+            if (!engine.try_enqueue_graph_recompute_all(req)) {
                 continue;
             }
-            server.enqueue_graph_recompute_all(req);
         }
         // Unknown cmd: drop silently.
     }
@@ -5550,16 +5833,15 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
         return;
     }
     // UDP transport (prototype): a connectionless UDP listener that receives
-    // fire-and-forget graph recompute frames. It uses its own rpc_server
-    // instance sharing the same backends. NOTE: because stored_graphs are
-    // per-rpc_server, UDP recompute requires the graph to have been submitted
-    // through this same UDP server instance. This is a known prototype
-    // limitation — production would use a shared server across connections.
-    // The shared_ptr keeps the UDP server alive even if the accept loop
-    // returns early (the listener thread captures the shared_ptr).
-    auto udp_server = std::make_shared<rpc_server>(backends, cache_dir ? cache_dir : "");
+    // fire-and-forget graph recompute frames. T2b: shares the SAME rpc_compute_engine
+    // as the TCP connections, so UDP recompute hits the same stored_graphs + compute
+    // queue. This resolves BUG-011a (UDP cache miss) and BUG-011b (event coupling:
+    // wait_compute_idle() now sees all compute, not just the UDP listener's).
+    // The shared_ptr keeps the engine alive even if the accept loop returns early
+    // (the listener + connection threads capture the shared_ptr).
+    auto engine = std::make_shared<rpc_compute_engine>(backends, cache_dir ? cache_dir : "");
     int udp_port = (port > 0 && port < 65535) ? port + 1 : 0;
-    std::thread([udp_server, udp_port]() { rpc_udp_listener(*udp_server, udp_port); }).detach();
+    std::thread([engine, udp_port]() { rpc_udp_listener(*engine, udp_port); }).detach();
     while (true) {
         auto client_socket = server_socket->accept();
         if (client_socket == nullptr) {
@@ -5568,12 +5850,13 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
         }
         printf("Accepted client connection\n");
         fflush(stdout);
-        std::thread(rpc_connection_thread, backends, std::string(cache_dir ? cache_dir : ""), client_socket).detach();
+        std::thread(rpc_connection_thread, engine, client_socket).detach();
     }
     rpc_transport_shutdown();
     for (auto backend : backends) {
         ggml_backend_free(backend);
     }
+    // engine destructor joins the compute worker thread (via shared_ptr last ref)
 }
 
 static const char * ggml_backend_rpc_device_get_name(ggml_backend_dev_t dev) {
