@@ -68,6 +68,65 @@ uint64_t ggml_graph_next_uid(void) {
 #endif
 }
 
+// NW1 (Increment-1 T3a): structural fingerprint (topology hash) of a graph.
+//
+// Computes a 64-bit hash over the graph's STRUCTURE only — node ops, output
+// shapes (all dims, including the token-count/batch dimension), and source
+// connectivity (each source node's op). It deliberately does NOT depend on any
+// per-token-varying input VALUES (position, token data) or buffer/data pointers
+// (KV-cache, recurrent state), because the hash is computed purely from the
+// cgraph structure which has no access to tensor data or buffer addresses.
+//
+// Identical-topology rebuilds (the MTP draft loop, same-batch-size decode)
+// therefore produce the same hash, enabling the RPC layer to reuse the
+// server-cached graph via the async GRAPH_RECOMPUTE path instead of paying a
+// blocking GRAPH_COMPUTE every token.
+//
+// Shapes are hashed WITH the token-count (batch) dimension on purpose: this
+// makes different batch sizes produce different hashes, which is required for
+// correctness — the server replays captured graphs verbatim, so a batch-1
+// captured graph must never be replayed for a batch-2 request (F1 uid-collision
+// avoidance). The consequence is that reuse only holds within a fixed batch
+// size, giving the 2.8 -> ~1.9 GRAPH_COMPUTE/token projection (not ->1.0).
+uint64_t ggml_graph_topology_hash(const struct ggml_cgraph * cgraph) {
+    if (cgraph == NULL || cgraph->n_nodes == 0) {
+        return 0;
+    }
+
+    // FNV-1a 64-bit.
+    uint64_t h = 14695981039346656037ULL;
+    const uint64_t prime = 1099511628211ULL;
+
+    for (int i = 0; i < cgraph->n_nodes; i++) {
+        const struct ggml_tensor * t = cgraph->nodes[i];
+
+        // Hash the op.
+        h ^= (uint64_t)(t->op + 1);
+        h *= prime;
+
+        // Hash the output shape (all dims, including token-count/batch).
+        for (int d = 0; d < GGML_MAX_DIMS; d++) {
+            h ^= (uint64_t)(t->ne[d]);
+            h *= prime;
+        }
+
+        // Hash source connectivity (which sources feed this node) by op.
+        // This captures graph structure beyond per-node ops/shapes.
+        for (int s = 0; s < GGML_MAX_SRC; s++) {
+            if (t->src[s] != NULL) {
+                h ^= (uint64_t)(t->src[s]->op + 1) + 0x9e3779b97f4a7c15ULL;
+                h *= prime;
+            }
+        }
+    }
+
+    // Fold in node count so single-node insertions change the fingerprint.
+    h ^= (uint64_t)cgraph->n_nodes + 0x9e3779b97f4a7c15ULL;
+    h *= prime;
+
+    return h;
+}
+
 // Needed for ggml_fp32_to_bf16_row()
 #if defined(__AVX512BF16__)
 #if defined(_MSC_VER)

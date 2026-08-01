@@ -3748,6 +3748,12 @@ static bool ggml_cuda_graph_update_required(ggml_backend_cuda_context * cuda_ctx
     const void * graph_key = ggml_cuda_graph_get_key(cgraph);
     ggml_cuda_graph * graph = cuda_ctx->cuda_graph(graph_key);
 
+    // NW1 (Increment-1 T3b — CUDA-graph guard): this uid-replay gate must keep
+    // working for local (non-RPC) backends exactly as before. NW1 only changes
+    // uids for RPC-backed splits (ggml_backend_sched_split_graph scopes the
+    // topology hash to is_rpc splits); local splits still get the monotonic
+    // counter from ggml_graph_next_uid(). So a local-backend split's uid is
+    // stable across same-topology rebuilds and this gate is unaffected.
     if (cgraph->uid != 0 &&
         cgraph->uid == graph->uid) {
         GGML_LOG_DEBUG("CUDA Graph id %zu reused\n", cgraph->uid);

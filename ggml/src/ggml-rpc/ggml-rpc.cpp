@@ -1173,6 +1173,21 @@ struct ggml_backend_rpc_device_context {
     std::string name;
     std::string description;
     std::unordered_set<uint64_t> seen_graph_uids;
+    // NW1 (Increment-1 T3c): bound the uid set so it cannot grow without limit
+    // if the topology hash is imperfect (F9). ≤ SEEN_UIDS_MAX entries/device;
+    // on overflow the whole set is cleared (graceful degradation — safe, just
+    // falls back to GRAPH_COMPUTE more often until it re-populates).
+    static constexpr size_t SEEN_UIDS_MAX = 32;
+    static void seen_graph_uids_insert(std::unordered_set<uint64_t> & set, uint64_t uid) {
+        if (set.size() >= SEEN_UIDS_MAX) {
+            set.clear();
+        }
+        set.insert(uid);
+    }
+    // NW1 (T3c): hit/miss counters for the recompute reuse path, emitted to the
+    // GGML_RPC_TRACE JSONL so AC2's "uid hit-rate" is measurable per device.
+    uint64_t recompute_hits = 0;
+    uint64_t recompute_misses = 0;
     // Cached device memory — invariant during generation, saves ~60 ms/token RPC
     uint64_t cached_gen  = 0;          // generation when cached
     size_t   cached_free  = 0;
@@ -3024,6 +3039,7 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
             if (reuse) {
                 // Server accepted the recompute (hit) — synchronize via EVENT_RECORD.
                 recompute_ok = true;
+                rpc_dev_ctx->recompute_hits++;
                 // Send EVENT_RECORD deferred: response drained later by event_wait
                 // or at the next RPC operation on this socket. This avoids blocking
                 // the scheduler's for-loop, allowing ROCm dispatch to overlap.
@@ -3048,8 +3064,11 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
             }
         }
         if (!recompute_ok) {
-            rpc_dev_ctx->seen_graph_uids.insert(cgraph->uid);
-            LOG_DBG("RPC-REUSE dev=%u uid=%" PRIu64 " reuse=0 (multi-device)\n", rpc_ctx->device, cgraph->uid);
+            ggml_backend_rpc_device_context::seen_graph_uids_insert(rpc_dev_ctx->seen_graph_uids, cgraph->uid);
+            rpc_dev_ctx->recompute_misses++;
+            LOG_DBG("RPC-REUSE dev=%u uid=%" PRIu64 " MISS (set=%zu hits=%" PRIu64 " misses=%" PRIu64 ")\n",
+                    rpc_ctx->device, cgraph->uid, rpc_dev_ctx->seen_graph_uids.size(),
+                    rpc_dev_ctx->recompute_hits, rpc_dev_ctx->recompute_misses);
             std::vector<uint8_t> input;
             serialize_graph_for_all(devices, n_devices, cgraph, input);
             // D4.10: use response version; server sends telemetry when enabled
@@ -3126,6 +3145,7 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
         if (reuse) {
             // Server accepted the recompute (hit) — synchronize via EVENT_RECORD.
             recompute_ok = true;
+            rpc_dev_ctx->recompute_hits++;
             uint64_t tid = ggml_pipeline_trace_get_trace_id();
             rpc_msg_event_record_req ev_req = {0, rpc_ctx->device, tid};
             size_t ev_sz = sock->server_supports_trace_id ? sizeof(ev_req) : 12;
@@ -3152,8 +3172,11 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
         }
     }
     if (!recompute_ok) {
-        rpc_dev_ctx->seen_graph_uids.insert(cgraph->uid);
-        LOG_DBG("RPC-REUSE dev=%u uid=%" PRIu64 " reuse=0\n", rpc_ctx->device, cgraph->uid);
+        ggml_backend_rpc_device_context::seen_graph_uids_insert(rpc_dev_ctx->seen_graph_uids, cgraph->uid);
+        rpc_dev_ctx->recompute_misses++;
+        LOG_DBG("RPC-REUSE dev=%u uid=%" PRIu64 " MISS (set=%zu hits=%" PRIu64 " misses=%" PRIu64 ")\n",
+                rpc_ctx->device, cgraph->uid, rpc_dev_ctx->seen_graph_uids.size(),
+                rpc_dev_ctx->recompute_hits, rpc_dev_ctx->recompute_misses);
         std::vector<uint8_t> input;
         serialize_graph(rpc_ctx->device, cgraph, input);
         // D4.10: use response version when server supports telemetry;
