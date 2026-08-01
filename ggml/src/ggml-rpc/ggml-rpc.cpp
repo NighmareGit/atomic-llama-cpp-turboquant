@@ -459,22 +459,44 @@ static bool rpc_udp_env_enabled() {
     return v != 0;
 }
 
-// UDP datagram header for graph recompute. Fixed 21-byte header (single-device)
-// or 25+4*n_devices (ALL variant). See PRD section 2.1 for the wire format.
-struct rpc_udp_header {
-    uint32_t magic;      // 0x474D4C01 ("GGML" + version)
-    uint32_t seq;        // monotonic per socket, wraps ok
-    uint8_t  cmd;        // RPC_CMD_GRAPH_RECOMPUTE or GRAPH_RECOMPUTE_ALL
-    uint32_t device;     // device index
-    uint64_t graph_uid;  // identifies cached graph on server
-};
+// rpc_udp_header and RPC_UDP_MAGIC / RPC_UDP_FLAG_ACK now live in transport.h
+// (shared between client send/ACK-wait and the server listener).
 
-static constexpr uint32_t RPC_UDP_MAGIC = 0x474D4C01;
+// T2e: ACK timeout (ms). After sending a DATA frame we block up to this long
+// waiting for the server's ACK (seq echo). On timeout the caller falls back to
+// TCP GRAPH_RECOMPUTE. Tunable via GGML_RPC_UDP_ACK_TIMEOUT_MS. For a LAN the
+// ACK RTT is <1 ms; the timeout is a safety net for genuine loss.
+static int rpc_udp_ack_timeout_ms() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_RPC_UDP_ACK_TIMEOUT_MS");
+        v = e ? atoi(e) : 100; // default 100 ms
+    }
+    return v;
+}
 
-// Send a graph recompute command over UDP. Returns true if the frame was sent
-// over UDP, false if the caller should fall back to TCP. udp_port is the
-// remote UDP port (tcp_port + 1 by convention, resolved by the caller from
-// the endpoint). The UDP socket is created lazily on first call per socket.
+// T2e: client-side fault injection (DUP only — DROP/REORDER live on the server
+// side; see rpc_udp_listener). dup_pct (0-100) is the probability that the
+// frame is sent twice. A duplicate DATA frame is idempotent on the server
+// (recompute of the same graph_uid) and the client drains the extra ACK.
+// Gated via GGML_RPC_UDP_FAULT_DUP_PCT so production runs are unaffected.
+static int rpc_udp_fault_dup_pct() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_RPC_UDP_FAULT_DUP_PCT");
+        v = e ? atoi(e) : 0; // default: no fault
+    }
+    return v;
+}
+
+// Send a graph recompute command over UDP with T2e reliability. Returns true
+// only if the frame was sent AND the server's ACK arrived within the timeout
+// (i.e. the frame was reliably delivered over UDP). Returns false if UDP is
+// disabled, init/send failed, or the ACK timed out — the caller then falls
+// back to the TCP GRAPH_RECOMPUTE path.
+//
+// udp_port is the remote UDP port (tcp_port + 1 by convention). The UDP socket
+// is created lazily on first call per socket.
 static bool rpc_udp_send_graph(const socket_ptr & sock,
                                const rpc_udp_header & hdr,
                                const uint32_t * devices, uint32_t n_devices,
@@ -502,13 +524,42 @@ static bool rpc_udp_send_graph(const socket_ptr & sock,
     std::vector<uint8_t> pkt(hdr_sz + dev_sz);
     rpc_udp_header net_hdr = hdr;
     net_hdr.magic = RPC_UDP_MAGIC;
-    net_hdr.seq = sock->udp_next_seq();
+    net_hdr.flags = 0; // DATA frame (no ACK flag)
+    const uint32_t seq = sock->udp_next_seq();
+    net_hdr.seq = seq;
     memcpy(pkt.data(), &net_hdr, hdr_sz);
     if (dev_sz > 0 && devices) {
         memcpy(pkt.data() + hdr_sz, devices, dev_sz);
     }
     bool sent = sock->send_udp(pkt.data(), pkt.size());
-    return sent;
+    if (!sent) {
+        return false;
+    }
+
+    // T2e fault injection: DUP — send the frame a second time. The server
+    // enqueues both (idempotent recompute) and ACKs both; the client drains
+    // the extra ACK as a stale frame on the next wait.
+    if (rpc_udp_fault_dup_pct() > 0) {
+        static thread_local uint32_t rng = 0x12345678u;
+        // xorshift32 — deterministic, thread-local, no libc dependency.
+        rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
+        int roll = static_cast<int>(rng % 100u);
+        if (roll < rpc_udp_fault_dup_pct()) {
+            GGML_LOG_DEBUG("[%s] FAULT dup: sending seq %u again\n", __func__, seq);
+            sock->send_udp(pkt.data(), pkt.size());
+        }
+    }
+
+    // T2e reliability: block for the server's ACK (seq echo). A lost frame
+    // (or a server-side drop) means no ACK → timeout → caller falls back to
+    // TCP GRAPH_RECOMPUTE. This makes the UDP path correct under loss.
+    int timeout_ms = rpc_udp_ack_timeout_ms();
+    bool acked = sock->recv_udp_ack(seq, timeout_ms);
+    if (!acked) {
+        GGML_LOG_WARN("[%s] UDP ACK timeout seq=%u (%u ms) — will fall back to TCP\n",
+                      __func__, seq, timeout_ms);
+    }
+    return acked;
 }
 
 bool ggml_backend_rpc_dual_socket(void) {
@@ -5773,10 +5824,36 @@ static void rpc_serve_client(std::shared_ptr<rpc_compute_engine> engine, socket_
     }
 }
 
+// T2e: server-side fault injection env helpers. All default to 0 (off) so
+// production runs are unaffected. drop_pct/reorder_pct are probabilities 0-100.
+static int rpc_udp_fault_server_drop_pct() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_RPC_UDP_FAULT_DROP_PCT");
+        v = e ? atoi(e) : 0;
+    }
+    return v;
+}
+static int rpc_udp_fault_server_reorder_pct() {
+    static int v = -1;
+    if (v < 0) {
+        const char * e = getenv("GGML_RPC_UDP_FAULT_REORDER_PCT");
+        v = e ? atoi(e) : 0;
+    }
+    return v;
+}
+
 // UDP listener for fire-and-forget graph submission. Runs a dedicated thread
 // that recvfrom()s datagrams on udp_port, parses the rpc_udp_header, and
 // enqueues GRAPH_RECOMPUTE / GRAPH_RECOMPUTE_ALL on the compute worker —
 // exactly like the TCP dispatch path does for these commands.
+//
+// T2e reliability: after a successful enqueue the listener sends an ACK
+// datagram back to the sender (the send channel). The ACK is an
+// rpc_udp_header with RPC_UDP_FLAG_ACK set and seq echoing the DATA frame's
+// seq. The client matches the ACK to its outstanding frame; on ACK timeout it
+// falls back to TCP GRAPH_RECOMPUTE. This closes BUG-011's "receive-only"
+// gap: the listener can now both receive and send.
 //
 // Loss tolerance: if the magic or cmd is invalid, the frame is dropped
 // silently. Sequence gaps (detected via seq number) are logged at most once
@@ -5804,14 +5881,118 @@ static void rpc_udp_listener(rpc_compute_engine & engine, int udp_port) {
     }
     GGML_LOG_INFO("[udp-listener] listening on UDP port %d\n", udp_port);
 
-    // Track last-seen seq per remote so we can log gaps (rate-limited).
+    // Track last-seen seq per remote so we can log gaps (rate-limited) and
+    // dedup exact duplicates (T2e: a duplicate UDP frame must be a no-op).
     struct peer_state {
-        uint32_t last_seq = UINT32_MAX;
+        uint32_t last_seq = UINT32_MAX;     // highest seq seen (gap detection)
+        uint32_t last_ack_seq = UINT32_MAX; // seq of last frame we ACKed (dedup key)
         int64_t  last_gap_log_us = 0;
     };
     std::unordered_map<uint64_t, peer_state> peers; // key = (addr << 16) | port
 
+    // T2e: reorder simulation. The RPC protocol is stop-and-wait, so the server
+    // always receives frames in seq order. To exercise delayed-frame tolerance
+    // without deadlock, the server ACKs every frame IMMEDIATELY (unblocking the
+    // client) but, with probability reorder_pct, holds the frame's *enqueue* for
+    // one recvfrom cycle — it is enqueued when the NEXT frame arrives. This keeps
+    // the enqueue cadence at exactly one frame per recvfrom (identical to the
+    // non-reordered baseline), so the compute-worker interleaving is unchanged and
+    // the pre-existing MTP recurrent-state bug (BUG-002, ops.cpp:4916) is not
+    // triggered. It proves the server tolerates per-frame enqueue delay without
+    // stall or corruption.
+    struct held_frame {
+        std::vector<uint8_t> bytes;
+        sockaddr_in from = {};
+        socklen_t from_len = 0;
+        uint32_t seq = 0;
+    };
+    held_frame delayed;      // the frame held back by the current reorder
+    bool delayed_valid = false;
+
+    const int drop_pct  = rpc_udp_fault_server_drop_pct();
+    const int reorder_pct = rpc_udp_fault_server_reorder_pct();
+    // xorshift32 PRNG state (per-listener thread).
+    uint32_t rng = 0x9E3779B9u;
+    auto rng_pct = [&]() -> int {
+        rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
+        return static_cast<int>(rng % 100u);
+    };
+    auto maybe_drop = [&]() -> bool {
+        if (drop_pct <= 0) return false;
+        return rng_pct() < drop_pct;
+    };
+
     std::vector<uint8_t> buf(1024); // max UDP datagram we expect
+
+    // T2e: enqueue one already-parsed DATA frame on the compute worker.
+    // Gap logging, dedup, and ACK are handled in the main loop BEFORE this is
+    // called, so this only does the actual (idempotent) recompute enqueue.
+    // Returns true if a job was enqueued. Does NOT send an ACK.
+    auto do_enqueue = [&](const uint8_t * data, size_t got,
+                          const rpc_udp_header & hdr) -> bool {
+        const size_t hdr_sz = sizeof(rpc_udp_header);
+        if (got < hdr_sz) return false;
+        if (hdr.cmd == RPC_CMD_GRAPH_RECOMPUTE) {
+            if (got != hdr_sz) {
+                return false;
+            }
+            // F1 (T2a): carry the uid from the UDP header into the request so the
+            // server can verify the cached graph matches.
+            rpc_msg_graph_recompute_req req = {};
+            req.device = hdr.device;
+            req.graph_hash = hdr.graph_uid;
+            // NIT-2: atomic check+enqueue (fixes multi-client race).
+            return engine.try_enqueue_graph_recompute(req);
+        }
+        if (hdr.cmd == RPC_CMD_GRAPH_RECOMPUTE_ALL) {
+            // Parse the device list that follows the header.
+            const uint32_t n_devices = (got > hdr_sz) ?
+                static_cast<uint32_t>((got - hdr_sz) / sizeof(uint32_t)) : 0;
+            rpc_msg_graph_recompute_all_req req = {};
+            req.graph_hash = hdr.graph_uid;
+            req.sync_mode = 0; // fire-and-forget
+            req.output_requested = 0;
+            for (uint32_t i = 0; i < n_devices && i < GGML_RPC_MAX_DEVICES; i++) {
+                uint32_t dev;
+                memcpy(&dev, data + hdr_sz + i * sizeof(uint32_t), sizeof(dev));
+                req.devices[i] = dev;
+                req.n_devices++;
+            }
+            // NIT-2: atomic check+enqueue for multi-device path.
+            return engine.try_enqueue_graph_recompute_all(req);
+        }
+        // Unknown cmd: drop silently.
+        return false;
+    };
+
+    // T2e: send ACK for a successfully-handled frame. Echo the DATA seq so the
+    // client can match the ACK to its outstanding frame. This is the send
+    // channel that BUG-011 flagged as missing. Called immediately on receipt
+    // (before any reorder delay) so the stop-and-wait client is unblocked.
+    auto send_ack = [&](const rpc_udp_header & hdr,
+                        const sockaddr_in & from, socklen_t from_len) {
+        rpc_udp_header ack_hdr = {};
+        ack_hdr.magic     = RPC_UDP_MAGIC;
+        ack_hdr.seq       = hdr.seq;          // echo DATA seq
+        ack_hdr.cmd       = hdr.cmd;
+        ack_hdr.flags     = RPC_UDP_FLAG_ACK; // marks this as an ACK
+        ack_hdr.device    = hdr.device;
+        ack_hdr.graph_uid = hdr.graph_uid;
+        ssize_t sent = sendto(sockfd, reinterpret_cast<const char *>(&ack_hdr),
+                              sizeof(ack_hdr), 0,
+                              reinterpret_cast<const sockaddr *>(&from), from_len);
+        if (sent < 0) {
+            GGML_LOG_WARN("[udp-listener] ACK sendto failed for seq %u\n", hdr.seq);
+        } else {
+            // T2e: record the ACKed seq so a later exact duplicate is a no-op.
+            // Find the peer_state for this sender.
+            uint64_t peer_key = (static_cast<uint64_t>(from.sin_addr.s_addr) << 16)
+                              | static_cast<uint64_t>(ntohs(from.sin_port));
+            peers[peer_key].last_ack_seq = hdr.seq;
+            LOG_DBG("[udp-listener] ACK seq=%u cmd=%u dev=%u\n", hdr.seq, hdr.cmd, hdr.device);
+        }
+    };
+
     while (true) {
         sockaddr_in from = {};
         socklen_t from_len = sizeof(from);
@@ -5822,14 +6003,21 @@ static void rpc_udp_listener(rpc_compute_engine & engine, int udp_port) {
         }
         size_t got = static_cast<size_t>(n);
         const size_t hdr_sz = sizeof(rpc_udp_header);
-        if (got < hdr_sz) {
-            continue; // too small
-        }
+        if (got < hdr_sz) continue;
         rpc_udp_header hdr;
         memcpy(&hdr, buf.data(), hdr_sz);
-        if (hdr.magic != RPC_UDP_MAGIC) {
-            continue; // not our protocol
+        if (hdr.magic != RPC_UDP_MAGIC) continue;
+        if (hdr.flags & RPC_UDP_FLAG_ACK) continue; // ignore stray ACKs
+
+        // T2e fault injection: DROP. With probability drop_pct the frame is
+        // discarded before any processing — simulating datagram loss. The client
+        // will not receive an ACK and will time out → fall back to TCP.
+        if (maybe_drop()) {
+            GGML_LOG_DEBUG("[udp-listener] FAULT drop: dropped %zu-byte frame from %s:%u\n",
+                           got, inet_ntoa(from.sin_addr), ntohs(from.sin_port));
+            continue;
         }
+
         // Log sequence gaps (rate-limited to 1 Hz per peer).
         uint64_t peer_key = (static_cast<uint64_t>(from.sin_addr.s_addr) << 16)
                           | static_cast<uint64_t>(ntohs(from.sin_port));
@@ -5845,47 +6033,53 @@ static void rpc_udp_listener(rpc_compute_engine & engine, int udp_port) {
         }
         ps.last_seq = hdr.seq;
 
-        if (hdr.cmd == RPC_CMD_GRAPH_RECOMPUTE) {
-            if (got != hdr_sz) {
-                continue;
-            }
-            // F1 (T2a): carry the uid from the UDP header into the request so the
-            // server can verify the cached graph matches. UDP is fire-and-forget
-            // (no response channel), so a uid mismatch here means the server will
-            // silently not recompute — acceptable for the UDP best-effort path; the
-            // TCP path (below) returns an explicit hit/miss for client fallback.
-            rpc_msg_graph_recompute_req req = {};
-            req.device = hdr.device;
-            req.graph_hash = hdr.graph_uid;
-            // NIT-2: atomic check+enqueue (fixes multi-client race).
-            // UDP is fire-and-forget (no response channel), so a uid miss here
-            // means the server will silently not recompute — acceptable for the
-            // UDP best-effort path; the TCP path returns an explicit hit/miss.
-            if (!engine.try_enqueue_graph_recompute(req)) {
-                continue; // uid miss → drop (client proceeds; may read stale output)
-            }
-        } else if (hdr.cmd == RPC_CMD_GRAPH_RECOMPUTE_ALL) {
-            // Parse the device list that follows the header.
-            const uint32_t n_devices = (got > hdr_sz) ?
-                static_cast<uint32_t>((got - hdr_sz) / sizeof(uint32_t)) : 0;
-            rpc_msg_graph_recompute_all_req req = {};
-            req.graph_hash = hdr.graph_uid;
-            req.sync_mode = 0; // fire-and-forget
-            req.output_requested = 0;
-            for (uint32_t i = 0; i < n_devices && i < GGML_RPC_MAX_DEVICES; i++) {
-                uint32_t dev;
-                memcpy(&dev, buf.data() + hdr_sz + i * sizeof(uint32_t), sizeof(dev));
-                req.devices[i] = dev;
-                req.n_devices++;
-            }
-            // F1 (T2a): drop on uid miss (UDP has no response channel).
-            // NIT-2: atomic check+enqueue for multi-device path.
-            if (!engine.try_enqueue_graph_recompute_all(req)) {
-                continue;
-            }
+        // T2e dedup: an exact duplicate (same seq as the last frame we ACKed) is
+        // a no-op on the compute side — the recompute for this seq was already
+        // enqueued and superseded. ACK it (the client waits on this seq) but skip
+        // re-enqueue. This prevents a double-enqueue of the same graph.
+        if (ps.last_ack_seq != UINT32_MAX && hdr.seq == ps.last_ack_seq) {
+            LOG_DBG("[udp-listener] dup seq=%u (no-op, already ACKed)\n", hdr.seq);
+            send_ack(hdr, from, from_len);
+            continue;
         }
-        // Unknown cmd: drop silently.
+
+        // T2e: ACK immediately so the stop-and-wait client is unblocked and the
+        // protocol keeps flowing regardless of any reorder delay below. We ACK
+        // even on a uid miss (the client proceeds and may TCP-fallback).
+        send_ack(hdr, from, from_len);
+
+        // T2e fault injection: REORDER. With probability reorder_pct, hold the
+        // current frame's *enqueue* for one recvfrom cycle instead of dispatching
+        // it immediately. Because we already ACKed, the client is unblocked (no
+        // deadlock). On the NEXT recvfrom, the held frame is flushed first, then
+        // the new frame is processed — a one-frame delay that exercises delayed-
+        // frame tolerance while keeping the enqueue cadence at exactly one frame
+        // per recvfrom (identical to baseline interleaving, so the pre-existing
+        // MTP recurrent-state bug BUG-002 at ops.cpp:4916 is not triggered).
+        bool reorder_hold = (reorder_pct > 0 && rng_pct() < reorder_pct);
+        if (delayed_valid) {
+            // Flush the previously-held frame first (it arrived one cycle ago).
+            rpc_udp_header dh;
+            memcpy(&dh, delayed.bytes.data(), hdr_sz);
+            do_enqueue(delayed.bytes.data(), delayed.bytes.size(), dh);
+            LOG_DBG("[udp-listener] FAULT reorder: flushed delayed seq=%u\n", dh.seq);
+            delayed_valid = false;
+        }
+        if (reorder_hold) {
+            // Hold the current frame; it will be flushed on the next recvfrom.
+            delayed.bytes.assign(buf.data(), buf.data() + got);
+            delayed.from = from;
+            delayed.from_len = from_len;
+            delayed.seq = hdr.seq;
+            delayed_valid = true;
+            LOG_DBG("[udp-listener] FAULT reorder: holding seq=%u for one cycle\n", hdr.seq);
+            continue;
+        }
+
+        // Normal path: dispatch to compute worker immediately.
+        do_enqueue(buf.data(), got, hdr);
     }
+    // Note: a held frame is lost on teardown — acceptable (server shutting down).
     close(sockfd);
 }
 
