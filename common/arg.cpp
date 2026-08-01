@@ -945,18 +945,27 @@ static void add_fabric_devices(common_params & params, const std::string & serve
     }
     ggml_backend_load_all();
 
-    // Layer assignment is resolved at model load time (GGUF header gives the
-    // layer count). For the minimal scaffold we pass n_layers=0 as a sentinel;
-    // the facade's alloc_buffer routes all allocations to server 0 until the
-    // benchmark agent (E1-E6) wires the real layer count via a follow-up call
-    // to ggml_backend_rpc_fabric_set_layers(). Even split is the default:
-    // layer i -> server (i * n_endpoints / n_layers).
-    int n_layers = 0; // resolved at load; 0 = route-all-to-server-0 fallback
+    // E3 (LEDGER #61): wire the real layer count + assignment for the
+    // 2-GPU experiment. The E3 model is Qwen3.6-35B (28 layers): the 7900 XTX
+    // (server 0) holds layers 0-25, the 3060 Ti (server 1) holds layers 26-27
+    // (per V3 profiling). The scaffold's n_layers=0 sentinel (all->server 0)
+    // makes E3 meaningless, so this is hardcoded for the E3 model and
+    // overridable via GGML_FABRIC_N_LAYERS / GGML_FABRIC_LAST_LAYERS.
+    int n_layers = 28;      // Qwen3.6-35B
+    int n_last = 2;         // last N layers -> last server (3060 Ti)
+    if (getenv("GGML_FABRIC_N_LAYERS")) n_layers = atoi(getenv("GGML_FABRIC_N_LAYERS"));
+    if (getenv("GGML_FABRIC_LAST_LAYERS")) n_last = atoi(getenv("GGML_FABRIC_LAST_LAYERS"));
     int n_endpoints = (int)rpc_servers.size();
+    if (n_layers <= 0 || n_last < 0 || n_last > n_layers || n_endpoints < 2) {
+        // Fallback: sentinel (all -> server 0) only when we cannot know better.
+        n_layers = 0;
+        n_last = 0;
+    }
 
-    // Placeholder layer assignment (empty = fallback mode). The benchmark
-    // agent populates this after model load when n_layers is known.
-    std::vector<int> layer_assignment;
+    std::vector<int> layer_assignment(n_layers, 0);
+    for (int i = 0; i < n_layers; i++) {
+        layer_assignment[i] = (i < n_layers - n_last) ? 0 : n_endpoints - 1;
+    }
 
     // Build C-compatible endpoint array.
     std::vector<const char *> ep_cstrs;

@@ -32,6 +32,24 @@ GGML_BACKEND_API void ggml_backend_rpc_start_server(const char * endpoint, const
 GGML_BACKEND_API ggml_backend_reg_t ggml_backend_rpc_reg(void);
 GGML_BACKEND_API ggml_backend_reg_t ggml_backend_rpc_add_server(const char * endpoint);
 
+// LEDGER #55/#56: RPC server-facade. Wraps N rpc-server endpoints behind a
+// single-device facade. The client scheduler sees ONE device with summed
+// VRAM; the facade routes each layer to its owning server via layer_assignment
+// and transfers inter-server activations over UDP hops (FABRIC_HOP).
+// n_layers: total layers in the model. layer_assignment[i] = server index for
+// layer i (length n_layers). Returns a reg with one device; register it via
+// ggml_backend_device_register(ggml_backend_reg_dev_get(reg, 0)).
+GGML_BACKEND_API ggml_backend_reg_t ggml_backend_rpc_fabric_add(const char * const * endpoints,
+                                                                 int n_endpoints,
+                                                                 int n_layers,
+                                                                 const int * layer_assignment);
+// Set the layer assignment after model load (when n_layers is known from the
+// GGUF header). Must be called before the first graph_compute so weight
+// allocations route to the right servers. Returns false on error.
+GGML_BACKEND_API bool ggml_backend_rpc_fabric_set_layers(ggml_backend_t backend,
+                                                          int n_layers,
+                                                          const int * layer_assignment);
+
 // B+7a'/B+9: drain deferred EVENT/GET/COPY across all RPC sockets (pipeline_barrier hook).
 GGML_BACKEND_API void ggml_backend_rpc_drain_all_endpoints(void);
 

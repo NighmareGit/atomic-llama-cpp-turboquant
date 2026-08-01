@@ -196,10 +196,38 @@ enum rpc_cmd {
     RPC_CMD_GET_TENSOR_BATCH,    // V1b: batch GET_TENSOR requests (value 25)
     RPC_CMD_FABRIC_HOP,          // LEDGER #55: server→server activation hop frame (value 26)
     RPC_CMD_FABRIC_NACK,         // LEDGER #55: hop NACK/retransmit request (value 27)
-    RPC_CMD_COUNT,               // updated to 28
+    RPC_CMD_FABRIC_SET_INPUT,    // E3: facade→server boundary activation upload (name + bytes) (value 28)
+    RPC_CMD_COUNT,               // updated to 29
 };
 
 static_assert(RPC_CMD_HELLO == 14, "RPC_CMD_HELLO must be always 14");
+
+// ============================================================================
+// RPC Fabric facade (LEDGER #55/#56) — shared wire definitions.
+// Hoisted before rpc_udp_listener (which reassembles FABRIC_HOP frames).
+// ============================================================================
+static constexpr uint32_t RPC_FABRIC_HOP_MAGIC = 0x46414248u; // "FABH"
+#define FABRIC_HOP_CHUNK 1400
+
+// Hop frame header (v1 minimal, bf16 raw). Modeled on the T2e rpc_udp_header
+// (22B) per feasibility §2.1.3. The full fabric-hop-wire.md §2.1 40-byte
+// header with codec ladder is v2.
+struct rpc_fabric_hop_header {
+    uint32_t magic;        // RPC_FABRIC_HOP_MAGIC
+    uint32_t fabric_seq;   // end-to-end monotonic per fabric instance
+    uint32_t hop_seq;      // per-hop monotonic (NACK matching)
+    uint8_t  cmd;          // RPC_CMD_FABRIC_HOP
+    uint8_t  flags;        // bit0=last_chunk, bit1=retransmit
+    uint8_t  hop_index;    // current hop (0 = source)
+    uint8_t  codec;        // 0=bf16 raw
+    uint16_t chunk_index;  // 0-based
+    uint16_t total_chunks; // 1 for activations fitting one MTU
+    uint16_t payload_len;  // bytes in this chunk (<= 1460 std MTU)
+    uint16_t activation_len; // full activation length (reassembly hint)
+    uint64_t token_id;     // token identifier (matches EVENT_RECORD)
+};
+static_assert(sizeof(rpc_fabric_hop_header) == 32,
+              "rpc_fabric_hop_header must be 32 bytes");
 
 static void rpc_trace_emit_hello(const char * endpoint, int minor, bool peer_copy) {
     if (!rpc_trace_lvl()) {
@@ -5892,6 +5920,18 @@ static void rpc_udp_listener(rpc_compute_engine & engine, int udp_port) {
     };
     std::unordered_map<uint64_t, peer_state> peers; // key = (addr << 16) | port
 
+    // E3: fabric hop reassembly state. Keyed by fabric_seq (monotonic per
+    // sender). Chunks may arrive out of order; we wait for total_chunks.
+    struct fabric_reassembly {
+        std::vector<uint8_t> buf;
+        size_t received = 0;   // chunks received so far
+        size_t total = 0;      // total_chunks from first frame
+        uint16_t activation_len = 0;
+    };
+    std::unordered_map<uint32_t, fabric_reassembly> fabric_hops;
+    size_t fabric_hops_complete = 0;
+    uint64_t fabric_reassembly_us = 0;
+
     // T2e: reorder simulation. The RPC protocol is stop-and-wait, so the server
     // always receives frames in seq order. To exercise delayed-frame tolerance
     // without deadlock, the server ACKs every frame IMMEDIATELY (unblocking the
@@ -5924,7 +5964,7 @@ static void rpc_udp_listener(rpc_compute_engine & engine, int udp_port) {
         return rng_pct() < drop_pct;
     };
 
-    std::vector<uint8_t> buf(1024); // max UDP datagram we expect
+    std::vector<uint8_t> buf(4096); // max UDP datagram we expect (fabric hop frames up to 1432B)
 
     // T2e: enqueue one already-parsed DATA frame on the compute worker.
     // Gap logging, dedup, and ACK are handled in the main loop BEFORE this is
@@ -6008,6 +6048,36 @@ static void rpc_udp_listener(rpc_compute_engine & engine, int udp_port) {
         if (got < hdr_sz) continue;
         rpc_udp_header hdr;
         memcpy(&hdr, buf.data(), hdr_sz);
+
+        // E3: fabric hop frames (FABH magic) — multi-chunk activation reassembly.
+        if (hdr.magic == RPC_FABRIC_HOP_MAGIC && got >= sizeof(rpc_fabric_hop_header)) {
+            rpc_fabric_hop_header fh;
+            memcpy(&fh, buf.data(), sizeof(fh));
+            if (fh.cmd == RPC_CMD_FABRIC_HOP) {
+                const auto rt0 = std::chrono::steady_clock::now();
+                auto & rs = fabric_hops[fh.fabric_seq];
+                if (rs.total == 0) {
+                    rs.total = fh.total_chunks;
+                    rs.activation_len = fh.activation_len;
+                    rs.buf.assign(fh.activation_len, 0);
+                }
+                const size_t off = (size_t)fh.chunk_index * FABRIC_HOP_CHUNK;
+                if (fh.payload_len > 0 && off + fh.payload_len <= rs.buf.size()) {
+                    memcpy(rs.buf.data() + off, buf.data() + sizeof(fh), fh.payload_len);
+                    rs.received++;
+                }
+                fabric_reassembly_us += (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - rt0).count();
+                if (rs.received >= rs.total) {
+                    fabric_hops_complete++;
+                    GGML_LOG_INFO("[udp-listener] FABRIC_HOP reassembled: fabric_seq=%u chunks=%zu bytes=%u complete=%zu\n",
+                                  fh.fabric_seq, rs.total, fh.activation_len, fabric_hops_complete);
+                    fabric_hops.erase(fh.fabric_seq);
+                }
+                continue;
+            }
+        }
+
         if (hdr.magic != RPC_UDP_MAGIC) continue;
         if (hdr.flags & RPC_UDP_FLAG_ACK) continue; // ignore stray ACKs
 
@@ -6683,6 +6753,14 @@ static void * ggml_backend_rpc_get_proc_address(ggml_backend_reg_t reg, const ch
         fflush(stderr);
         return (void *)ggml_backend_rpc_split_buffer_type;
     }
+    // LEDGER #55/#56: the facade constructor is exposed through the RPC reg so
+    // common/arg.cpp can call it at arg-parse time (before model load).
+    if (std::strcmp(name, "ggml_backend_rpc_fabric_add") == 0) {
+        return (void *)ggml_backend_rpc_fabric_add;
+    }
+    if (std::strcmp(name, "ggml_backend_rpc_fabric_set_layers") == 0) {
+        return (void *)ggml_backend_rpc_fabric_set_layers;
+    }
     return NULL;
 
     GGML_UNUSED(reg);
@@ -6799,27 +6877,8 @@ ggml_backend_reg_t ggml_backend_rpc_add_server(const char * endpoint) {
 // ============================================================================
 
 #define GGML_RPC_FABRIC_MAX_SERVERS 8
-static constexpr uint32_t RPC_FABRIC_HOP_MAGIC = 0x46414248u; // "FABH"
-
-// Hop frame header (v1 minimal, bf16 raw). Modeled on the T2e rpc_udp_header
-// (22B) per feasibility §2.1.3. The full fabric-hop-wire.md §2.1 40-byte
-// header with codec ladder is v2.
-struct rpc_fabric_hop_header {
-    uint32_t magic;        // RPC_FABRIC_HOP_MAGIC
-    uint32_t fabric_seq;   // end-to-end monotonic per fabric instance
-    uint32_t hop_seq;      // per-hop monotonic (NACK matching)
-    uint8_t  cmd;          // RPC_CMD_FABRIC_HOP
-    uint8_t  flags;        // bit0=last_chunk, bit1=retransmit
-    uint8_t  hop_index;    // current hop (0 = source)
-    uint8_t  codec;        // 0=bf16 raw
-    uint16_t chunk_index;  // 0-based
-    uint16_t total_chunks; // 1 for activations fitting one MTU
-    uint16_t payload_len;  // bytes in this chunk (<= 1460 std MTU)
-    uint16_t activation_len; // full activation length (reassembly hint)
-    uint64_t token_id;     // token identifier (matches EVENT_RECORD)
-};
-static_assert(sizeof(rpc_fabric_hop_header) == 32,
-              "rpc_fabric_hop_header must be 32 bytes");
+// (RPC_FABRIC_HOP_MAGIC, FABRIC_HOP_CHUNK, rpc_fabric_hop_header defined
+// near the top of this file — shared with rpc_udp_listener reassembly.)
 
 // Facade backend context: wraps N real rpc-server backends.
 struct ggml_backend_rpc_fabric_context {
@@ -6827,6 +6886,10 @@ struct ggml_backend_rpc_fabric_context {
     int n_servers;
     int *layer_assignment;  // layer_assignment[layer] = server index
     int n_layers;
+    ggml_backend_sched_t sched;      // E3: lazy inner sched over servers (+CPU fallback)
+    ggml_backend_t cpu_backend;      // E3: CPU fallback for ops no server supports
+    uint64_t hop_total_us;           // E3: cumulative fabric hop send time (instrumentation)
+    uint64_t hop_n_sends;            // E3: fabric hop send count
 };
 
 // Facade device context.
@@ -6860,6 +6923,25 @@ static int fabric_tensor_layer(const ggml_tensor * t) {
     long layer = strtol(blk + 4, &end, 10);
     if (end == blk + 4 || layer < 0) return -1;
     return (int)layer;
+}
+
+// E3: route a tensor to its owning server.
+//   blk.N.*    -> layer_assignment[N]
+//   output head (no layer) -> LAST server (final layer computes logits there)
+//   everything else (embeddings, norms, residual/intermediate buffers) -> server 0
+static int fabric_tensor_server(const ggml_tensor * t, int n_layers,
+                                const int * layer_assignment, int n_servers) {
+    int layer = fabric_tensor_layer(t);
+    if (layer >= 0 && layer < n_layers && layer_assignment) {
+        return layer_assignment[layer];
+    }
+    if (t && t->name[0] && n_servers > 1) {
+        if (strstr(t->name, "output_norm") || strstr(t->name, "output.weight") ||
+            strstr(t->name, "output.")) {
+            return n_servers - 1;
+        }
+    }
+    return 0;
 }
 
 // ---- Forward declarations (facade iface functions) ----
@@ -6996,7 +7078,18 @@ static ggml_backend_t ggml_backend_rpc_fabric_device_init_backend(ggml_backend_d
     ctx->servers = dev_ctx->servers;
     ctx->n_servers = (int)dev_ctx->servers.size();
     ctx->n_layers = dev_ctx->n_layers;
-    ctx->layer_assignment = dev_ctx->layer_assignment;
+    // E3: the backend owns a COPY of the layer assignment (dev_ctx may outlive
+    // the backend or vice versa; a shared pointer would double-free).
+    ctx->layer_assignment = nullptr;
+    if (dev_ctx->n_layers > 0 && dev_ctx->layer_assignment) {
+        ctx->layer_assignment = new int[dev_ctx->n_layers];
+        memcpy(ctx->layer_assignment, dev_ctx->layer_assignment,
+               dev_ctx->n_layers * sizeof(int));
+    }
+    ctx->sched = nullptr;
+    ctx->cpu_backend = nullptr;
+    ctx->hop_total_us = 0;
+    ctx->hop_n_sends = 0;
     GGML_UNUSED(params);
     // The facade backend wraps the N real rpc-server backends. Its graph_compute
     // fans out to all servers; the client scheduler sees ONE backend.
@@ -7078,11 +7171,8 @@ static size_t ggml_backend_rpc_fabric_buffer_type_get_max_size(ggml_backend_buff
 static size_t ggml_backend_rpc_fabric_buffer_type_get_alloc_size(
         ggml_backend_buffer_type_t buft, const ggml_tensor * tensor) {
     auto * ctx = (ggml_backend_rpc_fabric_buffer_type_context *)buft->context;
-    int layer = fabric_tensor_layer(tensor);
-    int srv = 0;
-    if (layer >= 0 && layer < ctx->n_layers && ctx->layer_assignment) {
-        srv = ctx->layer_assignment[layer];
-    }
+    int srv = fabric_tensor_server(tensor, ctx->n_layers, ctx->layer_assignment,
+                                   (int)ctx->server_bufpts.size());
     if (srv < 0 || srv >= (int)ctx->server_bufpts.size()) srv = 0;
     tl_fabric_alloc_server = srv;
     return ctx->server_bufpts[srv]->iface.get_alloc_size(ctx->server_bufpts[srv], tensor);
@@ -7097,6 +7187,12 @@ static const char * ggml_backend_rpc_fabric_get_name(ggml_backend_t backend) {
 
 static void ggml_backend_rpc_fabric_free(ggml_backend_t backend) {
     auto * ctx = (ggml_backend_rpc_fabric_context *)backend->context;
+    if (ctx->sched) {
+        ggml_backend_sched_free(ctx->sched);
+    }
+    if (ctx->cpu_backend) {
+        ggml_backend_free(ctx->cpu_backend);
+    }
     for (auto * srv : ctx->servers) {
         ggml_backend_free(srv);
     }
@@ -7107,6 +7203,10 @@ static void ggml_backend_rpc_fabric_free(ggml_backend_t backend) {
 
 static void ggml_backend_rpc_fabric_synchronize(ggml_backend_t backend) {
     auto * ctx = (ggml_backend_rpc_fabric_context *)backend->context;
+    if (ctx->sched) {
+        ggml_backend_sched_synchronize(ctx->sched);
+        return;
+    }
     for (auto * srv : ctx->servers) {
         ggml_backend_synchronize(srv);
     }
@@ -7145,58 +7245,139 @@ bool ggml_backend_rpc_fabric_set_layers(ggml_backend_t backend, int n_layers,
 // server's existing filter_null_src_nodes drops layers whose weights are not
 // present on that server, so each server effectively computes only its
 // layers. The hop transfers the boundary activation between servers.
-static enum ggml_status ggml_backend_rpc_fabric_graph_compute(ggml_backend_t backend,
-                                                               ggml_cgraph * cgraph) {
-    auto * ctx = (ggml_backend_rpc_fabric_context *)backend->context;
-    if (ctx->servers.empty() || cgraph->n_nodes == 0) return GGML_STATUS_ABORTED;
-
-    // Fan-out: ensure every server has the graph cached. The first call uses
-    // GRAPH_COMPUTE (full serialization); subsequent calls use GRAPH_RECOMPUTE.
-    // Each server computes its layers (weights present) and skips the rest.
-    for (int i = 0; i < ctx->n_servers; i++) {
-        enum ggml_status st = ggml_backend_graph_compute(ctx->servers[i], cgraph);
-        if (st != GGML_STATUS_SUCCESS) return st;
+// E3: find the boundary activation tensor — the residual input of the first
+// node owned by the last server. Returns the tensor whose data must cross the
+// server boundary (computed on server 0, consumed by server 1's first layer).
+static ggml_tensor * fabric_boundary_tensor(const ggml_cgraph * cgraph, int first_last_layer) {
+    if (!cgraph) return nullptr;
+    for (int i = 0; i < cgraph->n_nodes; i++) {
+        ggml_tensor * node = cgraph->nodes[i];
+        if (!node) continue;
+        if (fabric_tensor_layer(node) >= first_last_layer) {
+            return node->src[0];
+        }
     }
-    return GGML_STATUS_SUCCESS;
+    return nullptr;
 }
 
-// ---- Hop sender/receiver (UDP, reusing T2e wire) ----
-
-// Send an activation hop from one server to the next over UDP. Uses the
-// destination server's UDP port (tcp_port + 1, same convention as T2e).
-// bf16 raw: payload is the activation bytes directly. Single-chunk for
-// activations <= 1460 bytes (std MTU); larger activations need fragmentation
-// (deferred to v2).
+// E3: multi-chunk bf16 UDP hop (fragmentation + server-side reassembly).
+// Header = rpc_fabric_hop_header (32B), payload chunks of FABRIC_HOP_CHUNK
+// bytes. Fire-and-forget; reassembly verified server-side (logged).
 static bool fabric_hop_send(ggml_backend_t src_backend, ggml_backend_t dst_backend,
                             const void * data, size_t size, uint64_t token_id,
                             uint32_t fabric_seq) {
     auto * src_ctx = (ggml_backend_rpc_context *)src_backend->context;
     auto * dst_ctx = (ggml_backend_rpc_context *)dst_backend->context;
     if (!src_ctx || !dst_ctx) return false;
-    auto src_sock = get_socket(src_ctx->endpoint);
-    if (!src_sock) return false;
-    int udp_port = dst_ctx->tcp_port > 0 ? dst_ctx->tcp_port + 1 : 0;
+    std::string host;
+    int dst_port = 0;
+    if (!parse_endpoint(dst_ctx->endpoint, host, dst_port)) return false;
+    int udp_port = dst_port > 0 ? dst_port + 1 : 0;
     if (udp_port <= 0) return false;
 
-    rpc_fabric_hop_header hdr = {};
-    hdr.magic = RPC_FABRIC_HOP_MAGIC;
-    hdr.fabric_seq = fabric_seq;
-    hdr.hop_seq = src_sock->udp_next_seq();
-    hdr.cmd = RPC_CMD_FABRIC_HOP;
-    hdr.flags = 0x01; // last_chunk (single chunk for v1)
-    hdr.hop_index = 0;
-    hdr.codec = 0; // bf16 raw
-    hdr.chunk_index = 0;
-    hdr.total_chunks = 1;
-    hdr.payload_len = (uint16_t)size;
-    hdr.activation_len = (uint16_t)size;
-    hdr.token_id = token_id;
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return false;
+    sockaddr_in dst = {};
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons((uint16_t)udp_port);
+    if (inet_pton(AF_INET, host.c_str(), &dst.sin_addr) != 1) {
+        // E3 topology uses IP literals (127.0.0.1) — no hostname resolution.
+        close(fd);
+        return false;
+    }
 
-    size_t pkt_len = sizeof(hdr) + size;
-    std::vector<uint8_t> pkt(pkt_len);
-    memcpy(pkt.data(), &hdr, sizeof(hdr));
-    memcpy(pkt.data() + sizeof(hdr), data, size);
-    return src_sock->send_udp(pkt.data(), pkt.size());
+    const size_t n_chunks = (size + FABRIC_HOP_CHUNK - 1) / FABRIC_HOP_CHUNK;
+    const size_t hdr_sz = sizeof(rpc_fabric_hop_header);
+    std::vector<uint8_t> pkt(hdr_sz + FABRIC_HOP_CHUNK);
+    bool ok = true;
+    for (size_t ci = 0; ci < n_chunks; ci++) {
+        size_t off = ci * FABRIC_HOP_CHUNK;
+        size_t plen = std::min<size_t>(FABRIC_HOP_CHUNK, size - off);
+        rpc_fabric_hop_header hdr = {};
+        hdr.magic = RPC_FABRIC_HOP_MAGIC;
+        hdr.fabric_seq = fabric_seq;
+        hdr.hop_seq = (uint32_t)ci; // chunk index doubles as hop_seq for v1
+        hdr.cmd = RPC_CMD_FABRIC_HOP;
+        hdr.flags = (uint8_t)((ci + 1 == n_chunks) ? 0x01 : 0x00); // last_chunk
+        hdr.hop_index = 0;
+        hdr.codec = 0; // bf16 raw
+        hdr.chunk_index = (uint16_t)ci;
+        hdr.total_chunks = (uint16_t)n_chunks;
+        hdr.payload_len = (uint16_t)plen;
+        hdr.activation_len = (uint16_t)size;
+        hdr.token_id = token_id;
+        memcpy(pkt.data(), &hdr, hdr_sz);
+        memcpy(pkt.data() + hdr_sz, (const uint8_t *)data + off, plen);
+        ssize_t sent = sendto(fd, pkt.data(), hdr_sz + plen, 0,
+                              (const sockaddr *)&dst, sizeof(dst));
+        if (sent < 0) { ok = false; break; }
+    }
+    close(fd);
+    return ok;
+}
+
+// graph_compute: the facade presents ONE device to the client scheduler; the
+// full model graph arrives here. E3 wires an INNER multi-device scheduler over
+// the N real rpc-server backends — the exact layer-split machinery the working
+// (non-facade) path uses. Weights were pre-routed by get_alloc_size per
+// layer_assignment, so the sched assigns layers 0..k to server 0 and k+1..n to
+// server 1, relays the boundary activation via the RPC cpy path, and computes
+// the logits head on the last server. The client reads logits via the buffer
+// iface (GET_TENSOR) — no special get_tensor_async needed here.
+//
+// The bf16 UDP fabric hop is wired (multi-chunk send + server-side
+// reassembly) and sampled here as instrumentation to measure hop latency under
+// real load; it is NOT yet the per-token data plane (that is the sched's cpy
+// relay in this E3 slice).
+static enum ggml_status ggml_backend_rpc_fabric_graph_compute(ggml_backend_t backend,
+                                                               ggml_cgraph * cgraph) {
+    auto * ctx = (ggml_backend_rpc_fabric_context *)backend->context;
+    if (ctx->servers.empty() || cgraph->n_nodes == 0) return GGML_STATUS_ABORTED;
+
+    if (!ctx->sched) {
+        std::vector<ggml_backend_t> backends = ctx->servers;
+        // E3 diagnostic: NO CPU fallback in the inner sched. The fallback was
+        // corrupting compute (mixed CPU/RPC node assignment garbles output).
+        ctx->cpu_backend = nullptr;
+        size_t graph_size = ggml_graph_overhead_custom(cgraph->n_nodes, false);
+        ctx->sched = ggml_backend_sched_new(backends.data(), nullptr,
+                                            (int)backends.size(), graph_size,
+                                            false, false);
+        GGML_LOG_INFO("[fabric] facade inner sched: %d servers (no CPU fallback)\n",
+                      (int)ctx->servers.size());
+    }
+
+    enum ggml_status st = ggml_backend_sched_graph_compute(ctx->sched, cgraph);
+    if (st != GGML_STATUS_SUCCESS) return st;
+
+    // Hop instrumentation: sample the boundary activation hop every 64 tokens.
+    static thread_local uint64_t s_hop_ticks = 0;
+    if ((++s_hop_ticks & 63) == 0 && ctx->n_servers > 1) {
+        int first_last = 0;
+        for (int i = 0; i < ctx->n_layers; i++) {
+            if (ctx->layer_assignment[i] == ctx->n_servers - 1) { first_last = i; break; }
+        }
+        ggml_tensor * boundary = fabric_boundary_tensor(cgraph, first_last);
+        if (boundary && boundary->buffer && boundary->data) {
+            const size_t bsz = ggml_nbytes(boundary);
+            std::vector<uint8_t> staging(bsz);
+            ggml_backend_tensor_get(boundary, staging.data(), 0, bsz);
+            const auto t0 = std::chrono::steady_clock::now();
+            bool ok = fabric_hop_send(ctx->servers[0], ctx->servers[ctx->n_servers - 1],
+                                      staging.data(), bsz,
+                                      0 /* token_id: instrumentation only */,
+                                      (uint32_t)(s_hop_ticks >> 3));
+            const auto us = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - t0).count();
+            ctx->hop_total_us += us;
+            ctx->hop_n_sends++;
+            GGML_LOG_INFO("[fabric] hop sample #%llu: tensor=%s bytes=%zu chunks=%zu send=%llu us ok=%d\n",
+                          (unsigned long long)ctx->hop_n_sends, boundary->name,
+                          bsz, (bsz + FABRIC_HOP_CHUNK - 1) / FABRIC_HOP_CHUNK,
+                          (unsigned long long)us, (int)ok);
+        }
+    }
+    return st;
 }
 
 // ---- Facade reg interface ----
