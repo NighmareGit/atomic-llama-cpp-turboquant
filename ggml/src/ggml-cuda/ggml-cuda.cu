@@ -1642,15 +1642,15 @@ static void * ggml_cuda_host_malloc(size_t size) {
     double size_GiB = size/(1024.*1024.*1024.);
     auto tim1 = ggml_time_us();
     if (size_GiB > k_warn_limit) {
-        GGML_CUDA_LOG_INFO("\n\nAllocating %.2f GiB of pinned host memory, this may take a while.\n", size_GiB);
-        GGML_CUDA_LOG_INFO("Using pinned host memory improves PP performance by a significant margin.\n");
-        GGML_CUDA_LOG_INFO("But if it takes too long for your model and amount of patience, kill the process and run using\n\n");
-        GGML_CUDA_LOG_INFO("GGML_CUDA_NO_PINNED=1 your_command_goes_here\n");
+        GGML_LOG_INFO("\n\nAllocating %.2f GiB of pinned host memory, this may take a while.\n", size_GiB);
+        GGML_LOG_INFO("Using pinned host memory improves PP performance by a significant margin.\n");
+        GGML_LOG_INFO("But if it takes too long for your model and amount of patience, kill the process and run using\n\n");
+        GGML_LOG_INFO("GGML_CUDA_NO_PINNED=1 your_command_goes_here\n");
     }
 
     void * ptr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (ptr == MAP_FAILED) {
-        GGML_CUDA_LOG_WARN("%s: mmap of %.2f MiB failed\n", __func__, size/1024.0/1024.0);
+        GGML_LOG_WARN("%s: mmap of %.2f MiB failed\n", __func__, size/1024.0/1024.0);
         return nullptr;
     }
 
@@ -1670,15 +1670,15 @@ static void * ggml_cuda_host_malloc(size_t size) {
     cudaError_t err = cudaHostRegister(ptr, size, cudaHostRegisterPortable);
     if (err != cudaSuccess) {
         cudaGetLastError(); // clear the error
-        GGML_CUDA_LOG_WARN("%s: cudaHostRegister of %.2f MiB failed: %s\n", __func__,
-                           size/1024.0/1024.0, cudaGetErrorString(err));
+        GGML_LOG_WARN("%s: cudaHostRegister of %.2f MiB failed: %s\n", __func__,
+                      size/1024.0/1024.0, cudaGetErrorString(err));
         munmap(ptr, size);
         return nullptr;
     }
 
     if (size_GiB > k_warn_limit) {
         auto tim2 = ggml_time_us();
-        GGML_CUDA_LOG_INFO("    done allocating %.2f GiB in %.1f ms\n\n", size_GiB, 1e-3*(tim2-tim1));
+        GGML_LOG_INFO("    done allocating %.2f GiB in %.1f ms\n\n", size_GiB, 1e-3*(tim2-tim1));
     }
     return ptr;
 }
