@@ -4,6 +4,30 @@
 #include <cstdint>
 #include <memory>
 
+// T2e: UDP datagram header for graph recompute, shared between the client
+// (transport.cpp send + ACK wait) and the server (ggml-rpc.cpp listener).
+// Fixed 22-byte header. Followed by 0 or more uint32_t device indices for the
+// GRAPH_RECOMPUTE_ALL variant.
+//
+// Two frame kinds share this header:
+//   DATA (client→server): flags=0, seq=monotonic per socket, cmd=GRAPH_RECOMPUTE[*],
+//                         device + graph_uid identify the cached graph.
+//   ACK  (server→client): flags=RPC_UDP_FLAG_ACK, seq=echo of the DATA frame's seq.
+//                         The client matches seq to confirm the specific frame arrived.
+struct rpc_udp_header {
+    uint32_t magic;      // RPC_UDP_MAGIC
+    uint32_t seq;        // DATA: monotonic per socket; ACK: echo of DATA seq
+    uint8_t  cmd;        // RPC_CMD_GRAPH_RECOMPUTE or GRAPH_RECOMPUTE_ALL
+    uint8_t  flags;      // RPC_UDP_FLAG_ACK set on ACK frames
+    uint32_t device;     // device index
+    uint64_t graph_uid;  // identifies cached graph on server
+};
+
+static constexpr uint32_t RPC_UDP_MAGIC = 0x474D4C01;
+// T2e: ACK flag in rpc_udp_header::flags. Server sets this on the ACK frame
+// that echoes a received DATA frame's seq back to the client.
+static constexpr uint8_t  RPC_UDP_FLAG_ACK = 1u << 0;
+
 struct socket_t;
 typedef std::shared_ptr<socket_t> socket_ptr;
 
@@ -22,10 +46,15 @@ struct socket_t {
 
     // UDP transport for fire-and-forget graph submission (opt-in via GGML_RPC_UDP=1).
     // init_udp() creates a UDP socket aimed at the remote's UDP port (tcp_port+1
-    // by default). send_udp() fires a single datagram — no ACK, no retransmit.
-    // Returns false if UDP was not initialized (caller falls back to TCP).
+    // by default). send_udp() fires a single datagram. For T2e reliability,
+    // recv_udp_ack() waits for the server's ACK (echoing the DATA frame's seq)
+    // with a timeout; the caller falls back to TCP on timeout.
     bool init_udp(int udp_port);
     bool send_udp(const void * data, size_t size) const;
+    // T2e: blocking wait for an ACK frame whose seq == expected_seq.
+    // Returns true if the matching ACK arrived within timeout_ms, false on
+    // timeout or socket error. Loops past stale/duplicate ACKs (wrong seq).
+    bool recv_udp_ack(uint32_t expected_seq, int timeout_ms);
     bool udp_enabled() const;
     uint32_t udp_next_seq();
 
