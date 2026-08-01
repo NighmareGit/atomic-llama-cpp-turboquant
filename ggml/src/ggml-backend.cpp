@@ -178,14 +178,18 @@ static bool ggml_backend_is_rpc_backend(ggml_backend_t backend) {
 // that identical-topology rebuilds within the MTP cycle produce the same uid and
 // the client reuses the server-cached graph via GRAPH_RECOMPUTE (8 B async)
 // instead of re-sending GRAPH_COMPUTE (244 KB blocking) every token.
-// Default OFF (F8 fix #1) so the change is independently bisectable and the
-// local-backend CUDA-graph uid path is untouched unless opted in.
+// Default ON: the topology-stable uid is required for correct output, since it
+// fixes BUG-013 (monotonic uid collision between prompt-eval and decode made the
+// server replay the wrong cached graph -> garbled output) and BUG-002a E-1
+// (generation-salted uid so MTP rollback rebuilds get fresh server bindings).
+// Opt out with GGML_RPC_STABLE_UID=0 to restore the legacy monotonic-uid
+// behavior; =1 forces ON; unset -> ON.
 static bool ggml_sched_rpc_stable_uid(void) {
     static bool initialized = false;
-    static bool enabled = false;
+    static bool enabled = true;
     if (!initialized) {
         const char * e = getenv("GGML_RPC_STABLE_UID");
-        enabled = (e && e[0] == '1');
+        enabled = !(e && e[0] == '0');
         initialized = true;
     }
     return enabled;
