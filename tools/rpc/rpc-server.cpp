@@ -317,7 +317,13 @@ int main(int argc, char * argv[]) {
         fprintf(stderr, "No devices found\n");
         return 1;
     }
-    std::string endpoint = params.host + ":" + std::to_string(params.port);
+    // UDS endpoint: if host starts with "uds:" or "/", use it directly (no port).
+    std::string endpoint;
+    if (params.host.rfind("uds:", 0) == 0 || (!params.host.empty() && params.host[0] == '/')) {
+        endpoint = params.host;
+    } else {
+        endpoint = params.host + ":" + std::to_string(params.port);
+    }
     const char * cache_dir = nullptr;
     std::string cache_dir_str;
     if (params.use_cache) {

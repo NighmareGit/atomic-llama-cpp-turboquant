@@ -12,12 +12,15 @@
 #  include <arpa/inet.h>
 #  include <sys/socket.h>
 #  include <sys/types.h>
+#  include <sys/un.h>
 #  include <netinet/in.h>
 #  include <netinet/tcp.h>
 #  include <netdb.h>
 #  include <unistd.h>
+#  include <fcntl.h>
 #endif
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <optional>
 
@@ -784,11 +787,20 @@ socket_ptr socket_t::accept() {
     if (!is_valid_fd(client_socket_fd)) {
         return nullptr;
     }
-    if (!set_no_delay(client_socket_fd)) {
-        GGML_LOG_ERROR("Failed to set TCP_NODELAY\n");
-        return nullptr;
+    // TCP_NODELAY only applies to TCP sockets (AF_INET/AF_INET6). UDS (AF_UNIX)
+    // doesn't have it — skip the setsockopt for UDS to avoid the spurious error.
+    int domain;
+    socklen_t len = sizeof(domain);
+    if (getsockopt(pimpl->fd, SOL_SOCKET, SO_DOMAIN, &domain, &len) != 0 || domain == AF_INET || domain == AF_INET6) {
+        if (!set_no_delay(client_socket_fd)) {
+            GGML_LOG_ERROR("Failed to set TCP_NODELAY\n");
+            return nullptr;
+        }
     }
-    return socket_ptr(new socket_t(std::make_unique<impl>(client_socket_fd)));
+    auto s = socket_ptr(new socket_t(std::make_unique<impl>(client_socket_fd)));
+    // Propagate UDS flag: if the server socket is UDS, the accepted socket is too.
+    s->use_uds = this->use_uds;
+    return s;
 }
 
 socket_ptr socket_t::create_server(const char * host, int port) {
@@ -840,6 +852,79 @@ socket_ptr socket_t::connect(const char * host, int port) {
         return nullptr;
     }
     return socket_ptr(new socket_t(std::make_unique<impl>(sockfd)));
+}
+
+// UDS transport for same-host IPC.
+//
+// When GGML_RPC_UDS is set, the server listens on a Unix domain socket (UDS)
+// path instead of a TCP port, and the client connects to that path. send_data/
+// recv_data use the UDS fd transparently — no protocol changes.
+//
+// UDS avoids the loopback TCP stack (no TCP handshake, no TCP congestion
+// control, no kernel network stack), typically saving 50-100 µs per call on
+// same-host connections. The tradeoff is same-host only (no remote nodes).
+socket_ptr socket_t::create_server_uds(const char * path) {
+#ifdef _WIN32
+    (void)path;
+    return nullptr;
+#else
+    // Remove stale socket file from a previous run.
+    unlink(path);
+
+    auto sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (!is_valid_fd(sockfd)) {
+        GGML_LOG_ERROR("[%s] socket(AF_UNIX) failed: %s\n", __func__, strerror(errno));
+        return nullptr;
+    }
+
+    struct sockaddr_un addr = {};
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
+    addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
+
+    if (bind(sockfd, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr)) < 0) {
+        GGML_LOG_ERROR("[%s] bind(%s) failed: %s\n", __func__, path, strerror(errno));
+        close(sockfd);
+        return nullptr;
+    }
+    if (listen(sockfd, 1) < 0) {
+        GGML_LOG_ERROR("[%s] listen(%s) failed: %s\n", __func__, path, strerror(errno));
+        close(sockfd);
+        return nullptr;
+    }
+    auto s = socket_ptr(new socket_t(std::make_unique<impl>(sockfd)));
+    s->use_uds = true;
+    LOG_DBG("[%s] UDS server listening on %s (fd=%d)\n", __func__, path, sockfd);
+    return s;
+#endif
+}
+
+socket_ptr socket_t::connect_uds(const char * path) {
+#ifdef _WIN32
+    (void)path;
+    return nullptr;
+#else
+    auto sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (!is_valid_fd(sockfd)) {
+        GGML_LOG_ERROR("[%s] socket(AF_UNIX) failed: %s\n", __func__, strerror(errno));
+        return nullptr;
+    }
+
+    struct sockaddr_un addr = {};
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
+    addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
+
+    if (::connect(sockfd, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr)) < 0) {
+        GGML_LOG_ERROR("[%s] connect(%s) failed: %s\n", __func__, path, strerror(errno));
+        close(sockfd);
+        return nullptr;
+    }
+    auto s = socket_ptr(new socket_t(std::make_unique<impl>(sockfd)));
+    s->use_uds = true;
+    LOG_DBG("[%s] UDS connected to %s (fd=%d)\n", __func__, path, sockfd);
+    return s;
+#endif
 }
 
 #ifdef _WIN32

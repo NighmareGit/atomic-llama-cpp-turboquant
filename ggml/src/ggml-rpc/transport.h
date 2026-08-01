@@ -81,10 +81,19 @@ struct socket_t {
     static socket_ptr create_server(const char * host, int port);
     static socket_ptr connect(const char * host, int port);
 
+    // UDS transport for same-host IPC (opt-in via GGML_RPC_UDS=1).
+    // create_server_uds() listens on a Unix domain socket path.
+    // connect_uds() connects to a Unix domain socket path.
+    // When UDS is active, send_data/recv_data use the UDS fd transparently.
+    static socket_ptr create_server_uds(const char * path);
+    static socket_ptr connect_uds(const char * path);
+    bool uds_enabled() const { return use_uds; }
+
 private:
     struct impl;
     explicit socket_t(std::unique_ptr<impl> p);
     std::unique_ptr<impl> pimpl;
+    bool use_uds = false;
 };
 
 bool rpc_transport_init();

@@ -1579,16 +1579,34 @@ static bool negotiate_hello(const std::shared_ptr<socket_t> & sock, const char *
     return true;
 }
 
-static socket_ptr rpc_ephemeral_connect(const std::string & endpoint) {
-    std::string host;
-    int port;
-    if (!parse_endpoint(endpoint, host, port)) {
-        return nullptr;
+// UDS endpoint detection: returns the socket path if the endpoint is a UDS
+// path (starts with "uds:" or "/"), or nullopt for TCP endpoints.
+static std::optional<std::string> is_uds_endpoint(const std::string & endpoint) {
+    if (endpoint.rfind("uds:", 0) == 0) {
+        return endpoint.substr(4);
     }
+    if (!endpoint.empty() && endpoint[0] == '/') {
+        return endpoint;
+    }
+    return std::nullopt;
+}
+
+static socket_ptr rpc_ephemeral_connect(const std::string & endpoint) {
     if (!rpc_transport_init()) {
         return nullptr;
     }
-    auto sock = socket_t::connect(host.c_str(), port);
+    auto uds_path = is_uds_endpoint(endpoint);
+    socket_ptr sock;
+    if (uds_path) {
+        sock = socket_t::connect_uds(uds_path->c_str());
+    } else {
+        std::string host;
+        int port;
+        if (!parse_endpoint(endpoint, host, port)) {
+            return nullptr;
+        }
+        sock = socket_t::connect(host.c_str(), port);
+    }
     if (!sock) {
         return nullptr;
     }
@@ -1623,24 +1641,32 @@ static std::shared_ptr<socket_t> get_socket(const std::string & endpoint) {
             return sock;
         }
     }
-    std::string host;
-    int port;
-    if (!parse_endpoint(endpoint, host, port)) {
-        GGML_LOG_ERROR("Failed to parse endpoint: %s\n", endpoint.c_str());
-        return nullptr;
-    }
 
     if (!rpc_transport_init()) {
         return nullptr;
     }
-    auto sock = socket_t::connect(host.c_str(), port);
+
+    auto uds_path = is_uds_endpoint(endpoint);
+    socket_ptr sock;
+    if (uds_path) {
+        sock = socket_t::connect_uds(uds_path->c_str());
+    } else {
+        std::string host;
+        int port;
+        if (!parse_endpoint(endpoint, host, port)) {
+            GGML_LOG_ERROR("Failed to parse endpoint: %s\n", endpoint.c_str());
+            return nullptr;
+        }
+        sock = socket_t::connect(host.c_str(), port);
+    }
     if (sock == nullptr) {
         return nullptr;
     }
     if (!negotiate_hello(sock, endpoint.c_str())) {
         return nullptr;
     }
-    LOG_DBG("[%s] connected to %s\n", __func__, endpoint.c_str());
+    LOG_DBG("[%s] connected to %s (uds=%d)\n", __func__, endpoint.c_str(),
+            sock->uds_enabled() ? 1 : 0);
     sockets[endpoint] = sock;
     rpc_register_socket(sock);
     return sock;
@@ -6118,22 +6144,32 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
         }
     }
 
-    std::string host;
-    int port;
-    if (!parse_endpoint(endpoint, host, port)) {
-        return;
-    }
-
+    auto uds_path = is_uds_endpoint(endpoint);
+    socket_ptr server_socket;
+    int port = 0;
+    if (uds_path) {
+        printf("  transport      : UDS (%s)\n", uds_path->c_str());
+        if (!rpc_transport_init()) {
+            fprintf(stderr, "Failed to initialize RPC transport\n");
+            return;
+        }
+        server_socket = socket_t::create_server_uds(uds_path->c_str());
+    } else {
+        std::string host;
+        if (!parse_endpoint(endpoint, host, port)) {
+            return;
+        }
 #ifdef GGML_RPC_RDMA
-    printf("  transport      : TCP (RDMA auto-negotiate enabled)\n");
+        printf("  transport      : TCP (RDMA auto-negotiate enabled)\n");
 #else
-    printf("  transport      : TCP\n");
+        printf("  transport      : TCP\n");
 #endif // GGML_RPC_RDMA
-    if (!rpc_transport_init()) {
-        fprintf(stderr, "Failed to initialize RPC transport\n");
-        return;
+        if (!rpc_transport_init()) {
+            fprintf(stderr, "Failed to initialize RPC transport\n");
+            return;
+        }
+        server_socket = socket_t::create_server(host.c_str(), port);
     }
-    auto server_socket = socket_t::create_server(host.c_str(), port);
     if (server_socket == nullptr) {
         fprintf(stderr, "Failed to create server socket\n");
         return;
@@ -6145,9 +6181,12 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
     // wait_compute_idle() now sees all compute, not just the UDP listener's).
     // The shared_ptr keeps the engine alive even if the accept loop returns early
     // (the listener + connection threads capture the shared_ptr).
+    // NOTE: UDP listener is TCP-only; UDS has no connectionless equivalent.
     auto engine = std::make_shared<rpc_compute_engine>(backends, cache_dir ? cache_dir : "");
-    int udp_port = (port > 0 && port < 65535) ? port + 1 : 0;
-    std::thread([engine, udp_port]() { rpc_udp_listener(*engine, udp_port); }).detach();
+    if (!uds_path) {
+        int udp_port = (port > 0 && port < 65535) ? port + 1 : 0;
+        std::thread([engine, udp_port]() { rpc_udp_listener(*engine, udp_port); }).detach();
+    }
     while (true) {
         auto client_socket = server_socket->accept();
         if (client_socket == nullptr) {
