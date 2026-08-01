@@ -172,6 +172,25 @@ static bool ggml_backend_is_rpc_backend(ggml_backend_t backend) {
     return name && strstr(name, "RPC") != nullptr;
 }
 
+// NW1 (Increment-1 T3a): topology-stable uid for RPC graph reuse.
+// When enabled, RPC-backed splits derive their uid from the graph topology
+// (via ggml_graph_topology_hash) instead of the global monotonic counter, so
+// that identical-topology rebuilds within the MTP cycle produce the same uid and
+// the client reuses the server-cached graph via GRAPH_RECOMPUTE (8 B async)
+// instead of re-sending GRAPH_COMPUTE (244 KB blocking) every token.
+// Default OFF (F8 fix #1) so the change is independently bisectable and the
+// local-backend CUDA-graph uid path is untouched unless opted in.
+static bool ggml_sched_rpc_stable_uid(void) {
+    static bool initialized = false;
+    static bool enabled = false;
+    if (!initialized) {
+        const char * e = getenv("GGML_RPC_STABLE_UID");
+        enabled = (e && e[0] == '1');
+        initialized = true;
+    }
+    return enabled;
+}
+
 static FILE * pipeline_trace_file() {
     static FILE * trace_f = nullptr;
     static std::string last_path;
@@ -2039,8 +2058,26 @@ void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgra
     }
 
     // set ids for all splits
+    //
+    // NW1 (Increment-1 T3a): when GGML_RPC_STABLE_UID=1, RPC-backed splits
+    // inherit a topology hash (computed once on the main graph below) instead
+    // of a fresh monotonic counter. Identical-topology rebuilds within the MTP
+    // cycle then carry the same uid, so the client reuses the server-cached
+    // graph via the async GRAPH_RECOMPUTE path instead of blocking GRAPH_COMPUTE.
+    // The hash is computed on the MAIN graph (all nodes) so all RPC splits of
+    // the same decode step share one uid; the server keys stored_graphs per
+    // device, so cross-device reuse is safe. Local-backend splits always keep
+    // the monotonic counter so the CUDA-graph uid-replay path is untouched
+    // (F10 guard). Default OFF (F8 fix #1) preserves current behavior exactly.
+    const bool stable_uid = ggml_sched_rpc_stable_uid();
+    const uint64_t topo_hash = stable_uid ? ggml_graph_topology_hash(graph) : 0;
     for (int i = 0; i < sched->n_splits; ++i) {
-        sched->splits[i].graph.uid = ggml_graph_next_uid();
+        const bool is_rpc = ggml_backend_is_rpc_backend(sched->backends[sched->splits[i].backend_id]);
+        if (stable_uid && is_rpc) {
+            sched->splits[i].graph.uid = topo_hash;
+        } else {
+            sched->splits[i].graph.uid = ggml_graph_next_uid();
+        }
     }
 }
 

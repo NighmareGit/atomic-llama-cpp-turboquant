@@ -31,6 +31,7 @@ extern "C" {
 void ggml_print_backtrace(void);
 
 uint64_t ggml_graph_next_uid(void);
+uint64_t ggml_graph_topology_hash(const struct ggml_cgraph * cgraph);
 
 #ifndef MIN
 #    define MIN(a, b) ((a) < (b) ? (a) : (b))
