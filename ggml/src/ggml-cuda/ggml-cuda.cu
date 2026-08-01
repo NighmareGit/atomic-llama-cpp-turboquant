@@ -653,6 +653,10 @@ struct ggml_backend_cuda_device_context {
     std::string description;
     std::string pci_bus_id;
     int op_offload_min_batch_size;
+    // Per-byte MoE offload threshold: adjust MUL_MAT_ID offload decision by
+    // weight row size so smaller experts (fewer bytes) offload at smaller
+    // batch sizes. -1 = disabled (default). Env: GGML_OP_OFFLOAD_MIN_BATCH_PER_BYTE.
+    int op_offload_min_batch_size_per_byte = -1;
 #if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
     std::mutex device_mutex;
     int active_count = 0;
@@ -5931,7 +5935,19 @@ static int64_t get_op_batch_size(const ggml_tensor * op) {
 static bool ggml_backend_cuda_device_offload_op(ggml_backend_dev_t dev, const ggml_tensor * op) {
     ggml_backend_cuda_device_context * dev_ctx = (ggml_backend_cuda_device_context *) dev->context;
 
-    return get_op_batch_size(op) >= dev_ctx->op_offload_min_batch_size;
+    int64_t min_batch_size = dev_ctx->op_offload_min_batch_size;
+
+    // ikawrakow@f43a9f1: per-byte MoE offload threshold. For MUL_MAT_ID (MoE expert
+    // matmul), scale the offload threshold by weight row size so that smaller
+    // weight formats (Q4_K_M vs Q8_0) offload at proportionally smaller batch
+    // sizes — bandwidth cost is lower, so offloading is worthwhile earlier.
+    if (op->op == GGML_OP_MUL_MAT_ID && dev_ctx->op_offload_min_batch_size_per_byte >= 0) {
+        auto src0 = op->src[0];
+        int64_t row_size = ggml_row_size(src0->type, src0->ne[0]);
+        min_batch_size = (int64_t)(dev_ctx->op_offload_min_batch_size_per_byte * row_size / src0->ne[0]);
+    }
+
+    return get_op_batch_size(op) >= min_batch_size;
 }
 
 static ggml_backend_event_t ggml_backend_cuda_device_event_new(ggml_backend_dev_t dev) {
@@ -6109,6 +6125,9 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
         if (!initialized) {
             ggml_backend_cuda_reg_context * ctx = new ggml_backend_cuda_reg_context;
             const int min_batch_size = getenv("GGML_OP_OFFLOAD_MIN_BATCH") ? atoi(getenv("GGML_OP_OFFLOAD_MIN_BATCH")) : 32;
+            // Per-byte MoE offload threshold (ikawrakow@f43a9f1 concept). -1 = disabled.
+            const int min_batch_size_per_byte = getenv("GGML_OP_OFFLOAD_MIN_BATCH_PER_BYTE")
+                ? atoi(getenv("GGML_OP_OFFLOAD_MIN_BATCH_PER_BYTE")) : -1;
 
             for (int i = 0; i < ggml_cuda_info().device_count; i++) {
                 ggml_backend_cuda_device_context * dev_ctx = new ggml_backend_cuda_device_context;
@@ -6126,6 +6145,7 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
                     c = std::tolower(c);
                 }
                 dev_ctx->op_offload_min_batch_size = min_batch_size;
+                dev_ctx->op_offload_min_batch_size_per_byte = min_batch_size_per_byte;
 
                 ggml_backend_dev_t dev = new ggml_backend_device {
                     /* .iface   = */ ggml_backend_cuda_device_interface,
