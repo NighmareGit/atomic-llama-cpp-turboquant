@@ -1398,6 +1398,14 @@ struct ggml_backend_sched {
 
     // Per-backend compute timing (us) aggregated across all splits in last sched run
     int64_t per_backend_compute_us[GGML_SCHED_MAX_BACKENDS];
+
+    // E-1 (BUG-002a): per-scheduler rebuild generation. Incremented every time
+    // split_graph runs (i.e. whenever the graph object is (re)built — reuse
+    // steps skip split_graph). With GGML_RPC_STABLE_UID=1 the RPC split uid is
+    // salted with this generation so an identical-topology rebuild after an MTP
+    // rollback gets a fresh uid -> client falls back to full GRAPH_COMPUTE ->
+    // server caches a graph bound to the new input tensors (fresh s_copy).
+    uint64_t uid_generation = 0;
 };
 
 #define hash_id(tensor) ggml_hash_find_or_insert(&sched->hash_set, tensor)
@@ -1589,6 +1597,12 @@ static void ggml_backend_sched_set_if_supported(ggml_backend_sched_t sched, stru
 
 // assigns backends to ops and splits the graph into subgraphs that can be computed on the same backend
 void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgraph * graph) {
+    // E-1 (BUG-002a): every split_graph invocation means the graph object was
+    // (re)built — bump the rebuild generation so the RPC uid changes on
+    // rebuilds while staying constant across steady-state reuse steps (which
+    // skip split_graph entirely).
+    sched->uid_generation++;
+
     // reset splits
     sched->n_splits = 0;
     sched->n_graph_inputs = 0;
@@ -2074,7 +2088,15 @@ void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgra
     for (int i = 0; i < sched->n_splits; ++i) {
         const bool is_rpc = ggml_backend_is_rpc_backend(sched->backends[sched->splits[i].backend_id]);
         if (stable_uid && is_rpc) {
-            sched->splits[i].graph.uid = topo_hash;
+            // E-1 (BUG-002a): salt the topology hash with the rebuild generation
+            // so an identical-topology rebuild (e.g. MTP rollback -> new s_copy
+            // plane indices) gets a fresh uid. seen_graph_uids then misses ->
+            // full GRAPH_COMPUTE with fresh serialization -> the server caches a
+            // graph bound to the NEW input buffers instead of replaying the stale
+            // cached graph. Steady-state reuse steps skip split_graph, so they
+            // keep the same generation -> same uid -> async GRAPH_RECOMPUTE win
+            // preserved. Salt is the golden-ratio constant (Knuth).
+            sched->splits[i].graph.uid = topo_hash ^ (sched->uid_generation * 0x9e3779b97f4a7c15ULL);
         } else {
             sched->splits[i].graph.uid = ggml_graph_next_uid();
         }
