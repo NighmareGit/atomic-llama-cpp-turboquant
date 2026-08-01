@@ -618,6 +618,7 @@ uint32_t socket_t::impl::udp_next_seq() {
 void socket_t::impl::get_caps(uint8_t * local_caps) {
     memset(local_caps, 0, RPC_CONN_CAPS_SIZE);
     local_caps[0] |= RPC_CAP_TRACE_ID; // advertise trace_id support (EVENT_RECORD 20B)
+    local_caps[0] |= RPC_CAP_RECOMPUTE_HASH; // F1 (T2a): graph_hash in GRAPH_RECOMPUTE
 #ifdef GGML_RPC_RDMA
     rdma_local = {};
     if (rdma_probe()) {

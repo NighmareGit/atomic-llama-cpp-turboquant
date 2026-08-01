@@ -864,8 +864,20 @@ struct rpc_msg_get_device_memory_rsp {
     uint64_t total_mem;
 };
 
+// F1 (Increment-1 T2a): graph_hash carries cgraph->uid from client to server so
+// the server can verify the cached graph matches the one the client expects.
+// Old servers (no RPC_CAP_RECOMPUTE_HASH) ignore this field; the client omits it
+// when talking to them (4-byte backward-compatible request).
 struct rpc_msg_graph_recompute_req {
     uint32_t device;
+    uint64_t graph_hash;
+};
+
+// F1 (Increment-1 T2a): server response to GRAPH_RECOMPUTE carrying hit/miss.
+// result=0 → cache hit, server will recompute (client proceeds with EVENT_RECORD).
+// result=1 → cache miss or uid mismatch, client MUST fall back to full GRAPH_COMPUTE.
+struct rpc_msg_graph_recompute_rsp {
+    uint32_t result;
 };
 
 // Path B: event record command (TCP ordering after GRAPH_RECOMPUTE)
@@ -1482,6 +1494,8 @@ static bool negotiate_hello(const std::shared_ptr<socket_t> & sock, const char *
     sock->server_supports_trace_id = (response.patch >= 3) || (response.conn_caps[0] & RPC_CAP_TRACE_ID);
     sock->server_supports_multi_device = (response.conn_caps[0] & RPC_CAP_MULTI_DEVICE) != 0;
     sock->server_supports_telemetry = (response.conn_caps[0] & RPC_CAP_SERVER_TELEMETRY) != 0;
+    // F1 (T2a): server supports graph_hash in GRAPH_RECOMPUTE + hit/miss response
+    sock->server_supports_recompute_hash = (response.conn_caps[0] & RPC_CAP_RECOMPUTE_HASH) != 0;
     // D4.10 debug
     GGML_LOG_INFO("RPC %s: telemetry=%d conn_caps[0]=%d\n", endpoint,
                   sock->server_supports_telemetry ? 1 : 0,
@@ -2892,6 +2906,7 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
         }
 
         bool reuse = cgraph->uid != 0 && rpc_dev_ctx->seen_graph_uids.count(cgraph->uid);
+        bool recompute_ok = false; // F1 (T2a): server accepted the multi-device recompute (hit)
         if (reuse) {
             // D4.5: fire-and-forget + EVENT_RECORD (matches existing GRAPH_COMPUTE pattern)
             // UDP transport (opt-in): send GRAPH_RECOMPUTE_ALL over UDP for a
@@ -2911,32 +2926,53 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
             bool udp_sent = rpc_udp_send_graph(sock, udp_hdr, req.devices, req.n_devices,
                                                udp_port);
             if (!udp_sent) {
-                bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_RECOMPUTE_ALL, &req, sizeof(req));
-                RPC_STATUS_ASSERT(status);
+                // F1 (T2a): read the synchronous hit/miss response; on miss fall
+                // back to a full GRAPH_COMPUTE_ALL.
+                if (sock->server_supports_recompute_hash) {
+                    rpc_msg_graph_recompute_all_rsp rsp = {};
+                    bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_RECOMPUTE_ALL,
+                                               &req, sizeof(req), &rsp, sizeof(rsp));
+                    if (!status) {
+                        LOG_DBG("RPC-REUSE-ALL dev=%u recompute_all rpc failed → fallback\n", rpc_ctx->device);
+                        reuse = false;
+                    } else if (rsp.result != 0) {
+                        LOG_DBG("RPC-REUSE-ALL dev=%u uid=%" PRIu64 " recompute MISS (result=%u) → fallback\n",
+                                rpc_ctx->device, cgraph->uid, rsp.result);
+                        reuse = false;
+                    }
+                } else {
+                    bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_RECOMPUTE_ALL, &req, sizeof(req));
+                    RPC_STATUS_ASSERT(status);
+                }
             }
 
-            // Send EVENT_RECORD deferred: response drained later by event_wait
-            // or at the next RPC operation on this socket. This avoids blocking
-            // the scheduler's for-loop, allowing ROCm dispatch to overlap.
-            // EVENT_RECORD stays on TCP even when GRAPH_RECOMPUTE used UDP —
-            // it needs reliable ordering for synchronization.
-            uint64_t tid = ggml_pipeline_trace_get_trace_id();
-            rpc_msg_event_record_req ev_req = {0, rpc_ctx->device, tid};
-            size_t ev_sz = sock->server_supports_trace_id ? sizeof(ev_req) : 12;
-            send_rpc_cmd_deferred(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz);
-            rpc_ctx->last_compute_sent_event = true;
-            // B+15: queue the deferred EVENT_RECORD response instead of using
-            // the thread-local single slot. event_record links the event.
-            rpc_deferred_entry de;
-            de.cmd_type = RPC_CMD_EVENT_RECORD;
-            de.rsp.resize(ev_sz);
-            de.event = nullptr;
-            rpc_socket_queue_push(sock, std::move(de));
-            const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::steady_clock::now() - t0).count();
-            rpc_trace_graph_compute(RPC_PATH_RECOMPUTE_ALL,
-                                    RPC_CMD_GRAPH_RECOMPUTE_ALL, sizeof(req), us);
-        } else {
+            if (reuse) {
+                // Server accepted the recompute (hit) — synchronize via EVENT_RECORD.
+                recompute_ok = true;
+                // Send EVENT_RECORD deferred: response drained later by event_wait
+                // or at the next RPC operation on this socket. This avoids blocking
+                // the scheduler's for-loop, allowing ROCm dispatch to overlap.
+                // EVENT_RECORD stays on TCP even when GRAPH_RECOMPUTE used UDP —
+                // it needs reliable ordering for synchronization.
+                uint64_t tid = ggml_pipeline_trace_get_trace_id();
+                rpc_msg_event_record_req ev_req = {0, rpc_ctx->device, tid};
+                size_t ev_sz = sock->server_supports_trace_id ? sizeof(ev_req) : 12;
+                send_rpc_cmd_deferred(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz);
+                rpc_ctx->last_compute_sent_event = true;
+                // B+15: queue the deferred EVENT_RECORD response instead of using
+                // the thread-local single slot. event_record links the event.
+                rpc_deferred_entry de;
+                de.cmd_type = RPC_CMD_EVENT_RECORD;
+                de.rsp.resize(ev_sz);
+                de.event = nullptr;
+                rpc_socket_queue_push(sock, std::move(de));
+                const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - t0).count();
+                rpc_trace_graph_compute(RPC_PATH_RECOMPUTE_ALL,
+                                        RPC_CMD_GRAPH_RECOMPUTE_ALL, sizeof(req), us);
+            }
+        }
+        if (!recompute_ok) {
             rpc_dev_ctx->seen_graph_uids.insert(cgraph->uid);
             LOG_DBG("RPC-REUSE dev=%u uid=%" PRIu64 " reuse=0 (multi-device)\n", rpc_ctx->device, cgraph->uid);
             std::vector<uint8_t> input;
@@ -2968,6 +3004,7 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
 
     const auto t0 = std::chrono::steady_clock::now();
     bool reuse = cgraph->uid != 0 && rpc_dev_ctx->seen_graph_uids.count(cgraph->uid);
+    bool recompute_ok = false; // F1 (T2a): set true only if server accepted the recompute (hit)
     if (reuse) {
         // UDP transport (opt-in): send GRAPH_RECOMPUTE over UDP for a true
         // fire-and-forget submission with no TCP round-trip. Falls back to
@@ -2979,36 +3016,67 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
         udp_hdr.graph_uid = cgraph->uid;
         bool udp_sent = rpc_udp_send_graph(sock, udp_hdr, nullptr, 0, udp_port);
         if (!udp_sent) {
-            rpc_msg_graph_recompute_req request;
+            // F1 (T2a): send the uid as graph_hash so the server can verify the
+            // cached graph matches. Read the synchronous hit/miss response; on
+            // miss, fall back to a full GRAPH_COMPUTE instead of proceeding.
+            rpc_msg_graph_recompute_req request = {};
             request.device = rpc_ctx->device;
-            bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_RECOMPUTE, &request, sizeof(request));
-            RPC_STATUS_ASSERT(status);
+            size_t req_sz = sizeof(uint32_t);
+            if (sock->server_supports_recompute_hash) {
+                request.graph_hash = cgraph->uid;
+                req_sz = sizeof(request);
+            }
+            if (sock->server_supports_recompute_hash) {
+                rpc_msg_graph_recompute_rsp rsp = {};
+                bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_RECOMPUTE,
+                                           &request, req_sz, &rsp, sizeof(rsp));
+                if (!status) {
+                    // RPC failed — safest fallback is a full recompute.
+                    LOG_DBG("RPC-REUSE dev=%u recompute rpc failed → fallback to GRAPH_COMPUTE\n", rpc_ctx->device);
+                    reuse = false;
+                } else if (rsp.result != 0) {
+                    // F1: server reported MISS (uid mismatch or no cached graph).
+                    // Fall back to a full GRAPH_COMPUTE for correctness.
+                    LOG_DBG("RPC-REUSE dev=%u uid=%" PRIu64 " recompute MISS (result=%u) → fallback\n",
+                            rpc_ctx->device, cgraph->uid, rsp.result);
+                    reuse = false;
+                }
+            } else {
+                // Old server (no recompute-hash cap): fire-and-forget as before.
+                bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_RECOMPUTE, &request, req_sz);
+                RPC_STATUS_ASSERT(status);
+            }
         }
 
-        uint64_t tid = ggml_pipeline_trace_get_trace_id();
-        rpc_msg_event_record_req ev_req = {0, rpc_ctx->device, tid};
-        size_t ev_sz = sock->server_supports_trace_id ? sizeof(ev_req) : 12;
-        // Defer the EVENT_RECORD response: the scheduler's event_record
-        // already has a last_compute_sent_event fast-path, and the response
-        // drains at event_wait/event_synchronize or at the next RPC op.
-        // This makes graph_compute_async truly async (<50us TCP send only),
-        // letting the scheduler dispatch ROCm splits while the RPC event
-        // response is in-flight. EVENT_RECORD stays on TCP even when
-        // GRAPH_RECOMPUTE used UDP — it needs reliable ordering for sync.
-        send_rpc_cmd_deferred(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz);
-        rpc_ctx->last_compute_sent_event = true;
-        // B+15: queue the deferred EVENT_RECORD response instead of using
-        // the thread-local single slot. event_record links the event.
-        rpc_deferred_entry de;
-        de.cmd_type = RPC_CMD_EVENT_RECORD;
-        de.rsp.resize(ev_sz);
-        de.event = nullptr;
-        rpc_socket_queue_push(sock, std::move(de));
-        const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::steady_clock::now() - t0).count();
-        rpc_trace_graph_compute(RPC_PATH_RECOMPUTE,
-                                RPC_CMD_GRAPH_RECOMPUTE, sizeof(rpc_msg_graph_recompute_req), us);
-    } else {
+        if (reuse) {
+            // Server accepted the recompute (hit) — synchronize via EVENT_RECORD.
+            recompute_ok = true;
+            uint64_t tid = ggml_pipeline_trace_get_trace_id();
+            rpc_msg_event_record_req ev_req = {0, rpc_ctx->device, tid};
+            size_t ev_sz = sock->server_supports_trace_id ? sizeof(ev_req) : 12;
+            // Defer the EVENT_RECORD response: the scheduler's event_record
+            // already has a last_compute_sent_event fast-path, and the response
+            // drains at event_wait/event_synchronize or at the next RPC op.
+            // This makes graph_compute_async truly async (<50us TCP send only),
+            // letting the scheduler dispatch ROCm splits while the RPC event
+            // response is in-flight. EVENT_RECORD stays on TCP even when
+            // GRAPH_RECOMPUTE used UDP — it needs reliable ordering for sync.
+            send_rpc_cmd_deferred(sock, RPC_CMD_EVENT_RECORD, &ev_req, ev_sz);
+            rpc_ctx->last_compute_sent_event = true;
+            // B+15: queue the deferred EVENT_RECORD response instead of using
+            // the thread-local single slot. event_record links the event.
+            rpc_deferred_entry de;
+            de.cmd_type = RPC_CMD_EVENT_RECORD;
+            de.rsp.resize(ev_sz);
+            de.event = nullptr;
+            rpc_socket_queue_push(sock, std::move(de));
+            const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - t0).count();
+            rpc_trace_graph_compute(RPC_PATH_RECOMPUTE,
+                                    RPC_CMD_GRAPH_RECOMPUTE, sizeof(rpc_msg_graph_recompute_req), us);
+        }
+    }
+    if (!recompute_ok) {
         rpc_dev_ctx->seen_graph_uids.insert(cgraph->uid);
         LOG_DBG("RPC-REUSE dev=%u uid=%" PRIu64 " reuse=0\n", rpc_ctx->device, cgraph->uid);
         std::vector<uint8_t> input;
@@ -3207,6 +3275,12 @@ public:
     bool graph_compute_all(const std::vector<uint8_t> & input);
     bool graph_recompute_all(const rpc_msg_graph_recompute_all_req & request);
     bool graph_compute_stage(const std::vector<uint8_t> & input, uint32_t stage_id);  // D6.9
+    // F1 (T2a): synchronous cache+uid check for GRAPH_RECOMPUTE. Returns true if the
+    // server's cached graph slot is non-null and its bound uid matches the request
+    // (or the uid is unbound/unknown, i.e. first recompute after a fresh compute).
+    bool recompute_allowed(const rpc_msg_graph_recompute_req & request) const;
+    // F1 (T2a): same, for the multi-device GRAPH_RECOMPUTE_ALL path.
+    bool recompute_all_allowed(const rpc_msg_graph_recompute_all_req & request) const;
     ggml_backend_sched_t create_multi_device_sched(
         const uint32_t * devices, uint32_t n_devices,
         const ggml_cgraph * graph);
@@ -3227,6 +3301,7 @@ public:
     struct stored_graph {
         std::vector<uint8_t>   buffer;
         ggml_cgraph          * graph;
+        uint64_t               uid = 0; // F1 (T2a): uid bound to this cached graph (0 = unset)
     };
 
 private:
@@ -4104,6 +4179,10 @@ bool rpc_server::graph_compute(const std::vector<uint8_t> & input) {
     GGML_ASSERT(status == GGML_STATUS_SUCCESS && "Unsuccessful graph computations are not supported with RPC");
     rpc_trace_emit("rpc_server::graph_compute", "server_compute", RPC_CMD_GRAPH_COMPUTE, input.size(), true, us);
     stored_graphs[device].graph = graph;
+    // F1 (T2a): reset the bound uid for this slot. The uid is learned lazily on
+    // the first GRAPH_RECOMPUTE after a fresh compute; resetting here guarantees a
+    // new graph (post-eviction or post-recompute-miss fallback) re-binds cleanly.
+    stored_graphs[device].uid = 0;
     // issue 12: emit per-node timings for this sampled decode.
     if (sample_nodes && !node_timings.empty()) {
         rpc_write_node_timings_jsonl(node_timings);
@@ -4117,6 +4196,37 @@ bool rpc_server::graph_compute(const std::vector<uint8_t> & input) {
     return true;
 }
 
+bool rpc_server::recompute_allowed(const rpc_msg_graph_recompute_req & request) const {
+    uint32_t device = request.device;
+    if (device >= backends.size()) {
+        return false;
+    }
+    if (stored_graphs[device].graph == nullptr) {
+        return false;
+    }
+    // F1 (T2a): uid gate. A zero hash means an old (pre-T2a) client that does
+    // not send a hash — treat as unknown and allow (legacy behavior). Non-zero
+    // hash must match the bound uid, or the slot must be unbound (lazy-bind on
+    // the actual recompute). A mismatch means the cached graph is not the one the
+    // client expects → signal MISS so the client falls back to GRAPH_COMPUTE.
+    if (request.graph_hash != 0 && stored_graphs[device].uid != 0 &&
+        stored_graphs[device].uid != request.graph_hash) {
+        return false;
+    }
+    return true;
+}
+
+bool rpc_server::recompute_all_allowed(const rpc_msg_graph_recompute_all_req & request) const {
+    if (all_graph.graph == nullptr) {
+        return false;
+    }
+    // F1 (T2a): uid gate for the multi-device slot. Zero hash → old client, allow.
+    if (request.graph_hash != 0 && all_graph.uid != 0 && all_graph.uid != request.graph_hash) {
+        return false;
+    }
+    return true;
+}
+
 bool rpc_server::graph_recompute(const rpc_msg_graph_recompute_req & request) {
     uint32_t device = request.device;
     if (device >= backends.size()) {
@@ -4125,8 +4235,22 @@ bool rpc_server::graph_recompute(const rpc_msg_graph_recompute_req & request) {
     if (stored_graphs[device].graph == nullptr) {
         return false;
     }
+    // F1 (T2a): uid verification. Lazy-bind on first recompute for this slot;
+    // on mismatch the cached graph is NOT the one the client expects → return
+    // false so the client falls back to a full GRAPH_COMPUTE. A zero hash means
+    // the client is old (pre-T2a) and did not send a hash: skip verification.
+    if (request.graph_hash != 0) {
+        if (stored_graphs[device].uid == 0) {
+            // First recompute since the last graph_compute for this slot: bind.
+            stored_graphs[device].uid = request.graph_hash;
+        } else if (stored_graphs[device].uid != request.graph_hash) {
+            LOG_DBG("[%s] device: %u uid mismatch: stored=%" PRIu64 " req=%" PRIu64 " (recompute miss)\n",
+                    __func__, device, stored_graphs[device].uid, request.graph_hash);
+            return false;
+        }
+    }
     ggml_cgraph * graph = stored_graphs[device].graph;
-    LOG_DBG("[%s] device: %u\n", __func__, device);
+    LOG_DBG("[%s] device: %u uid=%" PRIu64 "\n", __func__, device, stored_graphs[device].uid);
 
     // issue 12: per-node timing on recompute path (same sampling as graph_compute).
     uint64_t us = 0;
@@ -4315,6 +4439,8 @@ bool rpc_server::graph_compute_all(const std::vector<uint8_t> & input) {
     }
     std::copy(ctx_buf.begin(), ctx_buf.end(), all_graph.buffer.begin());
     all_graph.graph = graph;
+    // F1 (T2a): reset bound uid; re-learned lazily on first GRAPH_RECOMPUTE_ALL.
+    all_graph.uid = 0;
 
     // NOTE: sched is cached in all_scheds, freed in ~rpc_server
     return true;
@@ -4323,6 +4449,17 @@ bool rpc_server::graph_compute_all(const std::vector<uint8_t> & input) {
 bool rpc_server::graph_recompute_all(const rpc_msg_graph_recompute_all_req & request) {
     if (all_graph.graph == nullptr) {
         return false;
+    }
+    // F1 (T2a): uid verification for the multi-device path. Lazy-bind on first
+    // recompute after a fresh compute; mismatch → client falls back to GRAPH_COMPUTE_ALL.
+    if (request.graph_hash != 0) {
+        if (all_graph.uid == 0) {
+            all_graph.uid = request.graph_hash;
+        } else if (all_graph.uid != request.graph_hash) {
+            LOG_DBG("[%s] uid mismatch: stored=%" PRIu64 " req=%" PRIu64 " (recompute_all miss)\n",
+                    __func__, all_graph.uid, request.graph_hash);
+            return false;
+        }
     }
     ggml_cgraph * graph = all_graph.graph;
 
@@ -4725,6 +4862,8 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
             rsp3.conn_caps[0] |= RPC_CAP_SERVER_TELEMETRY;
         }
         sock->server_supports_trace_id = (rsp3.patch >= 3) || (req_conn_caps[0] & RPC_CAP_TRACE_ID);
+        // F1 (T2a): does the client understand graph_hash in GRAPH_RECOMPUTE?
+        sock->server_supports_recompute_hash = (req_conn_caps[0] & RPC_CAP_RECOMPUTE_HASH) != 0;
         if (!send_msg(sock, &rsp3, sizeof(rsp3))) {
             return;
         }
@@ -4746,6 +4885,8 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
         }
         // trace_id support from client caps (for deciding 20B vs 12B recv on EVENT_RECORD)
         sock->server_supports_trace_id = (rsp.patch >= 3) || (req.conn_caps[0] & RPC_CAP_TRACE_ID);
+        // F1 (T2a): does the client understand graph_hash in GRAPH_RECOMPUTE?
+        sock->server_supports_recompute_hash = (req_conn_caps[0] & RPC_CAP_RECOMPUTE_HASH) != 0;
         if (!send_msg(sock, &rsp, sizeof(rsp))) {
             return;
         }
@@ -5043,11 +5184,29 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 break;
             }
             case RPC_CMD_GRAPH_RECOMPUTE: {
-                rpc_msg_graph_recompute_req request;
-                if (!recv_msg(sock, &request, sizeof(request))) {
+                // F1 (T2a): variable-size request. New clients (advertising
+                // RPC_CAP_RECOMPUTE_HASH) send 12 bytes (device + graph_hash); old
+                // clients send 4 bytes (device only). Read based on negotiated cap.
+                rpc_msg_graph_recompute_req request = {};
+                size_t req_sz = sock->server_supports_recompute_hash ? sizeof(request) : sizeof(uint32_t);
+                if (!recv_msg(sock, &request, req_sz)) {
                     return;
                 }
-                server.enqueue_graph_recompute(request);
+                // Synchronous hit/miss decision BEFORE enqueueing the async compute.
+                // The client needs to know whether to proceed (EVENT_RECORD) or fall
+                // back to a full GRAPH_COMPUTE.
+                rpc_msg_graph_recompute_rsp rsp = {};
+                if (server.recompute_allowed(request)) {
+                    server.enqueue_graph_recompute(request);
+                    rsp.result = 0; // hit → server will recompute
+                } else {
+                    rsp.result = 1; // miss → client must fall back to GRAPH_COMPUTE
+                }
+                if (sock->server_supports_recompute_hash) {
+                    if (!send_response(sock, &rsp, sizeof(rsp))) {
+                        return;
+                    }
+                }
                 break;
             }
             case RPC_CMD_SET_TENSOR_BATCH: {
@@ -5165,7 +5324,23 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
                 if (!recv_msg(sock, &request, sizeof(request))) {
                     return;
                 }
-                server.enqueue_graph_recompute_all(request);
+                // F1 (T2a): synchronous uid check before enqueueing the async
+                // multi-device recompute. On miss, signal the client to fall back.
+                // The existing response struct carries result + output_device; reuse
+                // result=0 (hit) / result=1 (miss). Only respond when the client
+                // advertises recompute-hash support (it always sends graph_hash then).
+                rpc_msg_graph_recompute_all_rsp rsp = {};
+                if (server.recompute_all_allowed(request)) {
+                    server.enqueue_graph_recompute_all(request);
+                    rsp.result = 0; // hit
+                } else {
+                    rsp.result = 1; // miss → client falls back to GRAPH_COMPUTE_ALL
+                }
+                if (sock->server_supports_recompute_hash) {
+                    if (!send_response(sock, &rsp, sizeof(rsp))) {
+                        return;
+                    }
+                }
                 break;
             }
             case RPC_CMD_GRAPH_COMPUTE_STAGE: {
@@ -5282,8 +5457,17 @@ static void rpc_udp_listener(rpc_server & server, int udp_port) {
             if (got != hdr_sz) {
                 continue;
             }
+            // F1 (T2a): carry the uid from the UDP header into the request so the
+            // server can verify the cached graph matches. UDP is fire-and-forget
+            // (no response channel), so a uid mismatch here means the server will
+            // silently not recompute — acceptable for the UDP best-effort path; the
+            // TCP path (below) returns an explicit hit/miss for client fallback.
             rpc_msg_graph_recompute_req req = {};
             req.device = hdr.device;
+            req.graph_hash = hdr.graph_uid;
+            if (!server.recompute_allowed(req)) {
+                continue; // uid miss → drop (client proceeds; may read stale output)
+            }
             server.enqueue_graph_recompute(req);
         } else if (hdr.cmd == RPC_CMD_GRAPH_RECOMPUTE_ALL) {
             // Parse the device list that follows the header.
@@ -5298,6 +5482,10 @@ static void rpc_udp_listener(rpc_server & server, int udp_port) {
                 memcpy(&dev, buf.data() + hdr_sz + i * sizeof(uint32_t), sizeof(dev));
                 req.devices[i] = dev;
                 req.n_devices++;
+            }
+            // F1 (T2a): drop on uid miss (UDP has no response channel).
+            if (!server.recompute_all_allowed(req)) {
+                continue;
             }
             server.enqueue_graph_recompute_all(req);
         }
