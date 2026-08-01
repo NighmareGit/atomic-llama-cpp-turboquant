@@ -3319,6 +3319,18 @@ public:
                                      const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas);
     void wait_compute_idle();
 
+    // T2c: drain all in-flight compute AND invalidate the cached-graph store
+    // (stored_graphs, all_graph, all_scheds) atomically under compute_mtx.
+    // Combining the wait + clear eliminates the race where a concurrent
+    // graph_compute could write a slot while we clear it: holding compute_mtx
+    // after the queue drains guarantees (a) no job is running (inflight==0)
+    // and (b) no new job can be enqueued (submit_compute_job needs compute_mtx).
+    // Cached graphs hold tensors whose buffer pointers may reference the
+    // disconnecting connection's buffers; clearing them prevents a later
+    // GRAPH_RECOMPUTE from adopting a stale graph and dereferencing freed GPU
+    // memory. Sacrifices cross-client cache reuse (sanctioned by F6).
+    void drain_and_invalidate();
+
     // Deserialization helpers (called by both engine and connection)
     ggml_tensor * deserialize_tensor(struct ggml_context * ctx, const rpc_tensor * tensor,
                                      const std::unordered_set<ggml_backend_buffer_t> & buffers,
@@ -4962,6 +4974,31 @@ void rpc_compute_engine::wait_compute_idle() {
     });
 }
 
+void rpc_compute_engine::drain_and_invalidate() {
+    std::unique_lock<std::mutex> lock(compute_mtx);
+    // Wait until the worker has drained. While we hold compute_mtx here, no
+    // other thread can call submit_compute_job (it needs compute_mtx), so once
+    // the queue is empty and inflight==0, the system stays idle until we
+    // release the lock. This makes the subsequent slot clear race-free.
+    compute_cv.wait(lock, [this] {
+        return compute_queue.empty() && compute_inflight.load() == 0;
+    });
+    for (auto & sg : stored_graphs) {
+        // Graph nodes live in sg.buffer (mem pool owned by the vector); we do
+        // not free them individually — just drop the pointer so recompute_allowed
+        // sees a miss and the next graph_compute reuses the pool.
+        sg.graph = nullptr;
+        sg.uid.store(0, std::memory_order_release);
+    }
+    all_graph.graph = nullptr;
+    all_graph.uid.store(0, std::memory_order_release);
+    for (auto & kv : all_scheds) {
+        ggml_backend_sched_free(kv.second);
+    }
+    all_scheds.clear();
+    LOG_DBG("[%s] drained compute + invalidated cached graphs + schedulers\n", __func__);
+}
+
 // D4.10: sample every Nth decode to keep overhead <1%
 static constexpr int TELEMETRY_SAMPLE_INTERVAL = 1;
 
@@ -5028,13 +5065,33 @@ rpc_compute_engine::~rpc_compute_engine() {
 }
 
 rpc_connection::~rpc_connection() {
-    // Free all buffers allocated by this connection.
-    std::lock_guard<std::mutex> lock(buffers_mtx);
-    for (auto buffer : buffers) {
-        ggml_backend_buffer_free(buffer);
+    // T2c: ordered teardown. Buffers owned by this connection may still be
+    // referenced by (a) in-flight compute jobs and (b) cached graphs in the
+    // shared engine. Freeing them while either lives = use-after-free of GPU
+    // memory. Ordering:
+    //   1. drain_and_invalidate() — under compute_mtx: drain jobs that reference
+    //      our buffers, then drop cached graphs/scheds BEFORE freeing buffers so
+    //      a concurrent recompute can never adopt a graph whose buffers we are
+    //      about to free (F6 mitigation). Holding compute_mtx across the drain
+    //      + clear makes the slot clear race-free (worker can't dequeue and
+    //      submit_compute_job can't enqueue while we hold the lock).
+    //   2. free buffers + drop split metadata.
+    //   3. bump g_memory_cache_gen so any cached device-memory values (V1a)
+    //      observe the freed memory.
+    // Engine validity: we hold a shared_ptr, so the engine cannot be destroyed
+    // before this destructor completes.
+    if (engine) {
+        engine->drain_and_invalidate();
     }
-    buffers.clear();
-    split_buffer_metas.clear();
+    {
+        std::lock_guard<std::mutex> lock(buffers_mtx);
+        for (auto buffer : buffers) {
+            ggml_backend_buffer_free(buffer);
+        }
+        buffers.clear();
+        split_buffer_metas.clear();
+    }
+    g_memory_cache_gen.fetch_add(1, std::memory_order_release);
 }
 
 static void rpc_serve_channel_bind(socket_ptr sock);
