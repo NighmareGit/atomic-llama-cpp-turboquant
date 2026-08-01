@@ -3331,6 +3331,16 @@ public:
     // memory. Sacrifices cross-client cache reuse (sanctioned by F6).
     void drain_and_invalidate();
 
+    // T2d: lightweight cached-graph invalidation for new-client connection start.
+    // Nulls stored_graphs[].graph/all_graph.graph and resets uids UNDER compute_mtx
+    // so a concurrent graph_recompute() in the worker thread cannot adopt a stale
+    // graph from the previous connection. Does NOT free all_scheds — those are owned
+    // by drain_and_invalidate() and ~rpc_compute_engine(); freeing them here would
+    // double-free. The old graphs themselves are pool-allocated (live inside
+    // stored_graph::buffer), so nulling the pointer is sufficient — the next
+    // graph_compute() reclaims the memory by reinitializing the pool at offset 0.
+    void invalidate_cached_graphs();
+
     // Deserialization helpers (called by both engine and connection)
     ggml_tensor * deserialize_tensor(struct ggml_context * ctx, const rpc_tensor * tensor,
                                      const std::unordered_set<ggml_backend_buffer_t> & buffers,
@@ -4391,6 +4401,14 @@ bool rpc_compute_engine::graph_compute(const std::vector<uint8_t> & input,
     }
     GGML_ASSERT(status == GGML_STATUS_SUCCESS && "Unsuccessful graph computations are not supported with RPC");
     rpc_trace_emit("rpc_compute_engine::graph_compute", "server_compute", RPC_CMD_GRAPH_COMPUTE, input.size(), true, us);
+    // T2d: "free old graph on overwrite" — the previous stored_graphs[device].graph
+    // (if any) is pool-allocated: its bytes live inside stored_graphs[device].buffer,
+    // and ggml_init() on the next graph_compute() resets the pool offset to 0 so the
+    // new graph reclaims that memory in place. There is no separate heap object to
+    // free — calling free()/delete here would corrupt the pool. Dropping the pointer
+    // (by overwriting it below) is the correct "free". This is single-source ownership:
+    // the buffer pool owns the bytes, the pointer is a non-owning view. Verified no
+    // double-free: drain_and_invalidate() also only nulls pointers (never frees).
     stored_graphs[device].graph = graph;
     // F1 (T2a): reset the bound uid for this slot. The uid is learned lazily on
     // the first GRAPH_RECOMPUTE after a fresh compute; resetting here guarantees a
@@ -4657,6 +4675,11 @@ bool rpc_compute_engine::graph_compute_all(const std::vector<uint8_t> & input,
     }
 
     // D4.5: store for recompute in dedicated ALL-mode storage
+    // T2d: "free old graph on overwrite" — same pool-allocation semantics as the
+    // single-device path above. The previous all_graph.graph (if any) bytes live
+    // in all_graph.buffer; resizing + std::copy below reclaims that memory in
+    // place. No separate heap object to free — the buffer pool is single-source
+    // ownership. Verified no double-free against drain_and_invalidate().
     if (all_graph.buffer.size() < buf_size) {
         all_graph.buffer.resize(buf_size);
     }
@@ -4999,6 +5022,30 @@ void rpc_compute_engine::drain_and_invalidate() {
     LOG_DBG("[%s] drained compute + invalidated cached graphs + schedulers\n", __func__);
 }
 
+void rpc_compute_engine::invalidate_cached_graphs() {
+    // T2d: lightweight invalidation for new-client connection start. We only
+    // hold compute_mtx briefly to null the cached-graph pointers + reset uids —
+    // we do NOT wait for the worker to drain (unlike drain_and_invalidate())
+    // because a new connection has no in-flight jobs of its own yet, and
+    // blocking on other connections' jobs would stall the handshake. The race
+    // window is closed by compute_mtx: graph_recompute() reads stored_graphs
+    // under compute_mtx (via try_enqueue_graph_recompute), so a concurrent
+    // recompute either sees the old pointer (and completes against the old
+    // graph, which is still valid — its buffers are alive until that
+    // connection's destructor runs drain_and_invalidate) or sees nullptr (and
+    // falls back to GRAPH_COMPUTE). Either way is correct. all_scheds are NOT
+    // freed here — they remain owned by drain_and_invalidate() and the
+    // destructor; freeing them would double-free.
+    std::lock_guard<std::mutex> lock(compute_mtx);
+    for (auto & sg : stored_graphs) {
+        sg.graph = nullptr;
+        sg.uid.store(0, std::memory_order_release);
+    }
+    all_graph.graph = nullptr;
+    all_graph.uid.store(0, std::memory_order_release);
+    LOG_DBG("[%s] invalidated cached graphs for new client\n", __func__);
+}
+
 // D4.10: sample every Nth decode to keep overhead <1%
 static constexpr int TELEMETRY_SAMPLE_INTERVAL = 1;
 
@@ -5140,6 +5187,14 @@ static void rpc_serve_channel_bind(socket_ptr sock) {
 
 static void rpc_serve_client(std::shared_ptr<rpc_compute_engine> engine, socket_ptr sock) {
     rpc_connection connection(engine, engine->get_cache_dir());
+
+    // T2d: invalidate the previous client's cached graphs for this shared
+    // engine BEFORE the new client's first GRAPH_COMPUTE/RECOMPUTE. Without
+    // this, a new client's GRAPH_RECOMPUTE could match the stale uid bound to
+    // the previous client's cached graph and replay the wrong graph (the
+    // uid-reset in graph_compute only covers same-client reuse). Keying by
+    // connection-start + compute_mtx makes this race-free against the worker.
+    engine->invalidate_cached_graphs();
 
     // Read input_size and validate protocol version (HELLO cmd byte already consumed)
     uint64_t hello_input_size;
