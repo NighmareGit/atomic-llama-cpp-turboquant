@@ -861,6 +861,20 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
     // pre-advancement before process() mirrored the verify batch.
     std::vector<uint16_t> last_n_drafted;
 
+    // Soft MTP guard (#163, ported from colibri c/colibri.c:6050-6104):
+    // pause MTP speculation for GUARD_PAUSE_TOKENS emitted steps when draft
+    // acceptance over the last GUARD_WINDOW_MIN proposals drops below
+    // LLAMA_MTP_MINACC% (default 10 — colibri's hardcoded MTP threshold; its
+    // corpus guard uses 50). Soft pause: on expiry the window baseline is
+    // re-armed, so a transient collapse does not latch MTP off for the
+    // session. Inert on the healthy path (campaign acceptance is 82-100%,
+    // far above any threshold here).
+    static constexpr int32_t  GUARD_PAUSE_TOKENS = 256;
+    static constexpr uint64_t GUARD_WINDOW_MIN   = 24;
+    uint64_t gd_prop0 = 0; // window baseline: MTP draft tokens proposed at (re)arm
+    uint64_t gd_acc0  = 0; // window baseline: MTP draft tokens accepted at (re)arm
+    int32_t  gd_pause = 0; // remaining paused steps (0 = drafting active)
+
     common_speculative_impl_draft_mtp(const common_params_speculative & params, uint32_t n_seq)
         : common_speculative_impl(COMMON_SPECULATIVE_TYPE_DRAFT_MTP, n_seq)
         , params(params.draft)
@@ -1062,6 +1076,37 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
     }
 
     void draft(common_speculative_draft_params_vec & dparams) override {
+        // Soft MTP guard (see members): skips drafting entirely while paused,
+        // so the target decodes without speculation (colibri soft-pause, not a
+        // permanent latch).
+        if (gd_pause > 0) {
+            --gd_pause;
+            if (gd_pause == 0) {
+                // re-arm the window baseline so the next window is fresh
+                gd_prop0 = n_gen_tokens;
+                gd_acc0  = n_acc_tokens;
+            }
+            return;
+        }
+
+        const uint64_t prop = (uint64_t) n_gen_tokens - gd_prop0;
+        const uint64_t acc  = (uint64_t) n_acc_tokens - gd_acc0;
+        if (prop >= GUARD_WINDOW_MIN) {
+            int min_acc = 10;
+            if (const char * e = std::getenv("LLAMA_MTP_MINACC")) {
+                min_acc = atoi(e);
+            }
+            min_acc = std::max(0, std::min(min_acc, 100));
+            if (acc * 100 < prop * (uint64_t) min_acc) {
+                LOG_WRN("[MTP] %.0f%% acceptance over the last %llu proposals (<%d%%): "
+                        "drafts paused for %d tokens\n",
+                        100.0 * (double) acc / (double) prop,
+                        (unsigned long long) prop, min_acc, (int) GUARD_PAUSE_TOKENS);
+                gd_pause = GUARD_PAUSE_TOKENS;
+                return;
+            }
+        }
+
         auto & ctx_dft = params.ctx_dft;
 
         common_batch_clear(batch);
