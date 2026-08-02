@@ -621,6 +621,34 @@ llama_model_qwen35moe::graph_mtp::graph_mtp(const llama_model & model, const llm
 
     auto * inp_attn = build_attn_inp_kv();
 
+    // H2-verify (LEDGER #53): confirm TQ KV rotation engages in the MTP path.
+    // The MTP draft head shares the target model's KV cache, so TQ rotation
+    // (gated on k->type inside build_attn) applies automatically. Log the TQ
+    // state here so a runtime trace proves the MTP path sees the same rotation
+    // matrices as the target — no separate MTP-specific hook is needed.
+    // Note: use base-class virtual accessors (llama_memory_context_i) because
+    // llama_kv_cache_context is only forward-declared in this TU.
+    {
+        const auto * mem = this->mctx;  // const llama_memory_context_i*
+        const ggml_tensor * turbo_rot = mem->get_turbo_rot_forward();
+        const ggml_tensor * innerq = mem->get_turbo_innerq_scale_inv();
+        const bool tq_active = (turbo_rot != nullptr);
+        const bool k_rot = (inp_attn->self_k_rot != nullptr);
+        const bool v_rot = (inp_attn->self_v_rot != nullptr);
+        LLAMA_LOG_INFO(
+            "%s: MTP-TQ verify: TQ rotation=%d, innerq=%d, k_rot=%d v_rot=%d\n",
+            __func__, tq_active, innerq != nullptr, k_rot, v_rot);
+        // Sanity: if the target model has TQ-rotation matrices, the MTP path
+        // must see them too (shared KV cache). A mismatch would indicate the
+        // MTP graph was wired to a different cache.
+        if (tq_active && !k_rot) {
+            LLAMA_LOG_WARN(
+                "%s: MTP-TQ verify WARNING: target has TQ rotation but MTP "
+                "k_rot is NULL — MTP may be using a different KV cache\n",
+                __func__);
+        }
+    }
+
     ggml_tensor * h_norm = build_norm(h_embd, layer.nextn.hnorm, nullptr, LLM_NORM_RMS, il);
     cb(h_norm, "mtp_hnorm", il);
 

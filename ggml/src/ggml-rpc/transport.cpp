@@ -124,6 +124,7 @@ struct socket_t::impl {
     // UDP transport for fire-and-forget graph submission (opt-in).
     bool init_udp(int udp_port);
     bool send_udp(const void * data, size_t size) const;
+    bool recv_udp_ack(uint32_t expected_seq, int timeout_ms);
     bool udp_enabled() const { return udp_fd >= 0; }
     uint32_t udp_next_seq();    // next monotonic seq for this socket (thread-safe)
     mutable std::mutex udp_mu;  // guards lazy init of udp_fd and udp_seq
@@ -615,10 +616,70 @@ uint32_t socket_t::impl::udp_next_seq() {
     return udp_seq++;
 }
 
+// T2e: blocking wait for an ACK frame echoing expected_seq.
+//
+// The UDP socket is connected (see init_udp), so recv() filters to the remote
+// UDP peer. We set SO_RCVTIMEO to timeout_ms and loop on recv(): each datagram
+// is parsed as an rpc_udp_header; we accept the first frame that carries the
+// ACK flag AND seq == expected_seq. Stale ACKs (seq != expected_seq) are
+// drained and ignored — they belong to prior tokens whose DATA frame was
+// already superseded. Returns false on timeout or socket error.
+//
+// This is called immediately after send_udp() in the client's graph-compute
+// path, so the wait is bounded (typically <1 ms on a LAN; the timeout is a
+// safety net for genuine loss). On timeout the caller falls back to TCP.
+bool socket_t::impl::recv_udp_ack(uint32_t expected_seq, int timeout_ms) {
+    if (!udp_enabled()) {
+        return false;
+    }
+    // Set receive timeout for the duration of this wait.
+    struct timeval tv;
+    tv.tv_sec  = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    if (setsockopt(udp_fd, SOL_SOCKET, SO_RCVTIMEO,
+                   reinterpret_cast<const char *>(&tv), sizeof(tv)) != 0) {
+        GGML_LOG_ERROR("[%s] setsockopt(SO_RCVTIMEO) failed\n", __func__);
+        return false;
+    }
+    // Loop until we see the expected ACK or the timeout fires.
+    std::vector<uint8_t> buf(256);
+    while (true) {
+        ssize_t n = recv(udp_fd, reinterpret_cast<char *>(buf.data()), buf.size(), 0);
+        if (n < 0) {
+            // EAGAIN/EWOULDBLOCK = timeout fired. Genuine loss → caller falls back.
+            break;
+        }
+        if (static_cast<size_t>(n) < sizeof(rpc_udp_header)) {
+            continue; // too small to be our ACK
+        }
+        auto * hdr = reinterpret_cast<const rpc_udp_header *>(buf.data());
+        if (hdr->magic != RPC_UDP_MAGIC) {
+            continue; // not our protocol
+        }
+        if (!(hdr->flags & RPC_UDP_FLAG_ACK)) {
+            continue; // not an ACK (shouldn't happen, but be defensive)
+        }
+        if (hdr->seq == expected_seq) {
+            // Matched ACK — restore blocking mode (no timeout) for any future use.
+            struct timeval zero = {};
+            setsockopt(udp_fd, SOL_SOCKET, SO_RCVTIMEO,
+                       reinterpret_cast<const char *>(&zero), sizeof(zero));
+            return true;
+        }
+        // else: stale ACK (seq != expected_seq) — drain and keep waiting.
+    }
+    // Timeout (or error) — restore blocking mode before returning.
+    struct timeval zero = {};
+    setsockopt(udp_fd, SOL_SOCKET, SO_RCVTIMEO,
+               reinterpret_cast<const char *>(&zero), sizeof(zero));
+    return false;
+}
+
 void socket_t::impl::get_caps(uint8_t * local_caps) {
     memset(local_caps, 0, RPC_CONN_CAPS_SIZE);
     local_caps[0] |= RPC_CAP_TRACE_ID; // advertise trace_id support (EVENT_RECORD 20B)
     local_caps[0] |= RPC_CAP_RECOMPUTE_HASH; // F1 (T2a): graph_hash in GRAPH_RECOMPUTE
+    local_caps[0] |= RPC_CAP_GET_TENSOR_BATCH; // V1b: RPC_CMD_GET_TENSOR_BATCH (value 25)
 #ifdef GGML_RPC_RDMA
     rdma_local = {};
     if (rdma_probe()) {
@@ -684,6 +745,10 @@ bool socket_t::init_udp(int udp_port) {
 
 bool socket_t::send_udp(const void * data, size_t size) const {
     return pimpl->send_udp(data, size);
+}
+
+bool socket_t::recv_udp_ack(uint32_t expected_seq, int timeout_ms) {
+    return pimpl->recv_udp_ack(expected_seq, timeout_ms);
 }
 
 bool socket_t::udp_enabled() const {

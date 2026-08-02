@@ -88,6 +88,10 @@
 #include <string>
 #include <vector>
 
+#ifdef __linux__
+#include <sys/mman.h>
+#endif
+
 static_assert(sizeof(half) == sizeof(ggml_fp16_t), "wrong fp16 size");
 
 #define GGML_LOG_WARN_ONCE(str) \
@@ -649,6 +653,10 @@ struct ggml_backend_cuda_device_context {
     std::string description;
     std::string pci_bus_id;
     int op_offload_min_batch_size;
+    // Per-byte MoE offload threshold: adjust MUL_MAT_ID offload decision by
+    // weight row size so smaller experts (fewer bytes) offload at smaller
+    // batch sizes. -1 = disabled (default). Env: GGML_OP_OFFLOAD_MIN_BATCH_PER_BYTE.
+    int op_offload_min_batch_size_per_byte = -1;
 #if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
     std::mutex device_mutex;
     int active_count = 0;
@@ -1618,9 +1626,67 @@ static void ggml_backend_cuda_host_buffer_free_buffer(ggml_backend_buffer_t buff
     dev_ctx->active_count--;
 #endif // !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
 
+#ifdef __linux__
+    CUDA_CHECK(cudaHostUnregister(buffer->context));
+    munmap(buffer->context, buffer->size);
+#else
     CUDA_CHECK(cudaFreeHost(buffer->context));
+#endif
 }
 
+#ifdef __linux__
+static void * ggml_cuda_host_malloc(size_t size) {
+    if (getenv("GGML_CUDA_NO_PINNED") != nullptr) {
+        return nullptr;
+    }
+
+    ggml_cuda_set_device(0); // cudaMallocHost can create the implicit CUDA device context, make sure that this is consistently done on device 0.
+
+    constexpr double k_warn_limit = 8.0;
+    double size_GiB = size/(1024.*1024.*1024.);
+    auto tim1 = ggml_time_us();
+    if (size_GiB > k_warn_limit) {
+        GGML_LOG_INFO("\n\nAllocating %.2f GiB of pinned host memory, this may take a while.\n", size_GiB);
+        GGML_LOG_INFO("Using pinned host memory improves PP performance by a significant margin.\n");
+        GGML_LOG_INFO("But if it takes too long for your model and amount of patience, kill the process and run using\n\n");
+        GGML_LOG_INFO("GGML_CUDA_NO_PINNED=1 your_command_goes_here\n");
+    }
+
+    void * ptr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (ptr == MAP_FAILED) {
+        GGML_LOG_WARN("%s: mmap of %.2f MiB failed\n", __func__, size/1024.0/1024.0);
+        return nullptr;
+    }
+
+    // prefault the whole region. If the kernel knows how to do this then let it do so.
+    int needs_manual_prefault = 1;
+#ifdef MADV_POPULATE_WRITE
+    needs_manual_prefault = madvise(ptr, size, MADV_POPULATE_WRITE);
+#endif
+    if (needs_manual_prefault)
+    {
+        char * p = (char *) ptr;
+        for (size_t off = 0; off < size; off += 4096) {
+            p[off] = 0;
+        }
+    }
+
+    cudaError_t err = cudaHostRegister(ptr, size, cudaHostRegisterPortable);
+    if (err != cudaSuccess) {
+        cudaGetLastError(); // clear the error
+        GGML_LOG_WARN("%s: cudaHostRegister of %.2f MiB failed: %s\n", __func__,
+                      size/1024.0/1024.0, cudaGetErrorString(err));
+        munmap(ptr, size);
+        return nullptr;
+    }
+
+    if (size_GiB > k_warn_limit) {
+        auto tim2 = ggml_time_us();
+        GGML_LOG_INFO("    done allocating %.2f GiB in %.1f ms\n\n", size_GiB, 1e-3*(tim2-tim1));
+    }
+    return ptr;
+}
+#else // !__linux__
 static void * ggml_cuda_host_malloc(size_t size) {
     if (getenv("GGML_CUDA_NO_PINNED") != nullptr) {
         return nullptr;
@@ -1640,6 +1706,7 @@ static void * ggml_cuda_host_malloc(size_t size) {
 
     return ptr;
 }
+#endif // __linux__
 
 static ggml_backend_buffer_t ggml_backend_cuda_host_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
     void * ptr = ggml_cuda_host_malloc(size);
@@ -3681,6 +3748,12 @@ static bool ggml_cuda_graph_update_required(ggml_backend_cuda_context * cuda_ctx
     const void * graph_key = ggml_cuda_graph_get_key(cgraph);
     ggml_cuda_graph * graph = cuda_ctx->cuda_graph(graph_key);
 
+    // NW1 (Increment-1 T3b — CUDA-graph guard): this uid-replay gate must keep
+    // working for local (non-RPC) backends exactly as before. NW1 only changes
+    // uids for RPC-backed splits (ggml_backend_sched_split_graph scopes the
+    // topology hash to is_rpc splits); local splits still get the monotonic
+    // counter from ggml_graph_next_uid(). So a local-backend split's uid is
+    // stable across same-topology rebuilds and this gate is unaffected.
     if (cgraph->uid != 0 &&
         cgraph->uid == graph->uid) {
         GGML_LOG_DEBUG("CUDA Graph id %zu reused\n", cgraph->uid);
@@ -5868,7 +5941,19 @@ static int64_t get_op_batch_size(const ggml_tensor * op) {
 static bool ggml_backend_cuda_device_offload_op(ggml_backend_dev_t dev, const ggml_tensor * op) {
     ggml_backend_cuda_device_context * dev_ctx = (ggml_backend_cuda_device_context *) dev->context;
 
-    return get_op_batch_size(op) >= dev_ctx->op_offload_min_batch_size;
+    int64_t min_batch_size = dev_ctx->op_offload_min_batch_size;
+
+    // ikawrakow@f43a9f1: per-byte MoE offload threshold. For MUL_MAT_ID (MoE expert
+    // matmul), scale the offload threshold by weight row size so that smaller
+    // weight formats (Q4_K_M vs Q8_0) offload at proportionally smaller batch
+    // sizes — bandwidth cost is lower, so offloading is worthwhile earlier.
+    if (op->op == GGML_OP_MUL_MAT_ID && dev_ctx->op_offload_min_batch_size_per_byte >= 0) {
+        auto src0 = op->src[0];
+        int64_t row_size = ggml_row_size(src0->type, src0->ne[0]);
+        min_batch_size = (int64_t)(dev_ctx->op_offload_min_batch_size_per_byte * row_size / src0->ne[0]);
+    }
+
+    return get_op_batch_size(op) >= min_batch_size;
 }
 
 static ggml_backend_event_t ggml_backend_cuda_device_event_new(ggml_backend_dev_t dev) {
@@ -6046,6 +6131,9 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
         if (!initialized) {
             ggml_backend_cuda_reg_context * ctx = new ggml_backend_cuda_reg_context;
             const int min_batch_size = getenv("GGML_OP_OFFLOAD_MIN_BATCH") ? atoi(getenv("GGML_OP_OFFLOAD_MIN_BATCH")) : 32;
+            // Per-byte MoE offload threshold (ikawrakow@f43a9f1 concept). -1 = disabled.
+            const int min_batch_size_per_byte = getenv("GGML_OP_OFFLOAD_MIN_BATCH_PER_BYTE")
+                ? atoi(getenv("GGML_OP_OFFLOAD_MIN_BATCH_PER_BYTE")) : -1;
 
             for (int i = 0; i < ggml_cuda_info().device_count; i++) {
                 ggml_backend_cuda_device_context * dev_ctx = new ggml_backend_cuda_device_context;
@@ -6063,6 +6151,7 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
                     c = std::tolower(c);
                 }
                 dev_ctx->op_offload_min_batch_size = min_batch_size;
+                dev_ctx->op_offload_min_batch_size_per_byte = min_batch_size_per_byte;
 
                 ggml_backend_dev_t dev = new ggml_backend_device {
                     /* .iface   = */ ggml_backend_cuda_device_interface,
