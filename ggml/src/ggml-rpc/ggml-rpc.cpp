@@ -3546,6 +3546,12 @@ private:
 // graph computation is delegated to the engine.
 // ============================================================================
 
+// VVRAM LRU helpers (defined below): forward-declared for the alloc gate
+// (rpc_connection::alloc_buffer reads the LRU staging budget for the
+// BUG-015 headroom reservation).
+static bool rpc_vvram_use_lru();
+static size_t rpc_vvram_staging_headroom(size_t vram_total);
+
 class rpc_connection {
 public:
     rpc_connection(std::shared_ptr<rpc_compute_engine> engine, const char * cache_dir)
@@ -3628,6 +3634,8 @@ private:
     size_t vvram_ram_budget = 0;    // total RAM budget in bytes (env GGML_RPC_VVRAM_RAM_BUDGET_MB)
     size_t vvram_ram_used  = 0;     // bytes currently allocated to RAM-tier buffers
     size_t vvram_vram_used = 0;     // bytes currently allocated to VRAM-tier buffers
+    size_t vvram_max_alloc = 0;     // largest single VRAM-tier alloc seen (compute-buffer exemption, BUG-015)
+    size_t vvram_ram_last_alloc = 0; // size of the last RAM-tier alloc (context-phase detector, BUG-015e)
     std::unordered_set<ggml_backend_buffer_t> vvram_ram_buffers; // set of RAM-tier buffers
 
     // D4.10: per-connection telemetry state (for collect_telemetry calls from connection)
@@ -3703,7 +3711,30 @@ bool rpc_connection::alloc_buffer(const rpc_msg_alloc_buffer_req & request, rpc_
         // vram_free is the actual free VRAM (already accounts for all allocations).
         size_t ram_remaining = (vvram_ram_budget > vvram_ram_used) ? (vvram_ram_budget - vvram_ram_used) : 0;
         if (request.size <= vram_free) {
-            use_ram = false;
+            // BUG-015 (I2-VVRAM-STAGING-HEADROOM): with the LRU layered compute
+            // path on, reserve staging headroom on the GPU. The greedy gate used
+            // to fill the device to ~98.5% with VRAM-tier weight buffers, leaving
+            // the first RAM-tier layer's just-in-time staging zero physical room
+            // (72B: cudaMalloc OOM at blk.50.attn_q.weight). Weight-sized allocs
+            // that would dip below the headroom floor go to the RAM tier instead.
+            // The floor must NOT catch the graph compute buffer / KV cache:
+            //   - a new size record (larger than every VRAM alloc so far) — the
+            //     shared buffer, big context buffers — stays resident;
+            //   - context-phase allocs (KV cache, compute buffer) are far smaller
+            //     than the recent RAM-tier layer buffers (< 1/4), so they stay
+            //     resident too. Without this, the compute buffer landed in the RAM
+            //     tier (BUG-015e: 72B, 55.4 MiB < 496 MiB max weight) and the
+            //     layered path staged every activation -> decode stall.
+            bool compute_like = request.size > vvram_max_alloc ||
+                                (vvram_ram_last_alloc > 0 && request.size * 4 < vvram_ram_last_alloc);
+            bool reserve_headroom = rpc_vvram_use_lru() &&
+                                    !compute_like &&
+                                    vram_free < request.size + rpc_vvram_staging_headroom(vram_total);
+            if (reserve_headroom) {
+                use_ram = (request.size <= ram_remaining);
+            } else {
+                use_ram = false;
+            }
         } else if (request.size <= ram_remaining) {
             use_ram = true;
         } else {
@@ -3730,6 +3761,7 @@ bool rpc_connection::alloc_buffer(const rpc_msg_alloc_buffer_req & request, rpc_
         if (buffer) {
             std::lock_guard<std::mutex> lock(buffers_mtx);
             vvram_ram_used += request.size;
+            vvram_ram_last_alloc = request.size;
             vvram_ram_buffers.insert(buffer);
             GGML_LOG_INFO("[VVRAM] alloc_buffer: %zu MiB -> RAM tier (ram_used=%zu/%zu MiB)\n",
                 request.size / (1024*1024), vvram_ram_used / (1024*1024), vvram_ram_budget / (1024*1024));
@@ -3740,6 +3772,9 @@ bool rpc_connection::alloc_buffer(const rpc_msg_alloc_buffer_req & request, rpc_
         if (buffer) {
             std::lock_guard<std::mutex> lock(buffers_mtx);
             vvram_vram_used += request.size;
+            if (request.size > vvram_max_alloc) {
+                vvram_max_alloc = request.size;
+            }
         }
     }
 
@@ -4164,15 +4199,23 @@ bool rpc_connection::set_tensor(const std::vector<uint8_t> & input) {
             tensor->buffer->iface.set_tensor(tensor->buffer, tensor, data, offset, size);
         } else if (vvram_ram_buffers.count(tensor->buffer)) {
             // VVRAM RAM-tier buffer: the client sends GPU-padded data but the
-            // host buffer's tensor has unpadded dimensions. Write directly to
-            // the buffer base (the buffer was allocated with the padded size).
+            // host buffer's tensor has unpadded dimensions. Write at the
+            // tensor's actual position inside the buffer.
+            // BUG-015d fix: the RPC 'offset' is the WITHIN-TENSOR offset
+            // (0 for full-tensor writes from the loader), NOT the within-buffer
+            // offset. The previous code wrote at base(buffer)+offset, i.e.
+            // buffer base + 0 for every tensor — the last-written tensor
+            // clobbered the buffer start and every other tensor's data stayed
+            // zero (72B NaN decode at the first staged layer). tensor->data
+            // already equals base + within-buffer offset.
             const size_t buf_size = ggml_backend_buffer_get_size(tensor->buffer);
-            if (offset + size > buf_size) {
-                GGML_LOG_ERROR("[%s] RAM-tier tensor data (offset=%" PRIu64 ", size=%zu) exceeds buffer %zu\n",
-                               __func__, offset, size, buf_size);
+            const size_t dst_off = (size_t)((char *) tensor->data - (char *) ggml_backend_buffer_get_base(tensor->buffer));
+            if (dst_off + offset + size > buf_size) {
+                GGML_LOG_ERROR("[%s] RAM-tier tensor data (off=%zu, size=%zu) exceeds buffer %zu\n",
+                               __func__, dst_off, size, buf_size);
                 return false;
             }
-            memcpy((char *)ggml_backend_buffer_get_base(tensor->buffer) + offset, data, size);
+            memcpy((char *)tensor->data + offset, data, size);
         } else {
             const size_t buf_size = ggml_backend_buffer_get_size(tensor->buffer);
             if (offset + size > buf_size) {
@@ -4562,6 +4605,42 @@ static bool rpc_vvram_use_lru() {
     return cached;
 }
 
+// VVRAM LRU: staging budget as a percentage of total VRAM (env
+// GGML_RPC_VVRAM_LRU_BUDGET_PCT, default 60). Cached. Shared by:
+//   - vvram_compute_graph_layered — the logical LRU staging budget (max bytes
+//     of staged weights the LRU may hold before evicting);
+//   - rpc_connection::alloc_buffer — the staging headroom floor (BUG-015), so
+//     VRAM-tier weight allocation stops short of the device and the layered
+//     decode always has physical room for its per-layer staging buffers.
+static int rpc_vvram_lru_budget_pct() {
+    static int cached = []() {
+        const char * e = std::getenv("GGML_RPC_VVRAM_LRU_BUDGET_PCT");
+        int p = e ? atoi(e) : 0;
+        return (p > 0 && p <= 100) ? p : 60;
+    }();
+    return cached;
+}
+
+// VVRAM LRU: bytes of VRAM reserved for the layered decode's per-layer staging.
+// Derived from the LRU budget pct — reserve (100 - budget_pct)% of total VRAM,
+// capped at 6%:
+//   - the (100 - budget_pct) term ties the headroom to GGML_RPC_VVRAM_LRU_BUDGET_PCT:
+//     the more VRAM the LRU may stage into, the less the alloc gate may consume
+//     for resident weights;
+//   - the 6% cap keeps models that (just) fit VRAM on the direct compute path —
+//     e.g. the 35B on the 24.5 GiB 7900 leaves ~2 GiB free at the end of the
+//     weight phase, so a larger floor would spill it into the RAM tier and break
+//     byte-identical output. 6% (≈1.5 GiB) comfortably holds the first staged
+//     layer (~0.5 GiB for the 72B) plus margin.
+static size_t rpc_vvram_staging_headroom(size_t vram_total) {
+    const int budget_pct = rpc_vvram_lru_budget_pct();
+    size_t headroom_pct = (budget_pct < 100) ? (size_t)(100 - budget_pct) : 0;
+    if (headroom_pct > 6) {
+        headroom_pct = 6;
+    }
+    return vram_total * headroom_pct / 100;
+}
+
 static std::vector<ggml_backend_buffer_t> vvram_stage_graph(
     struct ggml_cgraph * graph,
     const std::unordered_set<ggml_backend_buffer_t> & ram_buffers,
@@ -4687,7 +4766,8 @@ static ggml_backend_buffer_t vvram_stage_tensor_lru(
     std::vector<vvram_staging_entry> & lru_cache,
     size_t & lru_vram_used,
     size_t lru_vram_budget,
-    uint64_t & lru_counter) {
+    uint64_t & lru_counter,
+    int batch_layer) {
 
     if (!src || !src->buffer) return nullptr;
     size_t nbytes = ggml_nbytes(src);
@@ -4710,16 +4790,40 @@ static ggml_backend_buffer_t vvram_stage_tensor_lru(
         }
     }
 
-    // Evict LRU entries until we have enough VRAM.
-    while (lru_vram_used + nbytes > lru_vram_budget && !lru_cache.empty()) {
-        // Find LRU entry (oldest last_use).
-        size_t lru_idx = 0;
-        uint64_t lru_time = lru_cache[0].last_use;
-        for (size_t i = 1; i < lru_cache.size(); i++) {
+    // Evict LRU entries until we have enough VRAM. Two budgets are enforced:
+    //   1. the logical LRU budget (lru_vram_budget, default 60% of total VRAM);
+    //   2. the physical free VRAM (BUG-015): the alloc gate now reserves staging
+    //      headroom, but that headroom (default ~1.5 GiB) is far smaller than the
+    //      logical budget — without this guard the LRU would accumulate staged
+    //      layers until the device OOMs again (the 72B crashed ~4 RAM-tier layers
+    //      in: 4 × ~453 MiB > the reserved headroom).
+    // A small margin keeps room for concurrent graph-compute scratch.
+    //
+    // CRITICAL: only tensors from STRICTLY OLDER BATCHES (entry.layer < the
+    // batch currently being staged) may be evicted. Under steady-state memory
+    // pressure the oldest entries eventually belong to the CURRENT batch —
+    // evicting them mid-staging leaves this batch's subgraph computing against
+    // restored RAM pointers (garbage logits -> repeated '?' tokens) and thrashes
+    // the eviction loop (the 72B decode staged ~14x the layer count per pass).
+    // Entries are tagged with batch_layer (NOT the tensor's extracted layer):
+    // shared tensors (output_norm/output.weight, extracted layer -1) are staged
+    // inside the last batch and must stay until that batch computes.
+    const size_t evict_margin = 64 * 1024 * 1024;
+    auto evict_one = [&]() {
+        // Find the least-recently-used entry from an older batch.
+        size_t lru_idx = (size_t) -1;
+        uint64_t lru_time = UINT64_MAX;
+        for (size_t i = 0; i < lru_cache.size(); i++) {
+            if (lru_cache[i].layer >= batch_layer) {
+                continue;
+            }
             if (lru_cache[i].last_use < lru_time) {
                 lru_time = lru_cache[i].last_use;
                 lru_idx = i;
             }
+        }
+        if (lru_idx == (size_t) -1) {
+            return false;
         }
         auto & evict = lru_cache[lru_idx];
         GGML_LOG_DEBUG("[VVRAM-LRU] evict tensor %s (%zu MiB, layer %d) to free VRAM\n",
@@ -4730,6 +4834,26 @@ static ggml_backend_buffer_t vvram_stage_tensor_lru(
         lru_vram_used -= evict.nbytes;
         ggml_backend_buffer_free(evict.stage);
         lru_cache.erase(lru_cache.begin() + lru_idx);
+        return true;
+    };
+
+    while (lru_vram_used + nbytes > lru_vram_budget) {
+        if (!evict_one()) {
+            break;
+        }
+    }
+    ggml_backend_dev_t lru_dev = ggml_backend_get_device(backend);
+    for (;;) {
+        size_t vram_free = 0, vram_total = 0;
+        if (lru_dev) {
+            ggml_backend_dev_memory(lru_dev, &vram_free, &vram_total);
+        }
+        if (vram_free >= nbytes + evict_margin) {
+            break;
+        }
+        if (!evict_one()) {
+            break;
+        }
     }
 
     // Allocate VRAM staging buffer.
@@ -4761,12 +4885,14 @@ static ggml_backend_buffer_t vvram_stage_tensor_lru(
     src->data = ggml_backend_buffer_get_base(stage);
 
     // Track in LRU cache. ram_buf is the original RAM buffer; eviction and the
-    // layered-compute exit path restore tensors through this field.
-    lru_cache.push_back({stage, ram_buf, offset, nbytes, layer, ++lru_counter, src});
+    // layered-compute exit path restore tensors through this field. Entries are
+    // tagged with batch_layer: the eviction guard only reclaims strictly-older
+    // batches (see evict_one above).
+    lru_cache.push_back({stage, ram_buf, offset, nbytes, batch_layer, ++lru_counter, src});
     lru_vram_used += nbytes;
 
     GGML_LOG_DEBUG("[VVRAM-LRU] staged tensor %s (%zu MiB, layer %d) RAM -> VRAM (vram_used=%zu/%zu MiB)\n",
-        src->name, nbytes / (1024*1024), layer,
+        src->name, nbytes / (1024*1024), batch_layer,
         lru_vram_used / (1024*1024), lru_vram_budget / (1024*1024));
     return stage;
 }
@@ -4848,17 +4974,13 @@ static bool vvram_compute_graph_layered(
     size_t vram_total = 0, vram_free = 0;
     ggml_backend_dev_t dev = ggml_backend_get_device(backend);
     if (dev) ggml_backend_dev_memory(dev, &vram_free, &vram_total);
-    static int budget_pct = []() {
-        const char * e = std::getenv("GGML_RPC_VVRAM_LRU_BUDGET_PCT");
-        int p = e ? atoi(e) : 0;
-        return (p > 0 && p <= 100) ? p : 60;
-    }();
+    const int budget_pct = rpc_vvram_lru_budget_pct();
     size_t vram_budget = (vram_total * (size_t) budget_pct) / 100;
     GGML_LOG_INFO("[VVRAM-LAYERED] VRAM budget = %zu MiB (total=%zu MiB, %d%%)\n",
         vram_budget / (1024*1024), vram_total / (1024*1024), budget_pct);
 
     // --- Layer classification ------------------------------------------------
-    // Assign each node the MAXIMUM layer number found across its source tensors.
+    // Assign each node the MAXIMUM layer number across its source tensors.
     // (The previous implementation took the FIRST source with a layer number,
     // which systematically mis-assigned most layer-N compute to layer N-1, since
     // the first src of a layer-N node is usually the previous layer's residual
@@ -4868,8 +4990,21 @@ static bool vvram_compute_graph_layered(
     //   - pre-nodes (idx <= last_nonneg): embeddings batch, computed first
     //   - post-nodes (idx > last_nonneg): output batch, folded into the LAST
     //     layer's batch so their inputs (final-layer intermediates) are ready.
+    //
+    // BUG-015c: the layer is taken from BOTH the src NAMES (blk.N.* weights,
+    // norm-N / l_out-N activations) AND the ASSIGNED layers of src tensors that
+    // are themselves graph nodes (dependency-chain propagation). Name-parsing
+    // alone misplaces anonymous residual-stream tensors ("node_XXXX", RPC leaf
+    // names): they carry no layer in their name, so chain links like
+    //   ffn_inp-79 = add(node_2793, ...)   // node_2793 = add(node_2792, leaf)
+    // classify to layer -1 and get computed in the FIRST batch, before the
+    // mid-graph tensors they depend on exist -> garbage -> NaN logits.
+    // The graph is topologically ordered, so every src that is a node output
+    // has already been classified when we process node i.
     std::map<int, std::vector<int>> layer_nodes;
     int last_nonneg = -1;
+    std::unordered_map<ggml_tensor *, int> assigned_layer;
+    assigned_layer.reserve((size_t) graph->n_nodes * 2);
     for (int i = 0; i < (int)graph->n_nodes; i++) {
         struct ggml_tensor * node = graph->nodes[i];
         if (!node) continue;
@@ -4878,10 +5013,17 @@ static bool vvram_compute_graph_layered(
             if (node->src[j]) {
                 int l = vvram_extract_layer(node->src[j]->name);
                 if (l > layer) { layer = l; }
+                // Propagate the assigned layer of src tensors that are node
+                // outputs (leaf tensors — weights, KV, inputs — have no layer).
+                auto it = assigned_layer.find(node->src[j]);
+                if (it != assigned_layer.end() && it->second > layer) {
+                    layer = it->second;
+                }
             }
         }
         if (layer >= 0 && i > last_nonneg) { last_nonneg = i; }
         layer_nodes[layer].push_back(i);
+        assigned_layer[node] = layer;
     }
 
     const int max_layer = (int) layer_nodes.rbegin()->first;
@@ -4910,6 +5052,14 @@ static bool vvram_compute_graph_layered(
     // Debug: show layer distribution.
     for (auto & [layer, node_indices] : layer_nodes) {
         GGML_LOG_INFO("[VVRAM-LAYERED]   layer %d: %zu nodes\n", layer, node_indices.size());
+        if (layer == -1 || layer == 0 || layer == 79) {
+            for (int idx : node_indices) {
+                struct ggml_tensor * node = graph->nodes[idx];
+                if (node && node->name[0]) {
+                    GGML_LOG_INFO("[VVRAM-LAYERED]     node %d: %s (op=%d)\n", idx, node->name, (int) node->op);
+                }
+            }
+        }
     }
 
     // Full-graph use counts for the subgraph hash tables (see vvram_build_layer_subgraph).
@@ -4995,7 +5145,7 @@ static bool vvram_compute_graph_layered(
                 if (!src || !src->buffer || !ram_buffers.count(src->buffer)) continue;
 
                 ggml_backend_buffer_t stage = vvram_stage_tensor_lru(
-                    src, backend, lru_cache, lru_vram_used, vram_budget, lru_counter);
+                    src, backend, lru_cache, lru_vram_used, vram_budget, lru_counter, layer);
                 if (!stage) {
                     GGML_LOG_ERROR("[VVRAM-LAYERED] staging failed for %s (layer %d)\n",
                         src->name, layer);
@@ -5021,8 +5171,43 @@ static bool vvram_compute_graph_layered(
             cleanup();
             return false;
         }
+        // BUG-015b (I2-VVRAM-STAGING-HEADROOM): the compute above is ASYNC — the
+        // next batch's staging immediately evicts (frees) this batch's staged
+        // weight buffers, and a freed buffer can be reused/overwritten while this
+        // batch's kernels are still reading it (garbage activations -> NaN logits
+        // -> repeated '?' output). Synchronize before the next batch's evictions.
+        ggml_backend_synchronize(backend);
     }
 
+    // TEMP DIAG: dump the final output tensor (logits) values after the layered pass.
+    if (graph->n_nodes > 0) {
+        struct ggml_tensor * last = graph->nodes[graph->n_nodes - 1];
+        if (last && last->data && last->type == GGML_TYPE_F32) {
+            float * dp = (float *) last->data;
+            fprintf(stderr, "[VVRAM-DIAG] last node=%s op=%d ne0=%" PRId64 " ne1=%" PRId64 " data[0..8]=",
+                    last->name, (int) last->op, last->ne[0], last->ne[1]);
+            int n = last->ne[0] < 9 ? (int) last->ne[0] : 9;
+            for (int j = 0; j < n; ++j) {
+                fprintf(stderr, "%s%g", j ? "," : "", dp[j]);
+            }
+            fprintf(stderr, "\n");
+        }
+        // Also dump the l_out (final hidden state) of layer 79 if found.
+        for (int i = graph->n_nodes - 1; i >= 0 && i > (int) graph->n_nodes - 20; --i) {
+            struct ggml_tensor * t = graph->nodes[i];
+            if (t && t->data && t->type == GGML_TYPE_F32 && strncmp(t->name, "l_out-79", 8) == 0) {
+                float * dp = (float *) t->data;
+                fprintf(stderr, "[VVRAM-DIAG] hidden l_out-79 ne0=%" PRId64 " ne1=%" PRId64 " data[0..4]=",
+                        t->ne[0], t->ne[1]);
+                int n = t->ne[0] < 5 ? (int) t->ne[0] : 5;
+                for (int j = 0; j < n; ++j) {
+                    fprintf(stderr, "%s%g", j ? "," : "", dp[j]);
+                }
+                fprintf(stderr, "\n");
+                break;
+            }
+        }
+    }
     GGML_LOG_INFO("[VVRAM-LAYERED] completed %zu layers (peak staged vram_used=%zu MiB)\n",
         layer_nodes.size(), lru_vram_used / (1024*1024));
 
@@ -5094,7 +5279,7 @@ static std::vector<ggml_backend_buffer_t> vvram_stage_graph_lru(
 
                 // Stage with LRU eviction.
                 ggml_backend_buffer_t stage = vvram_stage_tensor_lru(
-                    src, backend, lru_cache, lru_vram_used, vram_budget, lru_counter);
+                    src, backend, lru_cache, lru_vram_used, vram_budget, lru_counter, layer);
                 if (stage) {
                     // Track for later cleanup (dedup).
                     bool found = false;
