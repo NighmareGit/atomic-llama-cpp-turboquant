@@ -870,8 +870,25 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         GGML_ASSERT(ctx_tgt && ctx_dft && "MTP requires ctx_tgt and ctx_dft to be set");
 
         n_embd = llama_model_n_embd_out(llama_get_model(ctx_dft));
-        GGML_ASSERT(n_embd == llama_model_n_embd(llama_get_model(ctx_tgt)) &&
-                "MTP input row width must match the target h_nextn width");
+
+        // EXP-DISTMTP (distributed speculation prototype): cross-model MTP feeds
+        // the draft head the TARGET's hidden states 1:1 (inp->h / batch.embd),
+        // so the draft model must have the SAME embedding width as the target.
+        // The specified pair (9B-MTP n_embd_out=4096 vs 35B-A3B n_embd=2048)
+        // violates this contract. The upstream hard GGML_ASSERT here turned a
+        // user-configuration error into a SIGABRT (exit 134) that Phase-2's V5
+        // misattributed to OOM. Convert to a checked error: the server wraps
+        // common_speculative_init in try/catch (server-context.cpp) and falls
+        // back to non-speculative decode instead of aborting.
+        const int32_t n_embd_tgt = llama_model_n_embd(llama_get_model(ctx_tgt));
+        if (n_embd != n_embd_tgt) {
+            throw std::runtime_error(string_format(
+                    "MTP cross-model draft requires the draft n_embd_out (%d) to match "
+                    "the target n_embd (%d) - the MTP head consumes the target's hidden "
+                    "states 1:1 (use a same-dim draft model, e.g. the target's own MTP "
+                    "head, or --spec-type draft-simple for a standalone-draft fallback)",
+                    n_embd, n_embd_tgt));
+        }
 
         LOG_INF("%s: adding speculative implementation 'draft-mtp'\n", __func__);
         LOG_INF("%s: - n_max=%d, n_min=%d, p_min=%.2f, n_embd=%d, backend_sampling=%d\n", __func__, this->params.n_max, this->params.n_min, this->params.p_min, n_embd, (int) this->params.backend_sampling);
