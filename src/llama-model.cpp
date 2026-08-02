@@ -1573,7 +1573,8 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
     const size_t n_max_backend_buffer = ml.ctx_map.size() * ml.files.size();
     pimpl->ctxs_bufs.reserve(n_max_backend_buffer);
 
-    for (auto & [buft, ctx_ptr] : ml.ctx_map) {
+    for (auto & [buft_layer, ctx_ptr] : ml.ctx_map) {
+        ggml_backend_buffer_type_t buft = buft_layer.first;
         ggml_context * ctx = ctx_ptr.get();
 
         // skip contexts without tensors

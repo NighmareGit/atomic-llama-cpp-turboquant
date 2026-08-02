@@ -108,14 +108,23 @@ struct llama_model_loader {
     size_t size_data = 0;
     std::vector<std::pair<size_t, size_t>> mmaps_used;
 
-    // define a comparator for the buft -> ctx map to ensure that the order is well-defined:
+    // define a comparator for the (buft, layer) -> ctx map to ensure that the order is well-defined:
+    // Design C (VVRAM loader-adaptation): key by (buffer type, layer) so each layer's repeating
+    // tensors get their own ggml_context — and therefore their own buffer after allocation — while
+    // shared/input/output tensors (layer = -1) share one context. Ordering by buft name first, then
+    // layer, keeps per-layer buffer allocation in layer order for a given buffer type.
     struct ggml_backend_buft_comparator {
-        bool operator()(const ggml_backend_buffer_type_t & lhs, const ggml_backend_buffer_type_t & rhs) const {
-            return strcmp(ggml_backend_buft_name(lhs), ggml_backend_buft_name(rhs)) < 0;
+        bool operator()(const std::pair<ggml_backend_buffer_type_t, int> & lhs,
+                        const std::pair<ggml_backend_buffer_type_t, int> & rhs) const {
+            int cmp = strcmp(ggml_backend_buft_name(lhs.first), ggml_backend_buft_name(rhs.first));
+            if (cmp != 0) {
+                return cmp < 0;
+            }
+            return lhs.second < rhs.second;
         }
     };
 
-    std::map<ggml_backend_buffer_type_t, ggml_context_ptr, ggml_backend_buft_comparator> ctx_map;
+    std::map<std::pair<ggml_backend_buffer_type_t, int>, ggml_context_ptr, ggml_backend_buft_comparator> ctx_map;
 
     // track tensors that had to be moved for debugging:
     size_t n_tensors_moved = 0;
