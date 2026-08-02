@@ -5446,11 +5446,12 @@ static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t *
 #endif // defined(__linux__)
 
 #if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
-    // If no backends or buffers are active, the cudaMemGetInfo call above lazily created a CUDA
-    // context that permanently consumes VRAM. Reset the device to free it.
-    if (ctx->active_count == 0) {
-        CUDA_CHECK(cudaDeviceReset());
-    }
+    // BUG-014 F1 (I2-BUG014FIX): removed cudaDeviceReset() here. It destroyed the
+    // process-wide CUDA primary context when active_count==0 (lazy context from
+    // cudaMemGetInfo), so a concurrent CUDA call on the RPC compute worker thread
+    // (e.g. cudaGetDevice during GRAPH_RECOMPUTE) segfaulted — BUG-012-class
+    // sm_86 driver fragility, reliably triggered by the UDP listener timing.
+    // Accepted cost: the lazy context's small VRAM overhead persists.
 #endif // !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
 }
 
