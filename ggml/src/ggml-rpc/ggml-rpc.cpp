@@ -928,14 +928,50 @@ struct rpc_msg_get_device_memory_rsp {
     uint64_t total_mem;
 };
 
+// E-2 (BUG-002a follow-up): one input-rebind descriptor per graph input tensor
+// (the non-null-buffer tensors of the graph, DFS-ordered to match the order the
+// server deserialized them). id = client tensor pointer (informational);
+// buffer/data are the server-side addresses the replayed cached graph must read
+// from, replacing the stale bindings after an identical-topology rebuild.
+struct rpc_rebind_input {
+    uint64_t id;
+    uint64_t buffer;
+    uint64_t data;
+    uint64_t offset;
+};
+
 // F1 (Increment-1 T2a): graph_hash carries cgraph->uid from client to server so
 // the server can verify the cached graph matches the one the client expects.
 // Old servers (no RPC_CAP_RECOMPUTE_HASH) ignore this field; the client omits it
 // when talking to them (4-byte backward-compatible request).
+//
+// E-2 (BUG-002a follow-up): the C++ struct also carries the optional input-rebind
+// payload (rebind_topo_hash + rebind_inputs). The WIRE size of the base request
+// is fixed at RPC_GRAPH_RECOMPUTE_BASE_WIRE (device + graph_hash); the rebind
+// payload is appended after it ONLY when both sides negotiated
+// RPC_CAP_RECOMPUTE_REBIND, and omitted otherwise (old-server fallback: recompute
+// as today, E-1's generation-salted uid gates correctness). The wire format is
+// built/parsed explicitly (never via sizeof of this struct) so old servers stay
+// compatible as the C++ struct grows.
 struct rpc_msg_graph_recompute_req {
     uint32_t device;
     uint64_t graph_hash;
+    // E-2: topology hash of THIS graph (unsalted, over the split graph). The
+    // server compares it against the topology hash of its cached graph (captured
+    // at graph_compute time, before filter_null_src_nodes) to accept a rebind.
+    uint64_t rebind_topo_hash = 0;
+    // E-2: input-rebind descriptors (empty = plain recompute).
+    std::vector<rpc_rebind_input> rebind_inputs;
 };
+
+// Fixed wire size of the base GRAPH_RECOMPUTE request (device + graph_hash).
+// Kept explicit (not sizeof(rpc_msg_graph_recompute_req)) because the C++ struct
+// grows with E-2 fields while the base wire layout must not.
+static constexpr size_t RPC_GRAPH_RECOMPUTE_BASE_WIRE = sizeof(uint32_t) + sizeof(uint64_t);
+
+// E-2: sanity bound on the rebind descriptor count (a decode graph's non-null-
+// buffer tensors is far below this; guards against a corrupt length field).
+static constexpr uint32_t RPC_REBIND_MAX_INPUTS = 4096;
 
 // F1 (Increment-1 T2a): server response to GRAPH_RECOMPUTE carrying hit/miss.
 // result=0 → cache hit, server will recompute (client proceeds with EVENT_RECORD).
@@ -1188,6 +1224,12 @@ struct ggml_backend_rpc_device_context {
     // GGML_RPC_TRACE JSONL so AC2's "uid hit-rate" is measurable per device.
     uint64_t recompute_hits = 0;
     uint64_t recompute_misses = 0;
+    // E-2 (BUG-002a): topology hash of the last graph sent to this device as a
+    // FULL GRAPH_COMPUTE. The server's cached graph for this device is exactly
+    // that graph (recomputes never change it), so a new uid with the same
+    // topology hash = an identical-topology rebuild → safe to rebind + recompute
+    // instead of a full GRAPH_COMPUTE.
+    uint64_t last_full_compute_topo_hash = 0;
     // Cached device memory — invariant during generation, saves ~60 ms/token RPC
     uint64_t cached_gen  = 0;          // generation when cached
     size_t   cached_free  = 0;
@@ -1575,6 +1617,9 @@ static bool negotiate_hello(const std::shared_ptr<socket_t> & sock, const char *
     sock->server_supports_telemetry = (response.conn_caps[0] & RPC_CAP_SERVER_TELEMETRY) != 0;
     // F1 (T2a): server supports graph_hash in GRAPH_RECOMPUTE + hit/miss response
     sock->server_supports_recompute_hash = (response.conn_caps[0] & RPC_CAP_RECOMPUTE_HASH) != 0;
+    // E-2 (BUG-002a): server understands input-rebind descriptors appended to
+    // GRAPH_RECOMPUTE requests
+    sock->server_supports_recompute_rebind = (response.conn_caps[0] & RPC_CAP_RECOMPUTE_REBIND) != 0;
     // V1b: server supports RPC_CMD_GET_TENSOR_BATCH (value 25)
     sock->server_supports_get_tensor_batch = (response.conn_caps[0] & RPC_CAP_GET_TENSOR_BATCH) != 0;
     // D4.10 debug
@@ -2718,6 +2763,42 @@ static void serialize_graph_for_all(
     memcpy(dest, tensors.data(), n_tensors * sizeof(rpc_tensor));
 }
 
+// E-2 (BUG-002a): collect the non-null-buffer tensors of a graph in the SAME
+// DFS order the server deserialized them (mirror of add_tensor: src[0..MAX-1],
+// then view_src, then self, over cgraph->nodes in node order). The server's
+// cached graph has the identical topology (verified by the rebind topo gate), so
+// descriptor k maps positionally to the k-th non-null-buffer tensor of the cached
+// graph. Only tensors with a remote (RPC/split) buffer are included — those are
+// the tensors whose bindings can go stale after a rebuild.
+static void collect_rebind_inputs(const ggml_cgraph * cgraph, std::vector<rpc_rebind_input> & out) {
+    std::unordered_set<const ggml_tensor*> visited;
+    std::function<void(const ggml_tensor*)> visit = [&](const ggml_tensor * t) {
+        if (!t) {
+            return;
+        }
+        if (!visited.insert(t).second) {
+            return;
+        }
+        for (int i = 0; i < GGML_MAX_SRC; i++) {
+            visit(t->src[i]);
+        }
+        visit(t->view_src);
+        const rpc_tensor rt = serialize_tensor(t);
+        if (rt.buffer != 0) {
+            rpc_rebind_input in = {};
+            in.id     = rt.id;
+            in.buffer = rt.buffer;
+            in.data   = rt.data;
+            in.offset = 0;
+            out.push_back(in);
+        }
+    };
+    out.clear();
+    for (int i = 0; i < cgraph->n_nodes; i++) {
+        visit(cgraph->nodes[i]);
+    }
+}
+
 // D4.10: write a server_telemetry jsonl record (one JSON object per line)
 static void rpc_write_server_telemetry_jsonl(const rpc_msg_server_telemetry & telem) {
     static std::mutex jsonl_mutex;
@@ -3099,29 +3180,87 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
     const auto t0 = std::chrono::steady_clock::now();
     bool reuse = cgraph->uid != 0 && rpc_dev_ctx->seen_graph_uids.count(cgraph->uid);
     bool recompute_ok = false; // F1 (T2a): set true only if server accepted the recompute (hit)
-    if (reuse) {
-        // UDP transport (opt-in): send GRAPH_RECOMPUTE over UDP for a true
-        // fire-and-forget submission with no TCP round-trip. Falls back to
-        // TCP if UDP is disabled or send fails.
-        int udp_port = rpc_ctx->tcp_port > 0 ? rpc_ctx->tcp_port + 1 : 0;
-        rpc_udp_header udp_hdr = {};
-        udp_hdr.cmd = RPC_CMD_GRAPH_RECOMPUTE;
-        udp_hdr.device = rpc_ctx->device;
-        udp_hdr.graph_uid = cgraph->uid;
-        bool udp_sent = rpc_udp_send_graph(sock, udp_hdr, nullptr, 0, udp_port);
+
+    // E-2 (BUG-002a): an identical-topology rebuild (fresh salted uid after an
+    // MTP rollback) can STILL take the async recompute path if the server rebinds
+    // the cached graph's input tensors to the rebuilt graph's new buffers first.
+    // Safe iff the server's cached graph has the same topology as this graph —
+    // the cache only changes on a full GRAPH_COMPUTE, tracked per device in
+    // last_full_compute_topo_hash. Without the negotiated cap, or on a topology
+    // change, fall through to the full GRAPH_COMPUTE (E-1 gates correctness).
+    bool rebind_attempt = false;
+    std::vector<rpc_rebind_input> rebind_inputs;
+    if (!reuse && sock->server_supports_recompute_rebind) {
+        const uint64_t topo = ggml_graph_topology_hash(cgraph);
+        if (topo != 0 && topo == rpc_dev_ctx->last_full_compute_topo_hash) {
+            collect_rebind_inputs(cgraph, rebind_inputs);
+            rebind_attempt = true;
+        }
+    }
+    const bool use_recompute = reuse || rebind_attempt;
+    if (use_recompute) {
+        bool udp_sent = false;
+        if (reuse) {
+            // UDP transport (opt-in): send GRAPH_RECOMPUTE over UDP for a true
+            // fire-and-forget submission with no TCP round-trip. Falls back to
+            // TCP if UDP is disabled or send fails. Rebind requests stay on TCP:
+            // they carry a payload beyond the UDP fire-and-forget frame.
+            int udp_port = rpc_ctx->tcp_port > 0 ? rpc_ctx->tcp_port + 1 : 0;
+            rpc_udp_header udp_hdr = {};
+            udp_hdr.cmd = RPC_CMD_GRAPH_RECOMPUTE;
+            udp_hdr.device = rpc_ctx->device;
+            udp_hdr.graph_uid = cgraph->uid;
+            udp_sent = rpc_udp_send_graph(sock, udp_hdr, nullptr, 0, udp_port);
+        }
         if (!udp_sent) {
             // F1 (T2a): send the uid as graph_hash so the server can verify the
             // cached graph matches. Read the synchronous hit/miss response; on
             // miss, fall back to a full GRAPH_COMPUTE instead of proceeding.
             rpc_msg_graph_recompute_req request = {};
             request.device = rpc_ctx->device;
-            size_t req_sz = sizeof(uint32_t);
+            size_t req_sz = RPC_GRAPH_RECOMPUTE_BASE_WIRE;
             if (sock->server_supports_recompute_hash) {
                 request.graph_hash = cgraph->uid;
-                req_sz = sizeof(request);
             }
-            if (sock->server_supports_recompute_hash) {
-                rpc_msg_graph_recompute_rsp rsp = {};
+            rpc_msg_graph_recompute_rsp rsp = {};
+            if (sock->server_supports_recompute_rebind) {
+                // E-2: extended request. The rebind header (topo_hash + n_inputs)
+                // is ALWAYS appended once the cap is negotiated (n_inputs = 0 for
+                // plain recomputes) so the server's variable-size read is
+                // unambiguous; the descriptors are attached only for a rebind
+                // attempt. Rebind requests stay on TCP (payload beyond UDP frame).
+                uint64_t topo = 0;
+                if (rebind_attempt) {
+                    topo = ggml_graph_topology_hash(cgraph);
+                }
+                const uint32_t n_inputs = rebind_attempt ? (uint32_t) rebind_inputs.size() : 0;
+                std::vector<uint8_t> buf(RPC_GRAPH_RECOMPUTE_BASE_WIRE + sizeof(topo) + sizeof(n_inputs)
+                                         + rebind_inputs.size() * sizeof(rpc_rebind_input));
+                memcpy(buf.data(), &request, RPC_GRAPH_RECOMPUTE_BASE_WIRE);
+                memcpy(buf.data() + RPC_GRAPH_RECOMPUTE_BASE_WIRE, &topo, sizeof(topo));
+                memcpy(buf.data() + RPC_GRAPH_RECOMPUTE_BASE_WIRE + sizeof(topo), &n_inputs, sizeof(n_inputs));
+                if (n_inputs > 0) {
+                    memcpy(buf.data() + RPC_GRAPH_RECOMPUTE_BASE_WIRE + sizeof(topo) + sizeof(n_inputs),
+                           rebind_inputs.data(), rebind_inputs.size() * sizeof(rpc_rebind_input));
+                }
+                bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_RECOMPUTE,
+                                           buf.data(), buf.size(), &rsp, sizeof(rsp));
+                if (!status) {
+                    // RPC failed — safest fallback is a full recompute.
+                    LOG_DBG("RPC-REUSE dev=%u %s rpc failed → fallback to GRAPH_COMPUTE\n",
+                            rpc_ctx->device, rebind_attempt ? "REBIND" : "recompute");
+                    reuse = false;
+                    rebind_attempt = false;
+                } else if (rsp.result != 0) {
+                    // Server rejected (uid mismatch / no cached graph / rebind
+                    // topology mismatch) — fall back to a full GRAPH_COMPUTE.
+                    LOG_DBG("RPC-REUSE dev=%u uid=%" PRIu64 " %s MISS (result=%u) → fallback\n",
+                            rpc_ctx->device, cgraph->uid,
+                            rebind_attempt ? "REBIND" : "recompute", rsp.result);
+                    reuse = false;
+                    rebind_attempt = false;
+                }
+            } else if (sock->server_supports_recompute_hash) {
                 bool status = send_rpc_cmd(sock, RPC_CMD_GRAPH_RECOMPUTE,
                                            &request, req_sz, &rsp, sizeof(rsp));
                 if (!status) {
@@ -3142,10 +3281,17 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
             }
         }
 
-        if (reuse) {
+        if (reuse || rebind_attempt) {
             // Server accepted the recompute (hit) — synchronize via EVENT_RECORD.
             recompute_ok = true;
             rpc_dev_ctx->recompute_hits++;
+            // E-2: record the uid so subsequent steady-state recomputes of the
+            // (now rebound) cached graph hit instead of re-attempting a rebind.
+            if (rebind_attempt) {
+                LOG_DBG("RPC-REUSE dev=%u uid=%" PRIu64 " REBIND HIT (%zu inputs) — async recompute preserved on rebuild\n",
+                        rpc_ctx->device, cgraph->uid, rebind_inputs.size());
+                ggml_backend_rpc_device_context::seen_graph_uids_insert(rpc_dev_ctx->seen_graph_uids, cgraph->uid);
+            }
             uint64_t tid = ggml_pipeline_trace_get_trace_id();
             rpc_msg_event_record_req ev_req = {0, rpc_ctx->device, tid};
             size_t ev_sz = sock->server_supports_trace_id ? sizeof(ev_req) : 12;
@@ -3168,12 +3314,16 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
             const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - t0).count();
             rpc_trace_graph_compute(RPC_PATH_RECOMPUTE,
-                                    RPC_CMD_GRAPH_RECOMPUTE, sizeof(rpc_msg_graph_recompute_req), us);
+                                    RPC_CMD_GRAPH_RECOMPUTE, RPC_GRAPH_RECOMPUTE_BASE_WIRE, us);
         }
     }
     if (!recompute_ok) {
         ggml_backend_rpc_device_context::seen_graph_uids_insert(rpc_dev_ctx->seen_graph_uids, cgraph->uid);
         rpc_dev_ctx->recompute_misses++;
+        // E-2 (BUG-002a): a full GRAPH_COMPUTE (re)defines the server's cached
+        // graph for this device — track its topology so future identical-topology
+        // rebuilds can take the rebind path instead of another full compute.
+        rpc_dev_ctx->last_full_compute_topo_hash = ggml_graph_topology_hash(cgraph);
         LOG_DBG("RPC-REUSE dev=%u uid=%" PRIu64 " MISS (set=%zu hits=%" PRIu64 " misses=%" PRIu64 ")\n",
                 rpc_ctx->device, cgraph->uid, rpc_dev_ctx->seen_graph_uids.size(),
                 rpc_dev_ctx->recompute_hits, rpc_dev_ctx->recompute_misses);
@@ -3460,6 +3610,11 @@ public:
         std::vector<uint8_t>      buffer;
         ggml_cgraph             * graph;
         std::atomic<uint64_t>     uid{0}; // F1 (T2a): uid bound to this cached graph (0 = unset)
+        // E-2 (BUG-002a): topology hash of the cached graph, captured at
+        // graph_compute time BEFORE filter_null_src_nodes (which mutates ops, so
+        // a post-filter hash would not match the client's pre-filter hash). The
+        // rebind gate compares this against the request's rebind_topo_hash.
+        uint64_t                  topo_hash = 0;
 
         // std::atomic is not movable, so define explicit move constructor
         // for vector<stored_graph>::resize() to work.
@@ -4476,6 +4631,11 @@ bool rpc_compute_engine::graph_compute(const std::vector<uint8_t> & input,
             return false;
         }
     }
+    // E-2 (BUG-002a): capture the cached graph's topology hash BEFORE filtering
+    // (filter_null_src_nodes mutates node ops, so a post-filter hash would not
+    // match the client's pre-filter hash). This is the value the rebind gate
+    // compares against the request's rebind_topo_hash.
+    stored_graphs[device].topo_hash = ggml_graph_topology_hash(graph);
     // Filter out nodes with null src data (non-RPC buffers on client)
     filter_null_src_nodes(graph);
 
@@ -4534,6 +4694,17 @@ bool rpc_compute_engine::recompute_allowed(const rpc_msg_graph_recompute_req & r
     if (stored_graphs[device].graph == nullptr) {
         return false;
     }
+    // E-2 (BUG-002a): a rebind request replaces the uid gate with a TOPOLOGY gate.
+    // The client sends a fresh (generation-salted) uid for an identical-topology
+    // rebuild; the cached graph is safe to rebind+replay iff its topology matches
+    // the request's declared topology. topo_hash is captured at graph_compute
+    // time BEFORE filter_null_src_nodes so it matches the client's hash exactly.
+    if (!request.rebind_inputs.empty()) {
+        if (request.rebind_topo_hash == 0) {
+            return false;
+        }
+        return stored_graphs[device].topo_hash == request.rebind_topo_hash;
+    }
     // NIT-1: uid is std::atomic<uint64_t> — read with acquire ordering so the
     // dispatch thread sees the latest value written by the compute worker.
     uint64_t slot_uid = stored_graphs[device].uid.load(std::memory_order_acquire);
@@ -4561,6 +4732,47 @@ bool rpc_compute_engine::recompute_all_allowed(const rpc_msg_graph_recompute_all
     return true;
 }
 
+// E-2 (BUG-002a): rebind the cached graph's non-null-buffer input tensors to the
+// addresses carried by the request's descriptor list. The list is ordered by the
+// same DFS the client used (collect_rebind_inputs mirrors add_tensor), and the
+// cached graph has the identical topology (verified by the topo gate in
+// recompute_allowed before enqueue), so descriptor k maps positionally to the
+// k-th non-null-buffer tensor in the DFS order. Returns false on a size mismatch
+// (caller treats it as a miss → client falls back to full GRAPH_COMPUTE).
+static bool rebind_graph_inputs(struct ggml_cgraph * graph,
+                                const std::vector<rpc_rebind_input> & inputs) {
+    std::vector<ggml_tensor*> ordered;
+    std::unordered_set<ggml_tensor*> visited;
+    std::function<void(ggml_tensor*)> visit = [&](ggml_tensor * t) {
+        if (!t) {
+            return;
+        }
+        if (!visited.insert(t).second) {
+            return;
+        }
+        for (int i = 0; i < GGML_MAX_SRC; i++) {
+            visit(t->src[i]);
+        }
+        visit(t->view_src);
+        if (t->buffer != nullptr) {
+            ordered.push_back(t);
+        }
+    };
+    for (int i = 0; i < graph->n_nodes; i++) {
+        visit(graph->nodes[i]);
+    }
+    if (ordered.size() != inputs.size()) {
+        GGML_LOG_WARN("[%s] rebind size mismatch: cached=%zu client=%zu — miss\n",
+                      __func__, ordered.size(), inputs.size());
+        return false;
+    }
+    for (size_t i = 0; i < ordered.size(); i++) {
+        ordered[i]->buffer = reinterpret_cast<ggml_backend_buffer_t>(inputs[i].buffer);
+        ordered[i]->data   = reinterpret_cast<void *>(inputs[i].data);
+    }
+    return true;
+}
+
 bool rpc_compute_engine::graph_recompute(const rpc_msg_graph_recompute_req & request) {
     uint32_t device = request.device;
     if (device >= backends.size()) {
@@ -4577,7 +4789,22 @@ bool rpc_compute_engine::graph_recompute(const rpc_msg_graph_recompute_req & req
     // with the compute worker thread that resets uid in graph_compute().
     if (request.graph_hash != 0) {
         uint64_t slot_uid = stored_graphs[device].uid.load(std::memory_order_acquire);
-        if (slot_uid == 0) {
+        if (!request.rebind_inputs.empty()) {
+            // E-2 (BUG-002a): rebind request. try_enqueue_graph_recompute already
+            // applied the rebind + re-bound the slot uid under compute_mtx, so
+            // slot_uid == request.graph_hash here (no-op). This branch covers the
+            // direct enqueue path (enqueue_graph_recompute) for robustness: the
+            // rebind is idempotent, and re-binding the slot uid keeps subsequent
+            // steady-state recomputes of the new uid on the hit path.
+            if (slot_uid != request.graph_hash) {
+                if (!rebind_graph_inputs(stored_graphs[device].graph, request.rebind_inputs)) {
+                    LOG_DBG("[%s] device: %u rebind failed (size mismatch) — recompute miss\n",
+                            __func__, device);
+                    return false;
+                }
+                stored_graphs[device].uid.store(request.graph_hash, std::memory_order_release);
+            }
+        } else if (slot_uid == 0) {
             // First recompute since the last graph_compute for this slot: bind.
             stored_graphs[device].uid.store(request.graph_hash, std::memory_order_release);
         } else if (slot_uid != request.graph_hash) {
@@ -4588,36 +4815,6 @@ bool rpc_compute_engine::graph_recompute(const rpc_msg_graph_recompute_req & req
     }
     ggml_cgraph * graph = stored_graphs[device].graph;
     LOG_DBG("[%s] device: %u uid=%" PRIu64 "\n", __func__, device, stored_graphs[device].uid.load(std::memory_order_relaxed));
-
-    // E-3 probe (BUG-002a): on every recompute, log the cached graph's I32 leaf
-    // tensors (tokens + s_copy, the snapshot-plane index vector) so we can see
-    // which plane the replayed graph actually reads after an MTP rollback.
-    // M1: server sees plane-0 indices while client computed rs_idx != 0 (stale
-    // binding). M2: server sees the rollback indices but output is still wrong.
-    // No behavior change. Keep only for diagnosis (may be reverted after E-1).
-    {
-        const ggml_cgraph * cg = stored_graphs[device].graph;
-        fprintf(stderr, "[E3] recompute device=%u uid=%" PRIu64 " n_leafs=%d n_nodes=%d\n",
-                device, stored_graphs[device].uid.load(std::memory_order_relaxed),
-                cg ? cg->n_leafs : -1, cg ? cg->n_nodes : -1);
-        if (cg) {
-            for (int i = 0; i < cg->n_leafs && i < 24; ++i) {
-                const ggml_tensor * t = cg->leafs[i];
-                if (t == NULL) {
-                    continue;
-                }
-                if (t->type == GGML_TYPE_I32 && t->ne[1] == 1) {
-                    const int32_t * data = (const int32_t *) t->data;
-                    fprintf(stderr, "[E3] leaf[%d] name=%s ne0=%" PRId64 " data=[", i, t->name, t->ne[0]);
-                    const int N = t->ne[0] < 12 ? (int) t->ne[0] : 12;
-                    for (int j = 0; j < N; ++j) {
-                        fprintf(stderr, "%s%d", j ? "," : "", data ? data[j] : -999);
-                    }
-                    fprintf(stderr, "]\n");
-                }
-            }
-        }
-    }
 
     // issue 12: per-node timing on recompute path (same sampling as graph_compute).
     uint64_t us = 0;
@@ -5075,6 +5272,21 @@ bool rpc_compute_engine::try_enqueue_graph_recompute(const rpc_msg_graph_recompu
     if (!recompute_allowed(request)) {
         return false;
     }
+    // E-2 (BUG-002a): apply the rebind EAGERLY under compute_mtx — the cached
+    // graph is stable here (graph_compute also runs under compute_mtx), so the
+    // replayed graph reads the rebound inputs. Re-bind the slot uid to the new
+    // uid so the compute worker's graph_recompute uid check passes and subsequent
+    // steady-state recomputes of this uid hit. On a rebind size mismatch treat
+    // the request as a miss → the client falls back to a full GRAPH_COMPUTE.
+    if (!request.rebind_inputs.empty()) {
+        LOG_DBG("[%s] device: %u REBIND %zu inputs topo=%" PRIu64 " uid=%" PRIu64 " — cached graph rebound before replay\n",
+                __func__, request.device, request.rebind_inputs.size(),
+                request.rebind_topo_hash, request.graph_hash);
+        if (!rebind_graph_inputs(stored_graphs[request.device].graph, request.rebind_inputs)) {
+            return false;
+        }
+        stored_graphs[request.device].uid.store(request.graph_hash, std::memory_order_release);
+    }
     // Directly enqueue the job (we already hold the lock, so we can't call
     // submit_compute_job which also tries to lock). Inline the enqueue.
     compute_inflight++;
@@ -5381,9 +5593,13 @@ static void rpc_serve_client(std::shared_ptr<rpc_compute_engine> engine, socket_
         }
         // V1b: advertise GET_TENSOR_BATCH support (server handler is always present in this build)
         rsp3.conn_caps[0] |= RPC_CAP_GET_TENSOR_BATCH;
+        // E-2 (BUG-002a): advertise input-rebind support in GRAPH_RECOMPUTE
+        rsp3.conn_caps[0] |= RPC_CAP_RECOMPUTE_REBIND;
         sock->server_supports_trace_id = (rsp3.patch >= 3) || (req_conn_caps[0] & RPC_CAP_TRACE_ID);
         // F1 (T2a): does the client understand graph_hash in GRAPH_RECOMPUTE?
         sock->server_supports_recompute_hash = (req_conn_caps[0] & RPC_CAP_RECOMPUTE_HASH) != 0;
+        // E-2: does the client send the extended (rebind-capable) request?
+        sock->server_supports_recompute_rebind = (req_conn_caps[0] & RPC_CAP_RECOMPUTE_REBIND) != 0;
         if (!send_msg(sock, &rsp3, sizeof(rsp3))) {
             return;
         }
@@ -5405,10 +5621,14 @@ static void rpc_serve_client(std::shared_ptr<rpc_compute_engine> engine, socket_
         }
         // V1b: advertise GET_TENSOR_BATCH support (server handler is always present in this build)
         rsp.conn_caps[0] |= RPC_CAP_GET_TENSOR_BATCH;
+        // E-2 (BUG-002a): advertise input-rebind support in GRAPH_RECOMPUTE
+        rsp.conn_caps[0] |= RPC_CAP_RECOMPUTE_REBIND;
         // trace_id support from client caps (for deciding 20B vs 12B recv on EVENT_RECORD)
         sock->server_supports_trace_id = (rsp.patch >= 3) || (req.conn_caps[0] & RPC_CAP_TRACE_ID);
         // F1 (T2a): does the client understand graph_hash in GRAPH_RECOMPUTE?
         sock->server_supports_recompute_hash = (req_conn_caps[0] & RPC_CAP_RECOMPUTE_HASH) != 0;
+        // E-2: does the client send the extended (rebind-capable) request?
+        sock->server_supports_recompute_rebind = (req_conn_caps[0] & RPC_CAP_RECOMPUTE_REBIND) != 0;
         if (!send_msg(sock, &rsp, sizeof(rsp))) {
             return;
         }
@@ -5709,10 +5929,49 @@ static void rpc_serve_client(std::shared_ptr<rpc_compute_engine> engine, socket_
                 // F1 (T2a): variable-size request. New clients (advertising
                 // RPC_CAP_RECOMPUTE_HASH) send 12 bytes (device + graph_hash); old
                 // clients send 4 bytes (device only). Read based on negotiated cap.
+                // E-2 (BUG-002a): clients advertising RPC_CAP_RECOMPUTE_REBIND
+                // append the rebind payload — topo_hash(8) + n_inputs(4) +
+                // descriptors(n*32) — after the 12-byte base, sent as ONE
+                // length-prefixed message.
                 rpc_msg_graph_recompute_req request = {};
-                size_t req_sz = sock->server_supports_recompute_hash ? sizeof(request) : sizeof(uint32_t);
-                if (!recv_msg(sock, &request, req_sz)) {
-                    return;
+                if (sock->server_supports_recompute_rebind) {
+                    std::vector<uint8_t> input;
+                    if (!recv_msg(sock, input)) {
+                        return;
+                    }
+                    const size_t base_sz = RPC_GRAPH_RECOMPUTE_BASE_WIRE;
+                    const size_t head_sz = base_sz + sizeof(uint64_t) + sizeof(uint32_t);
+                    if (input.size() < head_sz) {
+                        GGML_LOG_ERROR("[%s] RPC_CMD_GRAPH_RECOMPUTE: rebind msg too small (%zu)\n",
+                                       __func__, input.size());
+                        return;
+                    }
+                    memcpy(&request, input.data(), base_sz);
+                    memcpy(&request.rebind_topo_hash, input.data() + base_sz, sizeof(request.rebind_topo_hash));
+                    uint32_t n_inputs;
+                    memcpy(&n_inputs, input.data() + base_sz + sizeof(uint64_t), sizeof(n_inputs));
+                    if (n_inputs > RPC_REBIND_MAX_INPUTS) {
+                        GGML_LOG_ERROR("[%s] RPC_CMD_GRAPH_RECOMPUTE: rebind n_inputs=%u exceeds max %u\n",
+                                       __func__, n_inputs, RPC_REBIND_MAX_INPUTS);
+                        return;
+                    }
+                    const size_t expected = head_sz + (size_t) n_inputs * sizeof(rpc_rebind_input);
+                    if (input.size() != expected) {
+                        GGML_LOG_ERROR("[%s] RPC_CMD_GRAPH_RECOMPUTE: rebind size mismatch (got %zu, expected %zu)\n",
+                                       __func__, input.size(), expected);
+                        return;
+                    }
+                    if (n_inputs > 0) {
+                        request.rebind_inputs.resize(n_inputs);
+                        memcpy(request.rebind_inputs.data(), input.data() + head_sz,
+                               (size_t) n_inputs * sizeof(rpc_rebind_input));
+                    }
+                } else {
+                    size_t req_sz = sock->server_supports_recompute_hash
+                        ? RPC_GRAPH_RECOMPUTE_BASE_WIRE : sizeof(uint32_t);
+                    if (!recv_msg(sock, &request, req_sz)) {
+                        return;
+                    }
                 }
                 // Synchronous hit/miss decision BEFORE enqueueing the async compute.
                 // The client needs to know whether to proceed (EVENT_RECORD) or fall

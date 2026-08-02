@@ -38,6 +38,7 @@ static constexpr uint8_t  RPC_CAP_MULTI_DEVICE    = 1u << 1; // Path C: server-s
 static constexpr uint8_t  RPC_CAP_SERVER_TELEMETRY = 1u << 2; // D4.10: server appends telemetry to GRAPH_COMPUTE_ALL response
 static constexpr uint8_t  RPC_CAP_RECOMPUTE_HASH  = 1u << 3; // F1 (T2a): graph_hash in GRAPH_RECOMPUTE req + hit/miss rsp
 static constexpr uint8_t  RPC_CAP_GET_TENSOR_BATCH = 1u << 4; // V1b: server understands RPC_CMD_GET_TENSOR_BATCH (value 25)
+static constexpr uint8_t  RPC_CAP_RECOMPUTE_REBIND = 1u << 5; // E-2 (BUG-002a): GRAPH_RECOMPUTE req carries input-rebind descriptors
 
 struct socket_t {
     ~socket_t();
@@ -78,6 +79,9 @@ struct socket_t {
     bool server_supports_telemetry = false;
     // F1 (T2a): server understands graph_hash in GRAPH_RECOMPUTE and sends hit/miss response
     bool server_supports_recompute_hash = false;
+    // E-2 (BUG-002a): server understands the input-rebind payload appended to
+    // the GRAPH_RECOMPUTE request (RPC_CAP_RECOMPUTE_REBIND)
+    bool server_supports_recompute_rebind = false;
     // V1b: server understands RPC_CMD_GET_TENSOR_BATCH (value 25)
     bool server_supports_get_tensor_batch = false;
 
