@@ -943,6 +943,15 @@ static void add_fabric_devices(common_params & params, const std::string & serve
     if (rpc_servers.empty()) {
         throw std::invalid_argument("no RPC servers specified for fabric");
     }
+    // I2-FABRIC-E3-FIX: upstream --fit (common/fit.cpp) hard-crashes (SIGSEGV)
+    // on the summed-memory facade device during its double model load. The
+    // facade is throwaway experiment wiring, so it explicitly does not support
+    // --fit — force it off here so a default-fit invocation cannot segfault
+    // during startup. E3 placement is unaffected (ngl/ctx are pinned by -ngl/-c).
+    if (params.fit_params) {
+        LOG_WRN("%s: --rpc-fabric facade does not support --fit (fit solver SIGSEGVs on the summed-memory device); forcing fit off\n", __func__);
+        params.fit_params = false;
+    }
     ggml_backend_load_all();
 
     // E3 (LEDGER #61): wire the real layer count + assignment for the

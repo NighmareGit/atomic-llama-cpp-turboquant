@@ -7387,14 +7387,22 @@ static enum ggml_status ggml_backend_rpc_fabric_graph_compute(ggml_backend_t bac
 
     if (!ctx->sched) {
         std::vector<ggml_backend_t> backends = ctx->servers;
-        // E3 diagnostic: NO CPU fallback in the inner sched. The fallback was
-        // corrupting compute (mixed CPU/RPC node assignment garbles output).
-        ctx->cpu_backend = nullptr;
+        // I2-FABRIC-E3-FIX: ggml_backend_sched_new requires the LAST backend
+        // to be CPU (ggml-backend.cpp:3148). The prior [RPC,RPC]+nullptr
+        // wiring violated that invariant and SIGABRT'd on the first facade
+        // graph_compute. The earlier "CPU fallback garbles output" diagnostic
+        // predates the BUG-013/002a uid fixes (merged da02606b4), and the
+        // [RPC,...,CPU] pattern is exactly what the working layer-split path
+        // uses (rpc_compute_engine, ggml-rpc.cpp:4688). The CPU backend only
+        // carries cross-backend copies here; every model op is supported by
+        // the RPC backends.
+        ctx->cpu_backend = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr);
+        backends.push_back(ctx->cpu_backend);
         size_t graph_size = ggml_graph_overhead_custom(cgraph->n_nodes, false);
         ctx->sched = ggml_backend_sched_new(backends.data(), nullptr,
                                             (int)backends.size(), graph_size,
                                             false, false);
-        GGML_LOG_INFO("[fabric] facade inner sched: %d servers (no CPU fallback)\n",
+        GGML_LOG_INFO("[fabric] facade inner sched: %d servers + CPU fallback\n",
                       (int)ctx->servers.size());
     }
 
@@ -7492,7 +7500,12 @@ ggml_backend_reg_t ggml_backend_rpc_fabric_add(const char * const * endpoints,
         dev_ctx->servers.push_back(srv);
     }
 
-    dev_ctx->name = "RPC-FABRIC[" + std::to_string(n_endpoints) + " servers]";
+    // I2-FABRIC-E3-FIX: register the device under the exact name the docs and
+    // CLI use ("--device RPC-FABRIC"). ggml_backend_dev_by_name matches
+    // case-insensitively but EXACTLY, so the old "RPC-FABRIC[2 servers]" name
+    // could never be selected by the documented flag (the original E3 KILL's
+    // misroute confound). The server list stays in the description.
+    dev_ctx->name = "RPC-FABRIC";
     dev_ctx->desc = "rpc:";
     for (int i = 0; i < n_endpoints; i++) {
         if (i > 0) dev_ctx->desc += ",";
