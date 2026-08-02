@@ -6941,6 +6941,8 @@ struct ggml_backend_rpc_fabric_context {
     ggml_backend_t cpu_backend;      // E3: CPU fallback for ops no server supports
     uint64_t hop_total_us;           // E3: cumulative fabric hop send time (instrumentation)
     uint64_t hop_n_sends;            // E3: fabric hop send count
+    ggml_context * graph_ctx;        // I2-FABRIC-E3-FIX: ctx for self-contained graph copies
+    size_t graph_ctx_size;           // I2-FABRIC-E3-FIX: allocated size of graph_ctx
 };
 
 // Facade device context.
@@ -7139,6 +7141,8 @@ static ggml_backend_t ggml_backend_rpc_fabric_device_init_backend(ggml_backend_d
     }
     ctx->sched = nullptr;
     ctx->cpu_backend = nullptr;
+    ctx->graph_ctx = nullptr;
+    ctx->graph_ctx_size = 0;
     ctx->hop_total_us = 0;
     ctx->hop_n_sends = 0;
     GGML_UNUSED(params);
@@ -7243,6 +7247,9 @@ static void ggml_backend_rpc_fabric_free(ggml_backend_t backend) {
     }
     if (ctx->cpu_backend) {
         ggml_backend_free(ctx->cpu_backend);
+    }
+    if (ctx->graph_ctx) {
+        ggml_free(ctx->graph_ctx);
     }
     for (auto * srv : ctx->servers) {
         ggml_backend_free(srv);
@@ -7367,6 +7374,61 @@ static bool fabric_hop_send(ggml_backend_t src_backend, ggml_backend_t dst_backe
     return ok;
 }
 
+// I2-FABRIC-E3-FIX (4th blocker): the client scheduler hands the facade
+// per-split graph VIEWS (ggml_graph_view: n_leafs=0, leafs=NULL, nodes point
+// into the parent graph, srcs reference tensors outside the view). The inner
+// sched's gallocr sizes its hash table from n_nodes+n_leafs (ggml-alloc.c),
+// so a view overflows on insertion -> GGML_ABORT at ggml-impl.h:319. Build a
+// self-contained copy: same node pointers, plus every src-of-node that is not
+// itself a node listed as a leaf. The tensor objects are shared; only the
+// graph struct is new (allocated in a cached ctx, grown on demand).
+static ggml_cgraph * fabric_build_self_contained(ggml_backend_rpc_fabric_context * ctx,
+                                                 const ggml_cgraph * view) {
+    // worst-case distinct srcs: each node has GGML_MAX_SRC srcs
+    const size_t est_nodes = (size_t)view->n_nodes + (size_t)view->n_nodes * GGML_MAX_SRC + 16;
+    const size_t need = ggml_graph_overhead_custom(est_nodes, false);
+    if (ctx->graph_ctx_size < need) {
+        if (ctx->graph_ctx) {
+            ggml_free(ctx->graph_ctx);
+        }
+        struct ggml_init_params ip = { need, nullptr, true };
+        ctx->graph_ctx = ggml_init(ip);
+        ctx->graph_ctx_size = need;
+        GGML_LOG_INFO("[fabric] self-contained graph ctx grown to %zu bytes\n", need);
+    }
+
+    ggml_cgraph * gc = ggml_new_graph_custom(ctx->graph_ctx, est_nodes, false);
+    for (int i = 0; i < view->n_nodes; i++) {
+        gc->nodes[i] = view->nodes[i];
+    }
+    gc->n_nodes = view->n_nodes;
+
+    // collect all srcs not already in nodes as leafs
+    for (int i = 0; i < view->n_nodes; i++) {
+        for (int j = 0; j < GGML_MAX_SRC; j++) {
+            ggml_tensor * s = view->nodes[i]->src[j];
+            if (!s) {
+                continue;
+            }
+            bool is_node = false;
+            for (int k = 0; k < view->n_nodes; k++) {
+                if (gc->nodes[k] == s) { is_node = true; break; }
+            }
+            if (is_node) {
+                continue;
+            }
+            bool seen = false;
+            for (int k = 0; k < gc->n_leafs; k++) {
+                if (gc->leafs[k] == s) { seen = true; break; }
+            }
+            if (!seen) {
+                gc->leafs[gc->n_leafs++] = s;
+            }
+        }
+    }
+    return gc;
+}
+
 // graph_compute: the facade presents ONE device to the client scheduler; the
 // full model graph arrives here. E3 wires an INNER multi-device scheduler over
 // the N real rpc-server backends — the exact layer-split machinery the working
@@ -7398,7 +7460,11 @@ static enum ggml_status ggml_backend_rpc_fabric_graph_compute(ggml_backend_t bac
         // the RPC backends.
         ctx->cpu_backend = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr);
         backends.push_back(ctx->cpu_backend);
-        size_t graph_size = ggml_graph_overhead_custom(cgraph->n_nodes, false);
+        // The FIRST facade graph is a tiny client-split view (1 node) — sizing
+        // from it would starve the sched's own hash table for the real graphs.
+        // Floor at a size that fits the full decode graph (~2500+ nodes).
+        const size_t sched_graph_size = std::max(cgraph->n_nodes, 16384);
+        size_t graph_size = ggml_graph_overhead_custom(sched_graph_size, false);
         ctx->sched = ggml_backend_sched_new(backends.data(), nullptr,
                                             (int)backends.size(), graph_size,
                                             false, false);
@@ -7406,9 +7472,12 @@ static enum ggml_status ggml_backend_rpc_fabric_graph_compute(ggml_backend_t bac
                       (int)ctx->servers.size());
     }
 
-    enum ggml_status st = ggml_backend_sched_graph_compute(ctx->sched, cgraph);
+    // The client scheduler passes per-split graph VIEWS (n_leafs=0). The inner
+    // sched's gallocr cannot size for those (hash overflow); feed it a
+    // self-contained copy instead.
+    ggml_cgraph * gc = fabric_build_self_contained(ctx, cgraph);
+    enum ggml_status st = ggml_backend_sched_graph_compute(ctx->sched, gc);
     if (st != GGML_STATUS_SUCCESS) return st;
-
     // Hop instrumentation: sample the boundary activation hop every 64 tokens.
     static thread_local uint64_t s_hop_ticks = 0;
     if ((++s_hop_ticks & 63) == 0 && ctx->n_servers > 1) {
