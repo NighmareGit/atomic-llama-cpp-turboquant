@@ -37,6 +37,7 @@ static constexpr uint8_t  RPC_CAP_TRACE_ID        = 1u << 0; // for trace_id in 
 static constexpr uint8_t  RPC_CAP_MULTI_DEVICE    = 1u << 1; // Path C: server-side multi-GPU scheduling
 static constexpr uint8_t  RPC_CAP_SERVER_TELEMETRY = 1u << 2; // D4.10: server appends telemetry to GRAPH_COMPUTE_ALL response
 static constexpr uint8_t  RPC_CAP_RECOMPUTE_HASH  = 1u << 3; // F1 (T2a): graph_hash in GRAPH_RECOMPUTE req + hit/miss rsp
+static constexpr uint8_t  RPC_CAP_GET_TENSOR_BATCH = 1u << 4; // V1b: server understands RPC_CMD_GET_TENSOR_BATCH (value 25)
 
 struct socket_t {
     ~socket_t();
@@ -77,6 +78,8 @@ struct socket_t {
     bool server_supports_telemetry = false;
     // F1 (T2a): server understands graph_hash in GRAPH_RECOMPUTE and sends hit/miss response
     bool server_supports_recompute_hash = false;
+    // V1b: server understands RPC_CMD_GET_TENSOR_BATCH (value 25)
+    bool server_supports_get_tensor_batch = false;
 
     static socket_ptr create_server(const char * host, int port);
     static socket_ptr connect(const char * host, int port);
