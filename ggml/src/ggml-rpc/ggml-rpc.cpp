@@ -6,6 +6,15 @@
 #include "transport.h"
 #include "rpc-async-audit.h"
 
+// EXP-TURBOACT: activation wire packing codec.
+#include "ggml-quants.h" // block_turbo4_0 / block_turbo3_0, turbo quantizers
+
+extern "C" {
+// Inverse WHT for activation reconstruction (declared only in ggml-turbo-quant.c,
+// not in any public header). Exported from ggml-base (GGML_API).
+GGML_API void turbo_cpu_fwht_inverse(float * x, int group_size);
+}
+
 // For server-side CUDA split buffer type allocation (V0 row-split fix).
 // ggml_backend_buft_is_cuda_split() is static in ggml-cuda.cu, so we
 // detect CUDA split buffers by name suffix "_Split" (see rpc_buft_is_cuda_split).
@@ -46,6 +55,223 @@ static const char * RPC_DEBUG = std::getenv("GGML_RPC_DEBUG");
 
 #define LOG_DBG(...) \
     do { if (RPC_DEBUG) GGML_LOG_DEBUG(__VA_ARGS__); } while (0)
+
+// ============================================================================
+// EXP-TURBOACT: optional activation wire packing (prototype, throwaway).
+//
+// Packs small F32/BF16 GET_TENSOR responses (cross-boundary residual-stream
+// activations) to cut per-token wire bytes:
+//   GGML_RPC_ACT_PACK=bf16     f32 -> bf16 on the wire (2x; matches the model's
+//                              bf16 compute precision — zero-error in model terms)
+//   GGML_RPC_ACT_PACK=turbo4   4-bit PolarQuant + WHT (3.9x for 2048-dim, LOSSY
+//                              ~13% rel-RMS — Δppl A/B is the falsifier)
+//   GGML_RPC_ACT_PACK=turbo3   3-bit backup (~5.1x, ~18% rel-RMS)
+//   GGML_RPC_ACT_PACK=0        off (default)
+//
+// Packed response wire format:
+//   [0..3]   magic "TQAP" (0x50415154 LE)
+//   [4]      codec: 1=bf16, 2=turbo4, 3=turbo3
+//   [5]      src ggml_type (as stored in rpc_tensor.type)
+//   [6..7]   reserved
+//   [8..15]  orig_size (u64 LE) — MUST equal the size the client requested
+//   [16..]   packed payload
+//
+// The client detects the magic whenever a GET_TENSOR response is smaller than
+// requested and transparently unpacks. Old servers never send the magic and a
+// server with GGML_RPC_ACT_PACK=0 never packs — fully backward compatible.
+// Only tensors that are <=16 MB, float (F32/BF16), and fetched after the first
+// graph_compute (generation phase) qualify, so load-time weight copies can
+// never be corrupted by the lossy codecs.
+// ============================================================================
+#define RPC_ACT_PACK_MAGIC     0x50415154u // "TQAP"
+#define RPC_ACT_PACK_HEADER    16
+// Up to 16 MB: covers decode activations (4-12 KB) AND pp ubatches
+// ([2048,512] f32 = 4 MB) so the Δppl A/B exercises the real packing path.
+// Load-time weight fetches are excluded by the has_computed_graph phase gate.
+#define RPC_ACT_PACK_MAX_SIZE  (16 * 1024 * 1024)
+
+static int rpc_act_pack_mode() {
+    static const int mode = []() {
+        const char * v = getenv("GGML_RPC_ACT_PACK");
+        if (v == nullptr) {
+            return 0;
+        }
+        if (strcmp(v, "bf16") == 0 || strcmp(v, "1") == 0) {
+            return 1;
+        }
+        if (strcmp(v, "turbo4") == 0 || strcmp(v, "4") == 0) {
+            return 2;
+        }
+        if (strcmp(v, "turbo3") == 0 || strcmp(v, "3") == 0) {
+            return 3;
+        }
+        return 0;
+    }();
+    return mode;
+}
+
+// EXP-TURBOACT: pack a GET_TENSOR response in place (server side). Only small
+// float activations qualify. Returns true when `response` was replaced by
+// header + packed payload.
+static bool rpc_act_pack_tensor(ggml_type type, std::vector<uint8_t> & response) {
+    const int mode = rpc_act_pack_mode();
+    if (mode == 0) {
+        return false;
+    }
+    const size_t orig_size = response.size();
+    if (orig_size == 0 || orig_size > RPC_ACT_PACK_MAX_SIZE) {
+        return false;
+    }
+    const size_t type_size = ggml_type_size(type);
+    if (type_size == 0 || orig_size % type_size != 0) {
+        return false;
+    }
+    const size_t n_elems = orig_size / type_size;
+    if (n_elems < 128) {
+        return false;
+    }
+
+    const float * src_f32 = nullptr;
+    std::vector<float> f32_scratch;
+    if (type == GGML_TYPE_F32) {
+        src_f32 = (const float *) response.data();
+    } else if (type == GGML_TYPE_BF16) {
+        f32_scratch.resize(n_elems);
+        ggml_bf16_to_fp32_row((const ggml_bf16_t *) response.data(), f32_scratch.data(), (int64_t) n_elems);
+        src_f32 = f32_scratch.data();
+    } else {
+        return false; // only float activations
+    }
+
+    std::vector<uint8_t> packed;
+    if (mode == 1) {
+        // bf16 codec: only meaningful when the wire representation was f32.
+        if (type != GGML_TYPE_F32) {
+            return false; // already bf16 — nothing to gain
+        }
+        packed.resize(RPC_ACT_PACK_HEADER + n_elems * sizeof(ggml_bf16_t));
+        ggml_fp32_to_bf16_row(src_f32, (ggml_bf16_t *) (packed.data() + RPC_ACT_PACK_HEADER), (int64_t) n_elems);
+    } else if (mode == 2 || mode == 3) {
+        const int qk   = (mode == 2) ? QK_TURBO4 : QK_TURBO3;
+        const size_t block_size = (mode == 2) ? sizeof(block_turbo4_0) : sizeof(block_turbo3_0);
+        if (n_elems % (size_t) qk != 0) {
+            return false;
+        }
+        if (mode == 3) {
+            // quantize_row_turbo3_0_ref rotates in 64-groups when the process
+            // global turbo3_cpu_wht_group_size is set to 64 (CPU KV SET_ROWS
+            // path in ggml-cpu/ops.cpp). The unpack side hardcodes 128-group
+            // inverse WHT, so refuse to pack turbo3 while the global is 64.
+            // (n_elems is 128-aligned here, so the only 64-rotation trigger is
+            // exactly this global being 64.)
+            extern int turbo3_cpu_wht_group_size;
+            if (turbo3_cpu_wht_group_size == 64) {
+                return false;
+            }
+        }
+        const size_t n_blocks = n_elems / (size_t) qk;
+        packed.resize(RPC_ACT_PACK_HEADER + n_blocks * block_size);
+        if (mode == 2) {
+            quantize_row_turbo4_0_ref(src_f32, (block_turbo4_0 *) (packed.data() + RPC_ACT_PACK_HEADER), (int64_t) n_elems);
+        } else {
+            quantize_row_turbo3_0_ref(src_f32, (block_turbo3_0 *) (packed.data() + RPC_ACT_PACK_HEADER), (int64_t) n_elems);
+        }
+    } else {
+        return false;
+    }
+
+    if (packed.size() >= orig_size) {
+        return false; // no wire win — keep raw
+    }
+
+    uint8_t * hdr = packed.data();
+    const uint32_t magic_le = RPC_ACT_PACK_MAGIC;
+    memcpy(hdr, &magic_le, 4);
+    hdr[4] = (uint8_t) mode;
+    hdr[5] = (uint8_t) type;
+    hdr[6] = 0;
+    hdr[7] = 0;
+    uint64_t orig64 = (uint64_t) orig_size;
+    memcpy(hdr + 8, &orig64, sizeof(orig64));
+
+    LOG_DBG("[rpc-act-pack] codec=%d type=%d n_elems=%zu orig=%zu packed=%zu (%.2fx)\n",
+            mode, (int) type, n_elems, orig_size, packed.size(),
+            (double) orig_size / (double) packed.size());
+    response.swap(packed);
+    return true;
+}
+
+// EXP-TURBOACT: unpack a packed GET_TENSOR response (client side). `packed` is
+// the received wire bytes, `dst`/`dst_size` the client's requested buffer.
+// Returns true when dst was filled.
+static bool rpc_act_unpack(const void * packed, size_t packed_size, void * dst, size_t dst_size) {
+    if (packed_size < RPC_ACT_PACK_HEADER) {
+        return false;
+    }
+    const uint8_t * p = (const uint8_t *) packed;
+    uint32_t magic = 0;
+    memcpy(&magic, p, 4);    if (magic != RPC_ACT_PACK_MAGIC) {
+        return false;
+    }
+    const int codec = p[4];
+    const ggml_type src_type = (ggml_type) p[5];
+    uint64_t orig64 = 0;
+    memcpy(&orig64, p + 8, sizeof(orig64));
+    if (orig64 != (uint64_t) dst_size) {
+        GGML_LOG_ERROR("[rpc-act-unpack] orig_size mismatch: header %" PRIu64 " != expected %zu\n",
+                       orig64, dst_size);
+        return false;
+    }
+    const uint8_t * payload = p + RPC_ACT_PACK_HEADER;
+    const size_t payload_size = packed_size - RPC_ACT_PACK_HEADER;
+
+    const size_t type_size = ggml_type_size(src_type);
+    if (type_size == 0 || dst_size % type_size != 0) {
+        return false;
+    }
+    const size_t n_elems = dst_size / type_size;
+
+    if (codec == 1) {
+        // bf16 codec: payload is bf16, dst is f32 (we only ever pack f32 wire).
+        if (src_type != GGML_TYPE_F32 || payload_size != n_elems * sizeof(ggml_bf16_t)) {
+            return false;
+        }
+        ggml_bf16_to_fp32_row((const ggml_bf16_t *) payload, (float *) dst, (int64_t) n_elems);
+        return true;
+    }
+
+    // turbo4 / turbo3: dequant (WHT-rotated domain) -> inverse WHT per 128-elem
+    // group -> convert back to the original wire dtype.
+    std::vector<float> f32(n_elems);
+    if (codec == 2) {
+        if (n_elems % QK_TURBO4 != 0 || payload_size != (n_elems / QK_TURBO4) * sizeof(block_turbo4_0)) {
+            return false;
+        }
+        dequantize_row_turbo4_0((const block_turbo4_0 *) payload, f32.data(), (int64_t) n_elems);
+        for (size_t g = 0; g < n_elems; g += QK_TURBO4) {
+            turbo_cpu_fwht_inverse(f32.data() + g, QK_TURBO4);
+        }
+    } else if (codec == 3) {
+        if (n_elems % QK_TURBO3 != 0 || payload_size != (n_elems / QK_TURBO3) * sizeof(block_turbo3_0)) {
+            return false;
+        }
+        dequantize_row_turbo3_0((const block_turbo3_0 *) payload, f32.data(), (int64_t) n_elems);
+        for (size_t g = 0; g < n_elems; g += QK_TURBO3) {
+            turbo_cpu_fwht_inverse(f32.data() + g, QK_TURBO3);
+        }
+    } else {
+        return false;
+    }
+
+    if (src_type == GGML_TYPE_F32) {
+        memcpy(dst, f32.data(), dst_size);
+    } else if (src_type == GGML_TYPE_BF16) {
+        ggml_fp32_to_bf16_row(f32.data(), (ggml_bf16_t *) dst, (int64_t) n_elems);
+    } else {
+        return false;
+    }
+    return true;
+}
 
 static int rpc_trace_lvl() {
     const char * e = getenv("GGML_RPC_TRACE");
@@ -1134,12 +1360,21 @@ static void flush_pending_get_tensor_for_socket(const socket_ptr & sock) {
             it = tls_pending_get_tensor.erase(it);
             continue;
         }
-        if (out_size != it->size) {
-            GGML_LOG_ERROR("[%s] get_tensor response size mismatch: expected %zu, got %zu\n",
-                            __func__, it->size, (size_t) out_size);
-        }
-        if (!rsock->recv_data(it->data, it->size)) {
-            GGML_LOG_ERROR("[%s] failed to read get_tensor response data\n", __func__);
+        if (out_size == it->size) {
+            if (!rsock->recv_data(it->data, it->size)) {
+                GGML_LOG_ERROR("[%s] failed to read get_tensor response data\n", __func__);
+            }
+        } else {
+            // EXP-TURBOACT: possibly packed response — read the wire bytes and
+            // transparently unpack when the TQAP magic is present.
+            std::vector<uint8_t> tmp((size_t) out_size);
+            if (!rsock->recv_data(tmp.data(), out_size)) {
+                GGML_LOG_ERROR("[%s] failed to read get_tensor response data (packed, %" PRIu64 " bytes)\n",
+                               __func__, out_size);
+            } else if (!rpc_act_unpack(tmp.data(), (size_t) out_size, it->data, it->size)) {
+                GGML_LOG_ERROR("[%s] get_tensor response size mismatch: expected %zu, got %zu (unpack failed)\n",
+                               __func__, it->size, (size_t) out_size);
+            }
         }
         const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - t0).count();
@@ -1628,6 +1863,24 @@ static socket_ptr rpc_ephemeral_connect(const std::string & endpoint) {
     return sock;
 }
 
+// EXP-TURBOACT: read a synchronous GET_TENSOR response, transparently unpacking
+// a packed (compressed) response. Used by the blocking GET_TENSOR paths.
+static bool rpc_recv_get_tensor_response(const socket_ptr & sock, void * out, size_t size) {
+    const socket_ptr rsock = rpc_response_sock(sock);
+    uint64_t out_size;
+    if (!rsock->recv_data(&out_size, sizeof(out_size))) {
+        return false;
+    }
+    if (out_size == size) {
+        return rsock->recv_data(out, size);
+    }
+    std::vector<uint8_t> tmp((size_t) out_size);
+    if (!rsock->recv_data(tmp.data(), out_size)) {
+        return false;
+    }
+    return rpc_act_unpack(tmp.data(), (size_t) out_size, out, size);
+}
+
 static bool rpc_peer_get_tensor(const std::string & endpoint, const rpc_tensor & tensor,
                                 size_t offset, size_t size, std::vector<uint8_t> & out) {
     auto sock = rpc_ephemeral_connect(endpoint);
@@ -1639,7 +1892,10 @@ static bool rpc_peer_get_tensor(const std::string & endpoint, const rpc_tensor &
     request.offset = offset;
     request.size = size;
     out.resize(size);
-    return send_rpc_cmd(sock, RPC_CMD_GET_TENSOR, &request, sizeof(request), out.data(), size);
+    if (!send_rpc_cmd(sock, RPC_CMD_GET_TENSOR, &request, sizeof(request))) {
+        return false;
+    }
+    return rpc_recv_get_tensor_response(sock, out.data(), size);
 }
 
 static std::shared_ptr<socket_t> get_socket(const std::string & endpoint) {
@@ -1937,7 +2193,10 @@ static void ggml_backend_rpc_buffer_get_tensor(ggml_backend_buffer_t buffer, con
     request.tensor.data   = reinterpret_cast<uint64_t>(tensor->data);
     request.offset = offset;
     request.size = size;
-    bool status = send_rpc_cmd(sock, RPC_CMD_GET_TENSOR, &request, sizeof(request), data, size);
+    bool status = send_rpc_cmd(sock, RPC_CMD_GET_TENSOR, &request, sizeof(request));
+    if (status) {
+        status = rpc_recv_get_tensor_response(sock, data, size);
+    }
     RPC_STATUS_ASSERT(status);
 }
 
@@ -3454,6 +3713,11 @@ public:
     const std::vector<ggml_backend_t> & get_backends() const { return backends; }
     size_t get_backend_count() const { return backends.size(); }
 
+    // EXP-TURBOACT: set once any graph has been computed (generation phase).
+    // Gates activation wire packing so load-time weight copies are never
+    // touched by the lossy codecs.
+    std::atomic<bool> has_computed_graph{false};
+
     // NIT-1: uid is atomic — read in recompute_allowed() from dispatch + UDP
     // threads, written by graph_compute() in the worker thread.
     struct stored_graph {
@@ -4178,6 +4442,8 @@ bool rpc_connection::get_tensor(const rpc_msg_get_tensor_req & request, std::vec
         return false;
     }
     LOG_DBG("[%s] buffer: %p, data: %p, offset: %" PRIu64 ", size: %" PRIu64 "\n", __func__, (void*)tensor->buffer, tensor->data, request.offset, request.size);
+    LOG_DBG("[%s] tensor '%s' type=%d ne=[%u,%u,%u,%u]\n", __func__, tensor->name, (int) tensor->type,
+            (unsigned) tensor->ne[0], (unsigned) tensor->ne[1], (unsigned) tensor->ne[2], (unsigned) tensor->ne[3]);
 
     // V0 row-split fix: CUDA split buffers store device pointers in
     // tensor->extra->data_device[id], not in tensor->data. Use the buffer's
@@ -4206,6 +4472,15 @@ bool rpc_connection::get_tensor(const rpc_msg_get_tensor_req & request, std::vec
 
     response.resize(request.size, 0);
     ggml_backend_tensor_get(tensor, response.data(), request.offset, request.size);
+
+    // EXP-TURBOACT: optional wire packing of small activation-like responses.
+    // Gated by (a) GGML_RPC_ACT_PACK env, (b) size <= RPC_ACT_PACK_MAX_SIZE
+    // (16 MB: decode activations AND pp ubatches), (c) float dtype,
+    // (d) generation phase (first graph_compute already ran) — so load-time
+    // weight copies can never be corrupted by the lossy codecs.
+    if (rpc_act_pack_mode() > 0 && engine->has_computed_graph.load(std::memory_order_acquire)) {
+        rpc_act_pack_tensor(tensor->type, response);
+    }
     return true;
 }
 
@@ -4413,6 +4688,7 @@ bool rpc_compute_engine::graph_compute(const std::vector<uint8_t> & input,
                        const std::unordered_set<ggml_backend_buffer_t> & buffers,
                        const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas) {
     GGML_LOG_DEBUG("[rpc-server] graph_compute (single-device) called, input.size=%zu\n", input.size());
+    has_computed_graph.store(true, std::memory_order_release); // EXP-TURBOACT generation gate
     // serialization format:
     // | device (4 bytes) | n_nodes (4 bytes) | nodes (n_nodes * sizeof(uint64_t) | n_tensors (4 bytes) | tensors (n_tensors * sizeof(rpc_tensor)) |
     if (input.size() < 2*sizeof(uint32_t)) {
@@ -4562,6 +4838,7 @@ bool rpc_compute_engine::recompute_all_allowed(const rpc_msg_graph_recompute_all
 }
 
 bool rpc_compute_engine::graph_recompute(const rpc_msg_graph_recompute_req & request) {
+    has_computed_graph.store(true, std::memory_order_release); // EXP-TURBOACT generation gate
     uint32_t device = request.device;
     if (device >= backends.size()) {
         return false;
@@ -4706,6 +4983,7 @@ bool rpc_compute_engine::graph_compute_all(const std::vector<uint8_t> & input,
                            const std::unordered_set<ggml_backend_buffer_t> & buffers,
                            const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas) {
     GGML_LOG_DEBUG("[rpc-server] graph_compute_all (multi-device) called, input.size=%zu\n", input.size());
+    has_computed_graph.store(true, std::memory_order_release); // EXP-TURBOACT generation gate
     // Format: | n_devices(4) | device_ids(n_devices*4) | n_nodes(4) | nodes(n_nodes*8) | n_tensors(4) | tensors(n_devices*rpc_tensor) |
     if (input.size() < sizeof(uint32_t) * 3) {
         return false;
@@ -4822,6 +5100,7 @@ bool rpc_compute_engine::graph_compute_all(const std::vector<uint8_t> & input,
 }
 
 bool rpc_compute_engine::graph_recompute_all(const rpc_msg_graph_recompute_all_req & request) {
+    has_computed_graph.store(true, std::memory_order_release); // EXP-TURBOACT generation gate
     if (all_graph.graph == nullptr) {
         return false;
     }
@@ -4876,6 +5155,7 @@ bool rpc_compute_engine::graph_compute_stage(const std::vector<uint8_t> & input,
                              const std::unordered_set<ggml_backend_buffer_t> & buffers,
                              const std::unordered_map<ggml_backend_buffer_t, rpc_split_buffer_meta> & split_metas) {
     GGML_LOG_DEBUG("[rpc-server] graph_compute_stage called, stage_id=%u, input.size=%zu\n", stage_id, input.size());
+    has_computed_graph.store(true, std::memory_order_release); // EXP-TURBOACT generation gate
     if (input.size() < sizeof(uint32_t) * 3) {
         return false;
     }
@@ -6575,7 +6855,10 @@ static void ggml_backend_rpc_split_buffer_get_tensor(ggml_backend_buffer_t buffe
     request.offset = 0;
     request.size = slice_size;
 
-    bool status = send_rpc_cmd(sock, RPC_CMD_GET_TENSOR, &request, sizeof(request), slice_data, slice_size);
+    bool status = send_rpc_cmd(sock, RPC_CMD_GET_TENSOR, &request, sizeof(request));
+    if (status) {
+        status = rpc_recv_get_tensor_response(sock, slice_data, slice_size);
+    }
     RPC_STATUS_ASSERT(status);
 }
 
