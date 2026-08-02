@@ -4619,36 +4619,6 @@ bool rpc_compute_engine::graph_recompute(const rpc_msg_graph_recompute_req & req
     ggml_cgraph * graph = stored_graphs[device].graph;
     LOG_DBG("[%s] device: %u uid=%" PRIu64 "\n", __func__, device, stored_graphs[device].uid.load(std::memory_order_relaxed));
 
-    // E-3 probe (BUG-002a): on every recompute, log the cached graph's I32 leaf
-    // tensors (tokens + s_copy, the snapshot-plane index vector) so we can see
-    // which plane the replayed graph actually reads after an MTP rollback.
-    // M1: server sees plane-0 indices while client computed rs_idx != 0 (stale
-    // binding). M2: server sees the rollback indices but output is still wrong.
-    // No behavior change. Keep only for diagnosis (may be reverted after E-1).
-    {
-        const ggml_cgraph * cg = stored_graphs[device].graph;
-        fprintf(stderr, "[E3] recompute device=%u uid=%" PRIu64 " n_leafs=%d n_nodes=%d\n",
-                device, stored_graphs[device].uid.load(std::memory_order_relaxed),
-                cg ? cg->n_leafs : -1, cg ? cg->n_nodes : -1);
-        if (cg) {
-            for (int i = 0; i < cg->n_leafs && i < 24; ++i) {
-                const ggml_tensor * t = cg->leafs[i];
-                if (t == NULL) {
-                    continue;
-                }
-                if (t->type == GGML_TYPE_I32 && t->ne[1] == 1) {
-                    const int32_t * data = (const int32_t *) t->data;
-                    fprintf(stderr, "[E3] leaf[%d] name=%s ne0=%" PRId64 " data=[", i, t->name, t->ne[0]);
-                    const int N = t->ne[0] < 12 ? (int) t->ne[0] : 12;
-                    for (int j = 0; j < N; ++j) {
-                        fprintf(stderr, "%s%d", j ? "," : "", data ? data[j] : -999);
-                    }
-                    fprintf(stderr, "]\n");
-                }
-            }
-        }
-    }
-
     // issue 12: per-node timing on recompute path (same sampling as graph_compute).
     uint64_t us = 0;
     const uint64_t sample_id = telemetry_node_sample_count.fetch_add(1, std::memory_order_relaxed);
