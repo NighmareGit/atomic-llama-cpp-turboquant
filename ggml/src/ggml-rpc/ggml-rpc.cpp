@@ -47,6 +47,34 @@ static const char * RPC_DEBUG = std::getenv("GGML_RPC_DEBUG");
 #define LOG_DBG(...) \
     do { if (RPC_DEBUG) GGML_LOG_DEBUG(__VA_ARGS__); } while (0)
 
+// I2-GRAPH-CACHE-MULTISLOT (E-2 follow-up): per-device server graph-cache size.
+// The MTP iteration rotates three topologies (draft / verify / MTP-head); 4
+// slots cover the rotation plus headroom for transient prompt-eval graphs. The
+// E-2 rebind path is only reachable when the post-rollback rebuild's topology
+// is still cached — a single slot (the pre-fix behavior) churns the rotation and
+// the verify graph never survives. Env-tunable so the GPU A/B gate can reproduce
+// the single-slot baseline with GGML_RPC_GRAPH_CACHE_SLOTS=1.
+static constexpr size_t RPC_GRAPH_CACHE_SLOTS_MIN     = 1;
+static constexpr size_t RPC_GRAPH_CACHE_SLOTS_MAX     = 8;
+static constexpr size_t RPC_GRAPH_CACHE_SLOTS_DEFAULT = 4;
+static size_t rpc_graph_cache_slots() {
+    static const size_t n = []() {
+        const char * v = getenv("GGML_RPC_GRAPH_CACHE_SLOTS");
+        if (v == nullptr || *v == '\0') {
+            return RPC_GRAPH_CACHE_SLOTS_DEFAULT;
+        }
+        const int x = atoi(v);
+        if (x < (int) RPC_GRAPH_CACHE_SLOTS_MIN) {
+            return RPC_GRAPH_CACHE_SLOTS_MIN;
+        }
+        if (x > (int) RPC_GRAPH_CACHE_SLOTS_MAX) {
+            return RPC_GRAPH_CACHE_SLOTS_MAX;
+        }
+        return (size_t) x;
+    }();
+    return n;
+}
+
 static int rpc_trace_lvl() {
     const char * e = getenv("GGML_RPC_TRACE");
     return e ? atoi(e) : 0;
@@ -1224,12 +1252,29 @@ struct ggml_backend_rpc_device_context {
     // GGML_RPC_TRACE JSONL so AC2's "uid hit-rate" is measurable per device.
     uint64_t recompute_hits = 0;
     uint64_t recompute_misses = 0;
-    // E-2 (BUG-002a): topology hash of the last graph sent to this device as a
-    // FULL GRAPH_COMPUTE. The server's cached graph for this device is exactly
-    // that graph (recomputes never change it), so a new uid with the same
-    // topology hash = an identical-topology rebuild → safe to rebind + recompute
-    // instead of a full GRAPH_COMPUTE.
-    uint64_t last_full_compute_topo_hash = 0;
+    // E-2 (BUG-002a) + I2-GRAPH-CACHE-MULTISLOT: topology hashes of the graphs
+    // sent to this device as FULL GRAPH_COMPUTEs (bounded set — one entry per
+    // topology, clear-on-overflow like seen_graph_uids). E-2's rebind trigger
+    // originally matched only the LAST full-compute topology, which never fires
+    // under the MTP iteration's 3-topology rotation (draft / verify / MTP-head
+    // all full-compute in turn, so the post-rollback rebuild's topology is never
+    // the last one). The server now caches a small LRU of topologies per device,
+    // so the trigger must accept ANY recent full-compute topology: a new uid
+    // with one of these hashes = an identical-topology rebuild → safe to rebind
+    // + recompute instead of a full GRAPH_COMPUTE. The server's topology gate
+    // remains the correctness check (a rebind against a non-matching cached
+    // graph is rejected there → client falls back to GRAPH_COMPUTE).
+    std::unordered_set<uint64_t> full_compute_topo_hashes;
+    static constexpr size_t FULL_COMPUTE_TOPO_MAX = 8;
+    static void full_compute_topo_insert(std::unordered_set<uint64_t> & set, uint64_t topo) {
+        if (topo == 0) {
+            return;
+        }
+        if (set.size() >= FULL_COMPUTE_TOPO_MAX) {
+            set.clear();
+        }
+        set.insert(topo);
+    }
     // Cached device memory — invariant during generation, saves ~60 ms/token RPC
     uint64_t cached_gen  = 0;          // generation when cached
     size_t   cached_free  = 0;
@@ -3186,13 +3231,16 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
     // the cached graph's input tensors to the rebuilt graph's new buffers first.
     // Safe iff the server's cached graph has the same topology as this graph —
     // the cache only changes on a full GRAPH_COMPUTE, tracked per device in
-    // last_full_compute_topo_hash. Without the negotiated cap, or on a topology
-    // change, fall through to the full GRAPH_COMPUTE (E-1 gates correctness).
+    // last_full_compute_topo_hash (widened to a bounded set of recent full-compute
+    // topologies by I2-GRAPH-CACHE-MULTISLOT: the MTP iteration full-computes
+    // several topologies in rotation, and the server caches them in a small LRU).
+    // Without the negotiated cap, or on a topology change, fall through to the
+    // full GRAPH_COMPUTE (E-1 gates correctness).
     bool rebind_attempt = false;
     std::vector<rpc_rebind_input> rebind_inputs;
     if (!reuse && sock->server_supports_recompute_rebind) {
         const uint64_t topo = ggml_graph_topology_hash(cgraph);
-        if (topo != 0 && topo == rpc_dev_ctx->last_full_compute_topo_hash) {
+        if (topo != 0 && rpc_dev_ctx->full_compute_topo_hashes.count(topo) != 0) {
             collect_rebind_inputs(cgraph, rebind_inputs);
             rebind_attempt = true;
         }
@@ -3323,7 +3371,10 @@ static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, g
         // E-2 (BUG-002a): a full GRAPH_COMPUTE (re)defines the server's cached
         // graph for this device — track its topology so future identical-topology
         // rebuilds can take the rebind path instead of another full compute.
-        rpc_dev_ctx->last_full_compute_topo_hash = ggml_graph_topology_hash(cgraph);
+        // I2-GRAPH-CACHE-MULTISLOT: track ALL recent full-compute topologies (the
+        // server caches a small LRU of them), not just the last one.
+        ggml_backend_rpc_device_context::full_compute_topo_insert(
+            rpc_dev_ctx->full_compute_topo_hashes, ggml_graph_topology_hash(cgraph));
         LOG_DBG("RPC-REUSE dev=%u uid=%" PRIu64 " MISS (set=%zu hits=%" PRIu64 " misses=%" PRIu64 ")\n",
                 rpc_ctx->device, cgraph->uid, rpc_dev_ctx->seen_graph_uids.size(),
                 rpc_dev_ctx->recompute_hits, rpc_dev_ctx->recompute_misses);
@@ -3510,6 +3561,14 @@ public:
         : backends(std::move(all_backends)), cache_dir(cache_dir),
           telemetry_enabled(rpc_server_telemetry_env_enabled()) {
         stored_graphs.resize(backends.size());
+        // I2-GRAPH-CACHE-MULTISLOT: N slots per device (default 4, env-tunable
+        // via GGML_RPC_GRAPH_CACHE_SLOTS for the A/B gate). Fresh slots have
+        // graph == nullptr (empty) and are LRU-eligible once used.
+        for (auto & cache : stored_graphs) {
+            cache.slots.resize(rpc_graph_cache_slots());
+        }
+        GGML_LOG_INFO("[rpc-server] graph cache: %zu slot(s)/device (GGML_RPC_GRAPH_CACHE_SLOTS, I2-GRAPH-CACHE-MULTISLOT)\n",
+                      rpc_graph_cache_slots());
         if (telemetry_enabled) {
             for (size_t i = 0; i < backends.size() && i < RPC_TELEMETRY_MAX_DEVICES; i++) {
                 ggml_backend_dev_t dev = ggml_backend_get_device(backends[i]);
@@ -3608,13 +3667,17 @@ public:
     // threads, written by graph_compute() in the worker thread.
     struct stored_graph {
         std::vector<uint8_t>      buffer;
-        ggml_cgraph             * graph;
+        ggml_cgraph             * graph = nullptr;
         std::atomic<uint64_t>     uid{0}; // F1 (T2a): uid bound to this cached graph (0 = unset)
         // E-2 (BUG-002a): topology hash of the cached graph, captured at
         // graph_compute time BEFORE filter_null_src_nodes (which mutates ops, so
         // a post-filter hash would not match the client's pre-filter hash). The
         // rebind gate compares this against the request's rebind_topo_hash.
         uint64_t                  topo_hash = 0;
+        // I2-GRAPH-CACHE-MULTISLOT: LRU recency tick for the per-device multi-slot
+        // cache (0 = never touched / empty). Only meaningful for per-device slots;
+        // the ALL-mode all_graph member never participates in LRU eviction.
+        uint64_t                  last_use = 0;
 
         // std::atomic is not movable, so define explicit move constructor
         // for vector<stored_graph>::resize() to work.
@@ -3622,16 +3685,91 @@ public:
         stored_graph(stored_graph && other) noexcept
             : buffer(std::move(other.buffer)),
               graph(other.graph),
-              uid(other.uid.load(std::memory_order_relaxed)) {}
+              uid(other.uid.load(std::memory_order_relaxed)),
+              topo_hash(other.topo_hash),
+              last_use(other.last_use) {}
         stored_graph & operator=(stored_graph && other) noexcept {
             buffer = std::move(other.buffer);
             graph = other.graph;
             uid.store(other.uid.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            topo_hash = other.topo_hash;
+            last_use = other.last_use;
             return *this;
         }
         // Non-copyable (atomic member)
         stored_graph(const stored_graph &) = delete;
         stored_graph & operator=(const stored_graph &) = delete;
+    };
+
+    // I2-GRAPH-CACHE-MULTISLOT (E-2 follow-up): per-device multi-slot graph cache.
+    //
+    // E-2's rebind protocol makes an identical-topology rebuild take the async
+    // recompute path, but it is unreachable while each device caches ONE graph:
+    // the MTP iteration rotates three topologies (draft / verify / MTP-head) on
+    // the single slot, so the post-rollback rebuild never matches the cached
+    // topology (0 REBIND events — e2-recompute-rebind.md verdict PARTIAL). This
+    // cache holds a small LRU of graphs per device keyed by topology hash so the
+    // verify graph survives the draft/MTP-head churn and the rebind path becomes
+    // reachable.
+    //
+    // Concurrency mirrors the single-slot design: slots are read under compute_mtx
+    // (recompute_allowed / try_enqueue_graph_recompute) and written by the compute
+    // worker (graph_compute / graph_recompute) or under compute_mtx (drain /
+    // invalidate). last_use / tick are plain integers with the same benign race
+    // as topo_hash today (worst case: a stale LRU eviction choice — never a
+    // correctness issue, since the topology gate is checked on every rebind).
+    struct rpc_device_graph_cache {
+        std::vector<stored_graph> slots;
+        uint64_t                  tick = 0; // monotonic recency counter
+
+        stored_graph * empty_slot() {
+            for (auto & s : slots) {
+                if (s.graph == nullptr) {
+                    return &s;
+                }
+            }
+            return nullptr;
+        }
+        stored_graph * lru_slot() {
+            stored_graph * best = nullptr;
+            for (auto & s : slots) {
+                if (s.graph == nullptr) {
+                    continue;
+                }
+                if (best == nullptr || s.last_use < best->last_use) {
+                    best = &s;
+                }
+            }
+            return best;
+        }
+        stored_graph * mru_slot() {
+            stored_graph * best = nullptr;
+            for (auto & s : slots) {
+                if (s.graph == nullptr) {
+                    continue;
+                }
+                if (best == nullptr || s.last_use > best->last_use) {
+                    best = &s;
+                }
+            }
+            return best;
+        }
+        stored_graph * by_topo(uint64_t topo) {
+            for (auto & s : slots) {
+                if (s.graph != nullptr && s.topo_hash == topo) {
+                    return &s;
+                }
+            }
+            return nullptr;
+        }
+        const stored_graph * by_topo(uint64_t topo) const {
+            for (const auto & s : slots) {
+                if (s.graph != nullptr && s.topo_hash == topo) {
+                    return &s;
+                }
+            }
+            return nullptr;
+        }
     };
 
     // Split buffer metadata type (shared with rpc_connection)
@@ -3652,8 +3790,12 @@ private:
     std::vector<ggml_backend_t> backends;
     const char * cache_dir;
 
-    // store the last computed graph for each backend
-    std::vector<stored_graph> stored_graphs;
+    // store the last computed graph for each backend.
+    // I2-GRAPH-CACHE-MULTISLOT: each entry is now a small LRU of graphs per
+    // device (slots keyed by topology hash) so a topology rotation (MTP
+    // draft/verify/MTP-head) cannot evict a graph that a later rebuild needs
+    // for the E-2 rebind path.
+    std::vector<rpc_device_graph_cache> stored_graphs;
     stored_graph all_graph; // D4.5: dedicated ALL-mode storage
     std::unordered_map<uint64_t, ggml_backend_sched_t> all_scheds;
 
@@ -4597,13 +4739,24 @@ bool rpc_compute_engine::graph_compute(const std::vector<uint8_t> & input,
     const rpc_tensor * tensors = (const rpc_tensor *)src;
     LOG_DBG("[%s] device: %u, n_nodes: %u, n_tensors: %u\n", __func__, device, n_nodes, n_tensors);
 
+    // I2-GRAPH-CACHE-MULTISLOT: pick the slot to (re)build into — an empty slot
+    // if any, else the least-recently-used one. In the MTP rotation (draft /
+    // verify / MTP-head all full-computed in turn) the LRU is exactly the
+    // incoming topology, so each rebuild reuses its own slot and the other two
+    // stay cached for the E-2 rebind path.
+    rpc_device_graph_cache & cache = stored_graphs[device];
+    stored_graph * slot = cache.empty_slot();
+    if (slot == nullptr) {
+        slot = cache.lru_slot();
+    }
+    GGML_ASSERT(slot != nullptr && "graph cache must have at least one slot");
     size_t buf_size = ggml_tensor_overhead()*(n_nodes + n_tensors) + ggml_graph_overhead_custom(n_nodes, false);
-    if (stored_graphs[device].buffer.size() < buf_size) {
-        stored_graphs[device].buffer.resize(buf_size);
+    if (slot->buffer.size() < buf_size) {
+        slot->buffer.resize(buf_size);
     }
     struct ggml_init_params params = {
         /*.mem_size   =*/ buf_size,
-        /*.mem_buffer =*/ stored_graphs[device].buffer.data(),
+        /*.mem_buffer =*/ slot->buffer.data(),
         /*.no_alloc   =*/ true,
     };
     ggml_context_ptr ctx_ptr { ggml_init(params) };
@@ -4635,7 +4788,23 @@ bool rpc_compute_engine::graph_compute(const std::vector<uint8_t> & input,
     // (filter_null_src_nodes mutates node ops, so a post-filter hash would not
     // match the client's pre-filter hash). This is the value the rebind gate
     // compares against the request's rebind_topo_hash.
-    stored_graphs[device].topo_hash = ggml_graph_topology_hash(graph);
+    slot->topo_hash = ggml_graph_topology_hash(graph);
+    // I2-GRAPH-CACHE-MULTISLOT: keep at most one slot per topology. If the LRU
+    // evicted the wrong slot and this topology is already cached elsewhere, move
+    // the fresh graph into the matching slot (buffer + graph + uid + topo move
+    // as a unit via std::swap) and release the candidate as an empty slot. In
+    // the pure 3-topology rotation the LRU candidate IS the matching topology,
+    // so this is a no-op; it only fires when a transient topology (e.g. prompt
+    // eval) interrupted the rotation.
+    stored_graph * existing = cache.by_topo(slot->topo_hash);
+    if (existing != nullptr && existing != slot) {
+        std::swap(*existing, *slot);
+        slot->graph = nullptr;
+        slot->uid.store(0, std::memory_order_release);
+        slot->topo_hash = 0;
+        slot->last_use = 0;
+        slot = existing;
+    }
     // Filter out nodes with null src data (non-RPC buffers on client)
     filter_null_src_nodes(graph);
 
@@ -4659,20 +4828,32 @@ bool rpc_compute_engine::graph_compute(const std::vector<uint8_t> & input,
     }
     GGML_ASSERT(status == GGML_STATUS_SUCCESS && "Unsuccessful graph computations are not supported with RPC");
     rpc_trace_emit("rpc_compute_engine::graph_compute", "server_compute", RPC_CMD_GRAPH_COMPUTE, input.size(), true, us);
-    // T2d: "free old graph on overwrite" — the previous stored_graphs[device].graph
-    // (if any) is pool-allocated: its bytes live inside stored_graphs[device].buffer,
-    // and ggml_init() on the next graph_compute() resets the pool offset to 0 so the
-    // new graph reclaims that memory in place. There is no separate heap object to
-    // free — calling free()/delete here would corrupt the pool. Dropping the pointer
-    // (by overwriting it below) is the correct "free". This is single-source ownership:
-    // the buffer pool owns the bytes, the pointer is a non-owning view. Verified no
-    // double-free: drain_and_invalidate() also only nulls pointers (never frees).
-    stored_graphs[device].graph = graph;
+    // T2d: "free old graph on overwrite" — the previous slot->graph (if any) is
+    // pool-allocated: its bytes live inside slot->buffer, and ggml_init() on the
+    // next graph_compute() resets the pool offset to 0 so the new graph reclaims
+    // that memory in place. There is no separate heap object to free — calling
+    // free()/delete here would corrupt the pool. Dropping the pointer (by
+    // overwriting it below) is the correct "free". This is single-source
+    // ownership: the buffer pool owns the bytes, the pointer is a non-owning
+    // view. Verified no double-free: drain_and_invalidate() also only nulls
+    // pointers (never frees).
+    slot->graph = graph;
     // F1 (T2a): reset the bound uid for this slot. The uid is learned lazily on
     // the first GRAPH_RECOMPUTE after a fresh compute; resetting here guarantees a
     // new graph (post-eviction or post-recompute-miss fallback) re-binds cleanly.
     // NIT-1: uid is atomic — release so dispatch threads see the reset.
-    stored_graphs[device].uid.store(0, std::memory_order_release);
+    slot->uid.store(0, std::memory_order_release);
+    // I2-GRAPH-CACHE-MULTISLOT: touch LRU recency (monotonic per-device tick).
+    slot->last_use = ++cache.tick;
+    size_t used = 0;
+    for (const auto & s : cache.slots) {
+        if (s.graph != nullptr) {
+            used++;
+        }
+    }
+    LOG_DBG("[%s] device: %u stored topo=%" PRIu64 " uid=%" PRIu64 " (cache %zu/%zu used)\n",
+            __func__, device, slot->topo_hash,
+            slot->uid.load(std::memory_order_relaxed), used, cache.slots.size());
     // issue 12: emit per-node timings for this sampled decode.
     if (sample_nodes && !node_timings.empty()) {
         rpc_write_node_timings_jsonl(node_timings);
@@ -4691,23 +4872,37 @@ bool rpc_compute_engine::recompute_allowed(const rpc_msg_graph_recompute_req & r
     if (device >= backends.size()) {
         return false;
     }
-    if (stored_graphs[device].graph == nullptr) {
-        return false;
-    }
+    const rpc_device_graph_cache & cache = stored_graphs[device];
     // E-2 (BUG-002a): a rebind request replaces the uid gate with a TOPOLOGY gate.
     // The client sends a fresh (generation-salted) uid for an identical-topology
     // rebuild; the cached graph is safe to rebind+replay iff its topology matches
     // the request's declared topology. topo_hash is captured at graph_compute
     // time BEFORE filter_null_src_nodes so it matches the client's hash exactly.
+    // I2-GRAPH-CACHE-MULTISLOT: the gate scans the per-device slot LRU — a
+    // rebuild of ANY cached topology (draft/verify/MTP-head) can rebind.
     if (!request.rebind_inputs.empty()) {
         if (request.rebind_topo_hash == 0) {
             return false;
         }
-        return stored_graphs[device].topo_hash == request.rebind_topo_hash;
+        return cache.by_topo(request.rebind_topo_hash) != nullptr;
     }
     // NIT-1: uid is std::atomic<uint64_t> — read with acquire ordering so the
     // dispatch thread sees the latest value written by the compute worker.
-    uint64_t slot_uid = stored_graphs[device].uid.load(std::memory_order_acquire);
+    // I2-GRAPH-CACHE-MULTISLOT: a plain recompute refers to the graph the client
+    // just computed — the most recently used slot.
+    const stored_graph * slot = nullptr;
+    for (const auto & s : cache.slots) {
+        if (s.graph == nullptr) {
+            continue;
+        }
+        if (slot == nullptr || s.last_use > slot->last_use) {
+            slot = &s;
+        }
+    }
+    if (slot == nullptr) {
+        return false;
+    }
+    uint64_t slot_uid = slot->uid.load(std::memory_order_acquire);
     // F1 (T2a): uid gate. A zero hash means an old (pre-T2a) client that does
     // not send a hash — treat as unknown and allow (legacy behavior). Non-zero
     // hash must match the bound uid, or the slot must be unbound (lazy-bind on
@@ -4778,7 +4973,20 @@ bool rpc_compute_engine::graph_recompute(const rpc_msg_graph_recompute_req & req
     if (device >= backends.size()) {
         return false;
     }
-    if (stored_graphs[device].graph == nullptr) {
+    rpc_device_graph_cache & cache = stored_graphs[device];
+    // I2-GRAPH-CACHE-MULTISLOT: locate the slot the request refers to. A rebind
+    // request names its topology explicitly (rebind_topo_hash); a plain recompute
+    // refers to the graph the client just computed — the most recently used slot.
+    // The slot may have been evicted between try_enqueue and this worker
+    // execution (another graph_compute ran in between): that is a miss and the
+    // client falls back to a full GRAPH_COMPUTE — safe.
+    stored_graph * slot = nullptr;
+    if (!request.rebind_inputs.empty()) {
+        slot = cache.by_topo(request.rebind_topo_hash);
+    } else {
+        slot = cache.mru_slot();
+    }
+    if (slot == nullptr || slot->graph == nullptr) {
         return false;
     }
     // F1 (T2a): uid verification. Lazy-bind on first recompute for this slot;
@@ -4788,7 +4996,7 @@ bool rpc_compute_engine::graph_recompute(const rpc_msg_graph_recompute_req & req
     // NIT-1: uid is atomic — use acquire/release for proper synchronization
     // with the compute worker thread that resets uid in graph_compute().
     if (request.graph_hash != 0) {
-        uint64_t slot_uid = stored_graphs[device].uid.load(std::memory_order_acquire);
+        uint64_t slot_uid = slot->uid.load(std::memory_order_acquire);
         if (!request.rebind_inputs.empty()) {
             // E-2 (BUG-002a): rebind request. try_enqueue_graph_recompute already
             // applied the rebind + re-bound the slot uid under compute_mtx, so
@@ -4797,24 +5005,27 @@ bool rpc_compute_engine::graph_recompute(const rpc_msg_graph_recompute_req & req
             // rebind is idempotent, and re-binding the slot uid keeps subsequent
             // steady-state recomputes of the new uid on the hit path.
             if (slot_uid != request.graph_hash) {
-                if (!rebind_graph_inputs(stored_graphs[device].graph, request.rebind_inputs)) {
+                if (!rebind_graph_inputs(slot->graph, request.rebind_inputs)) {
                     LOG_DBG("[%s] device: %u rebind failed (size mismatch) — recompute miss\n",
                             __func__, device);
                     return false;
                 }
-                stored_graphs[device].uid.store(request.graph_hash, std::memory_order_release);
+                slot->uid.store(request.graph_hash, std::memory_order_release);
             }
         } else if (slot_uid == 0) {
             // First recompute since the last graph_compute for this slot: bind.
-            stored_graphs[device].uid.store(request.graph_hash, std::memory_order_release);
+            slot->uid.store(request.graph_hash, std::memory_order_release);
         } else if (slot_uid != request.graph_hash) {
             LOG_DBG("[%s] device: %u uid mismatch: stored=%" PRIu64 " req=%" PRIu64 " (recompute miss)\n",
                     __func__, device, slot_uid, request.graph_hash);
             return false;
         }
     }
-    ggml_cgraph * graph = stored_graphs[device].graph;
-    LOG_DBG("[%s] device: %u uid=%" PRIu64 "\n", __func__, device, stored_graphs[device].uid.load(std::memory_order_relaxed));
+    ggml_cgraph * graph = slot->graph;
+    // I2-GRAPH-CACHE-MULTISLOT: touch LRU recency (the slot was just used).
+    slot->last_use = ++cache.tick;
+    LOG_DBG("[%s] device: %u topo=%" PRIu64 " uid=%" PRIu64 "\n", __func__, device,
+            slot->topo_hash, slot->uid.load(std::memory_order_relaxed));
 
     // issue 12: per-node timing on recompute path (same sampling as graph_compute).
     uint64_t us = 0;
@@ -5272,6 +5483,21 @@ bool rpc_compute_engine::try_enqueue_graph_recompute(const rpc_msg_graph_recompu
     if (!recompute_allowed(request)) {
         return false;
     }
+    // I2-GRAPH-CACHE-MULTISLOT: resolve the target slot. A rebind request names
+    // its topology explicitly (recompute_allowed just verified it is cached); a
+    // plain recompute targets the most recently used slot (the graph the client
+    // just computed). Both lookups are under compute_mtx, so the slot cannot be
+    // evicted underneath us.
+    rpc_device_graph_cache & cache = stored_graphs[request.device];
+    stored_graph * slot = nullptr;
+    if (!request.rebind_inputs.empty()) {
+        slot = cache.by_topo(request.rebind_topo_hash);
+    } else {
+        slot = cache.mru_slot();
+    }
+    if (slot == nullptr || slot->graph == nullptr) {
+        return false;
+    }
     // E-2 (BUG-002a): apply the rebind EAGERLY under compute_mtx — the cached
     // graph is stable here (graph_compute also runs under compute_mtx), so the
     // replayed graph reads the rebound inputs. Re-bind the slot uid to the new
@@ -5282,11 +5508,14 @@ bool rpc_compute_engine::try_enqueue_graph_recompute(const rpc_msg_graph_recompu
         LOG_DBG("[%s] device: %u REBIND %zu inputs topo=%" PRIu64 " uid=%" PRIu64 " — cached graph rebound before replay\n",
                 __func__, request.device, request.rebind_inputs.size(),
                 request.rebind_topo_hash, request.graph_hash);
-        if (!rebind_graph_inputs(stored_graphs[request.device].graph, request.rebind_inputs)) {
+        if (!rebind_graph_inputs(slot->graph, request.rebind_inputs)) {
             return false;
         }
-        stored_graphs[request.device].uid.store(request.graph_hash, std::memory_order_release);
+        slot->uid.store(request.graph_hash, std::memory_order_release);
     }
+    // I2-GRAPH-CACHE-MULTISLOT: touch LRU recency (this slot is about to be
+    // replayed; the tick is authoritative here, under compute_mtx).
+    slot->last_use = ++cache.tick;
     // Directly enqueue the job (we already hold the lock, so we can't call
     // submit_compute_job which also tries to lock). Inline the enqueue.
     compute_inflight++;
@@ -5346,12 +5575,18 @@ void rpc_compute_engine::drain_and_invalidate() {
     compute_cv.wait(lock, [this] {
         return compute_queue.empty() && compute_inflight.load() == 0;
     });
-    for (auto & sg : stored_graphs) {
-        // Graph nodes live in sg.buffer (mem pool owned by the vector); we do
+    for (auto & cache : stored_graphs) {
+        // Graph nodes live in slot.buffer (mem pool owned by the vector); we do
         // not free them individually — just drop the pointer so recompute_allowed
         // sees a miss and the next graph_compute reuses the pool.
-        sg.graph = nullptr;
-        sg.uid.store(0, std::memory_order_release);
+        // I2-GRAPH-CACHE-MULTISLOT: clear every slot of the per-device LRU.
+        for (auto & sg : cache.slots) {
+            sg.graph = nullptr;
+            sg.uid.store(0, std::memory_order_release);
+            sg.topo_hash = 0;
+            sg.last_use = 0;
+        }
+        cache.tick = 0;
     }
     all_graph.graph = nullptr;
     all_graph.uid.store(0, std::memory_order_release);
@@ -5377,9 +5612,15 @@ void rpc_compute_engine::invalidate_cached_graphs() {
     // freed here — they remain owned by drain_and_invalidate() and the
     // destructor; freeing them would double-free.
     std::lock_guard<std::mutex> lock(compute_mtx);
-    for (auto & sg : stored_graphs) {
-        sg.graph = nullptr;
-        sg.uid.store(0, std::memory_order_release);
+    // I2-GRAPH-CACHE-MULTISLOT: clear every slot of the per-device LRU.
+    for (auto & cache : stored_graphs) {
+        for (auto & sg : cache.slots) {
+            sg.graph = nullptr;
+            sg.uid.store(0, std::memory_order_release);
+            sg.topo_hash = 0;
+            sg.last_use = 0;
+        }
+        cache.tick = 0;
     }
     all_graph.graph = nullptr;
     all_graph.uid.store(0, std::memory_order_release);
