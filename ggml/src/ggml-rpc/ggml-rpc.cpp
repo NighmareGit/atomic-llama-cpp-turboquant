@@ -4674,6 +4674,59 @@ static bool rpc_vvram_use_lru() {
     return cached;
 }
 
+// VVRAM trace capture (GGML_RPC_VVRAM_TRACE=1): emit one JSONL event to the
+// trace stream. Thread-safe (mutex-guarded). Zero-cost when the env gate is
+// unset — the static bool is checked once per call and the hot path is a
+// single branch. Format = the existing v12_replay JSONL schema (see
+// .scratch/research/v13-l2-trace-format.md).
+static bool rpc_vvram_trace_enabled() {
+    static bool cached = []() {
+        const char * e = std::getenv("GGML_RPC_VVRAM_TRACE");
+        return e && e[0] == '1';
+    }();
+    return cached;
+}
+
+namespace {
+static std::mutex g_vvram_trace_mtx;
+static FILE * g_vvram_trace_file = nullptr;
+static bool g_vvram_trace_file_initialized = false;
+}
+
+static FILE * vvram_trace_stream() {
+    if (!g_vvram_trace_file_initialized) {
+        g_vvram_trace_file_initialized = true;
+        const char * path = std::getenv("GGML_RPC_VVRAM_TRACE_PATH");
+        if (path && path[0]) {
+            g_vvram_trace_file = fopen(path, "w");
+        }
+        // default: stderr (no fopen needed)
+    }
+    return g_vvram_trace_file ? g_vvram_trace_file : stderr;
+}
+
+static void vvram_trace_emit(const char * ev, const char * name, int layer,
+                              uint64_t size, int batch, bool hit,
+                              uint64_t vram_used, uint64_t vram_budget,
+                              uint64_t vram_free, const char * reason) {
+    if (!rpc_vvram_trace_enabled()) return;
+    FILE * f = vvram_trace_stream();
+    if (!f) return;
+    std::lock_guard<std::mutex> lock(g_vvram_trace_mtx);
+    fprintf(f, "{\"t\":%" PRIu64 ",\"ev\":\"%s\"", (uint64_t)ggml_time_us(), ev);
+    if (name) fprintf(f, ",\"name\":\"%s\"", name);
+    fprintf(f, ",\"layer\":%d", layer);
+    if (size > 0) fprintf(f, ",\"size\":%" PRIu64 "", size);
+    if (batch >= 0) fprintf(f, ",\"batch\":%d", batch);
+    if (hit) fprintf(f, ",\"hit\":true");
+    if (vram_used > 0) fprintf(f, ",\"vram_used\":%" PRIu64 "", vram_used);
+    if (vram_budget > 0) fprintf(f, ",\"vram_budget\":%" PRIu64 "", vram_budget);
+    if (vram_free > 0) fprintf(f, ",\"vram_free\":%" PRIu64 "", vram_free);
+    if (reason) fprintf(f, ",\"reason\":\"%s\"", reason);
+    fprintf(f, "}\n");
+    fflush(f);
+}
+
 // [VVRAM-CLOSE] diagnostic: record every buffer base pointer that gets freed,
 // so the get_tensor discriminator can tell whether the output buffer was freed
 // between VVRAM-DIAG (inside graph_compute) and GET_TENSOR. A set of freed
@@ -4931,6 +4984,9 @@ static ggml_backend_buffer_t vvram_stage_tensor_lru(
             if (!known) {
                 e.tensors.push_back(src);
             }
+            // Trace: cache hit (already staged).
+            vvram_trace_emit("access", src->name, layer, nbytes, e.layer, true,
+                             lru_vram_used, lru_vram_budget, 0, nullptr);
             return e.stage;
         }
     }
@@ -4954,7 +5010,7 @@ static ggml_backend_buffer_t vvram_stage_tensor_lru(
     // shared tensors (output_norm/output.weight, extracted layer -1) are staged
     // inside the last batch and must stay until that batch computes.
     const size_t evict_margin = 64 * 1024 * 1024;
-    auto evict_one = [&]() {
+    auto evict_one = [&](const char * reason) {
         // Find the least-recently-used entry from an older batch.
         size_t lru_idx = (size_t) -1;
         uint64_t lru_time = UINT64_MAX;
@@ -4990,13 +5046,17 @@ static ggml_backend_buffer_t vvram_stage_tensor_lru(
         // Restore every redirected tensor's pointer to RAM.
         vvram_entry_restore(evict);
         lru_vram_used -= evict.nbytes;
+        // Trace: eviction event (reason = "budget" or "physical").
+        vvram_trace_emit("evict", evict.tensors.front()->name, evict.layer,
+                         evict.nbytes, evict.layer, false, lru_vram_used,
+                         lru_vram_budget, 0, reason);
         ggml_backend_buffer_free(evict.stage);
         lru_cache.erase(lru_cache.begin() + lru_idx);
         return true;
     };
 
     while (lru_vram_used + nbytes > lru_vram_budget) {
-        if (!evict_one()) {
+        if (!evict_one("budget")) {
             break;
         }
     }
@@ -5009,7 +5069,7 @@ static ggml_backend_buffer_t vvram_stage_tensor_lru(
         if (vram_free >= nbytes + evict_margin) {
             break;
         }
-        if (!evict_one()) {
+        if (!evict_one("physical")) {
             break;
         }
     }
@@ -5048,6 +5108,10 @@ static ggml_backend_buffer_t vvram_stage_tensor_lru(
     // batches (see evict_one above).
     lru_cache.push_back({stage, ram_buf, offset, nbytes, batch_layer, ++lru_counter, {src}});
     lru_vram_used += nbytes;
+
+    // Trace: new stage (miss → RAM→VRAM copy just completed).
+    vvram_trace_emit("access", src->name, layer, nbytes, batch_layer, false,
+                     lru_vram_used, lru_vram_budget, 0, nullptr);
 
     GGML_LOG_DEBUG("[VVRAM-LRU] staged tensor %s (%zu MiB, layer %d) RAM -> VRAM (vram_used=%zu/%zu MiB)\n",
         src->name, nbytes / (1024*1024), batch_layer,
@@ -5288,6 +5352,14 @@ static bool vvram_compute_graph_layered(
     for (auto & [layer, node_indices] : layer_nodes) {
         if (node_indices.empty()) continue;
         GGML_LOG_DEBUG("[VVRAM-LAYERED] processing layer %d (%zu nodes)\n", layer, node_indices.size());
+
+        // Trace: per-layer stage event with current physical free VRAM.
+        {
+            size_t vram_free_now = 0, vram_total_now = 0;
+            if (dev) ggml_backend_dev_memory(dev, &vram_free_now, &vram_total_now);
+            vvram_trace_emit("stage", nullptr, layer, 0, layer, false,
+                             lru_vram_used, vram_budget, vram_free_now, nullptr);
+        }
 
         // Guard: the whole batch must fit the VRAM budget. LRU eviction only
         // evicts the least-recently-used entry; if a single batch's weights
