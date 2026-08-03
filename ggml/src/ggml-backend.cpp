@@ -992,6 +992,72 @@ enum ggml_status ggml_backend_graph_plan_compute(ggml_backend_t backend, ggml_ba
     return backend->iface.graph_plan_compute(backend, plan);
 }
 
+// [VVRAM-DIVERGE] divergence locator: dump per-layer hidden states (l_out-N) and
+// the final logits (result_output) during the FIRST forward pass (prefill) so the
+// direct-fit and layered >VRAM paths can be compared layer-by-layer. Gated on
+// GGML_VVRAM_DIVERGE=1. The first pass is identified by tracking which l_out
+// layers have been seen; when l_out-0 appears a second time the decode loop has
+// started and dumping stops. Works uniformly for both paths because both funnel
+// through ggml_backend_graph_compute_async (direct via the sched, layered via the
+// sync wrapper). Each tensor is written as a text header line followed by raw f32
+// bytes into GGML_VVRAM_DIVERGE_DIR. Plain-C so it builds as either C or C++.
+static bool g_vvram_diverge_stop = false;
+#define VVRAM_DIVERGE_MAX_LAYERS 256
+static bool g_vvram_diverge_seen[VVRAM_DIVERGE_MAX_LAYERS];
+static unsigned g_vvram_diverge_nseen = 0;
+
+static void vvram_diverge_dump(struct ggml_cgraph * graph) {
+    if (g_vvram_diverge_stop) return;
+    const char * dir = getenv("GGML_VVRAM_DIVERGE_DIR");
+    if (!dir || !dir[0]) return;
+
+    for (int i = 0; i < graph->n_nodes; i++) {
+        const struct ggml_tensor * t = graph->nodes[i];
+        if (!t || !t->name[0] || !t->data) continue;
+
+        bool is_lout = (strncmp(t->name, "l_out-", 6) == 0);
+        bool is_logits = (strcmp(t->name, "result_output") == 0);
+        if (!is_lout && !is_logits) continue;
+
+        int layer = -1;
+        if (is_lout) layer = atoi(t->name + 6);
+
+        // Stop when a layer repeats (decode loop started). Don't dump decode states.
+        if (is_lout && layer >= 0 && layer < VVRAM_DIVERGE_MAX_LAYERS && g_vvram_diverge_seen[layer]) {
+            g_vvram_diverge_stop = true;
+            fprintf(stderr, "[VVRAM-DIVERGE] stop: repeat l_out-%d (decode started), prefill capture complete (%u layers)\n",
+                    layer, g_vvram_diverge_nseen);
+            return;
+        }
+
+        // Copy device tensor to host.
+        const size_t nbytes = ggml_nbytes(t);
+        void * buf = malloc(nbytes);
+        if (!buf) continue;
+        ggml_backend_tensor_get(t, buf, 0, nbytes);
+
+        char path[1024];
+        if (is_lout) snprintf(path, sizeof(path), "%s/layer-%d.bin", dir, layer);
+        else        snprintf(path, sizeof(path), "%s/logits.bin", dir);
+
+        FILE * f = fopen(path, "wb");
+        if (!f) { free(buf); continue; }
+        fprintf(f, "%s ne0=%lld ne1=%lld ne2=%lld ne3=%lld type=%d\n",
+                t->name, (long long)t->ne[0], (long long)t->ne[1],
+                (long long)t->ne[2], (long long)t->ne[3], t->type);
+        fwrite(buf, 1, nbytes, f);
+        fclose(f);
+        free(buf);
+
+        if (is_lout && layer >= 0 && layer < VVRAM_DIVERGE_MAX_LAYERS) {
+            if (!g_vvram_diverge_seen[layer]) g_vvram_diverge_nseen++;
+            g_vvram_diverge_seen[layer] = true;
+        }
+        fprintf(stderr, "[VVRAM-DIVERGE] dumped %s ne0=%lld ne1=%lld type=%d -> %s\n",
+                t->name, (long long)t->ne[0], (long long)t->ne[1], t->type, path);
+    }
+}
+
 enum ggml_status ggml_backend_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
     enum ggml_status err = ggml_backend_graph_compute_async(backend, cgraph);
     ggml_backend_synchronize(backend);
@@ -1000,7 +1066,15 @@ enum ggml_status ggml_backend_graph_compute(ggml_backend_t backend, struct ggml_
 
 enum ggml_status ggml_backend_graph_compute_async(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
     GGML_ASSERT(backend);
-    return backend->iface.graph_compute(backend, cgraph);
+    enum ggml_status err = backend->iface.graph_compute(backend, cgraph);
+    // N5: gate the sync on GGML_VVRAM_DIVERGE_DIR too — the sync runs on the
+    // caller's hot path whenever GGML_VVRAM_DIVERGE is set; with no dump dir it
+    // is pure overhead. vvram_diverge_dump() re-checks DIR inside as well.
+    if (err == GGML_STATUS_SUCCESS && getenv("GGML_VVRAM_DIVERGE") && getenv("GGML_VVRAM_DIVERGE_DIR")) {
+        ggml_backend_synchronize(backend);
+        vvram_diverge_dump(cgraph);
+    }
+    return err;
 }
 
 bool ggml_backend_supports_op(ggml_backend_t backend, const struct ggml_tensor * op) {

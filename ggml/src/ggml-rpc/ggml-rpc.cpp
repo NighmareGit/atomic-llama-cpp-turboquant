@@ -3552,6 +3552,17 @@ private:
 static bool rpc_vvram_use_lru();
 static size_t rpc_vvram_staging_headroom(size_t vram_total);
 
+// [VVRAM-CLOSE] forward declarations for the discriminator's freed-buffer
+// tracker (defined later, used by free_buffer/get_tensor earlier in the file).
+static void vvram_close_record_free(ggml_backend_buffer_t buffer);
+static bool vvram_close_was_freed(ggml_backend_buffer_t buffer);
+// [VVRAM-CLOSE] diagnostics gate: GGML_VVRAM_CLOSE_DEBUG=1 enables the
+// per-GET_TENSOR / per-free / per-cleanup prints. GET_TENSOR is the decode hot
+// path — every print is an unbuffered stderr write() syscall plus raw inference
+// data to stderr — so the default is OFF (code-review BLK-1/N7; follows the
+// fork's GGML_RPC_DEBUG env-var convention).
+static bool rpc_vvram_close_debug();
+
 class rpc_connection {
 public:
     rpc_connection(std::shared_ptr<rpc_compute_engine> engine, const char * cache_dir)
@@ -3957,6 +3968,12 @@ bool rpc_connection::free_buffer(const rpc_msg_free_buffer_req & request) {
         std::lock_guard<std::mutex> lock(buffers_mtx);
         was_ram = (vvram_ram_buffers.find(buffer) != vvram_ram_buffers.end());
     }
+    // N7: gated behind GGML_VVRAM_CLOSE_DEBUG=1 (default OFF).
+    if (rpc_vvram_close_debug()) {
+        fprintf(stderr, "[VVRAM-CLOSE-FREE] free_buffer base=%p size=%zu was_ram=%d\n",
+                (void*)ggml_backend_buffer_get_base(buffer), buf_size, (int)was_ram);
+    }
+    vvram_close_record_free(buffer);
     ggml_backend_buffer_free(buffer);
     {
         std::lock_guard<std::mutex> lock(buffers_mtx);
@@ -4351,7 +4368,48 @@ bool rpc_connection::get_tensor(const rpc_msg_get_tensor_req & request, std::vec
         GGML_LOG_ERROR("[%s] error deserializing tensor\n", __func__);
         return false;
     }
+    bool get_buf_host = tensor->buffer ? ggml_backend_buffer_is_host(tensor->buffer) : false;
+    bool get_in_ram = tensor->buffer ? vvram_ram_buffers.count(tensor->buffer) : false;
+    // BLK-1: gated behind GGML_VVRAM_CLOSE_DEBUG=1 (default OFF) — GET_TENSOR is
+    // the decode hot path; no prints (or raw inference data) by default.
+    if (rpc_vvram_close_debug()) {
+        fprintf(stderr, "[VVRAM-GET-TENSOR] name=%s buf_host=%d in_ram_set=%d data=%p offset=%" PRIu64 " size=%" PRIu64 " buf_base=%p buf_size=%zu\n",
+                tensor->name, (int)get_buf_host, (int)get_in_ram, tensor->data, request.offset, request.size,
+                (void*)ggml_backend_buffer_get_base(tensor->buffer), ggml_backend_buffer_get_size(tensor->buffer));
+    }
     LOG_DBG("[%s] buffer: %p, data: %p, offset: %" PRIu64 ", size: %" PRIu64 "\n", __func__, (void*)tensor->buffer, tensor->data, request.offset, request.size);
+
+    // [VVRAM-CLOSE] discriminator: was the output buffer freed between
+    // VVRAM-DIAG (inside graph_compute) and this GET_TENSOR? If its base is in
+    // the freed set -> H-lifetime CONFIRMED (memory freed/reused -> garbage).
+    // If NOT freed, direct-deref distinguishes copy-path bug (memory valid here
+    // but ggml_backend_tensor_get copy produces garbage) from H-lifetime.
+    // BLK-1: the whole discriminator block is gated (hot path). BLK-2: the
+    // direct-deref must only run on HOST buffers — tensor->data on a VRAM
+    // (device) buffer is a device address; host-derefing it segfaults on the
+    // CUDA servers. The gate AND the host guard are both required.
+    if (rpc_vvram_close_debug()) {
+        bool get_buf_freed = vvram_close_was_freed(tensor->buffer);
+        bool get_buf_alive = false;
+        {
+            std::lock_guard<std::mutex> lock(buffers_mtx);
+            get_buf_alive = (buffers.count(tensor->buffer) > 0);
+        }
+        fprintf(stderr, "[VVRAM-CLOSE] buffer_freed=%d buffer_alive=%d\n", (int)get_buf_freed, (int)get_buf_alive);
+        if (get_buf_freed) {
+            fprintf(stderr, "[VVRAM-CLOSE] RESULT=H-lifetime (output buffer freed before GET_TENSOR) -> skip deref\n");
+        } else if (get_buf_alive && get_buf_host && tensor->data && request.size >= sizeof(float)) {
+            const size_t doff = (size_t)((const char *) tensor->data - (const char *) ggml_backend_buffer_get_base(tensor->buffer));
+            if (doff + (size_t) request.size <= ggml_backend_buffer_get_size(tensor->buffer)) {
+                const float * gdp = (const float *)((const char *) tensor->data + (size_t) request.offset);
+                int gn = (int)(request.size / sizeof(float));
+                if (gn > 9) gn = 9;
+                fprintf(stderr, "[VVRAM-CLOSE] direct-deref first-8=");
+                for (int j = 0; j < gn; j++) fprintf(stderr, "%s%g", j ? "," : "", gdp[j]);
+                fprintf(stderr, "\n");
+            }
+        }
+    }
 
     // V0 row-split fix: CUDA split buffers store device pointers in
     // tensor->extra->data_device[id], not in tensor->data. Use the buffer's
@@ -4380,6 +4438,17 @@ bool rpc_connection::get_tensor(const rpc_msg_get_tensor_req & request, std::vec
 
     response.resize(request.size, 0);
     ggml_backend_tensor_get(tensor, response.data(), request.offset, request.size);
+    // [VVRAM-CLOSE] print the bytes the server actually copied into the response,
+    // to localize server-side copy bug vs in-transit/client-side corruption.
+    // BLK-1: gated (hot path).
+    if (rpc_vvram_close_debug() && response.size() >= sizeof(float)) {
+        const float * rp = (const float *) response.data();
+        int rn = (int)(response.size() / sizeof(float));
+        if (rn > 9) rn = 9;
+        fprintf(stderr, "[VVRAM-CLOSE] response-bytes first-8=");
+        for (int j = 0; j < rn; j++) fprintf(stderr, "%s%g", j ? "," : "", rp[j]);
+        fprintf(stderr, "\n");
+    }
     return true;
 }
 
@@ -4605,6 +4674,37 @@ static bool rpc_vvram_use_lru() {
     return cached;
 }
 
+// [VVRAM-CLOSE] diagnostic: record every buffer base pointer that gets freed,
+// so the get_tensor discriminator can tell whether the output buffer was freed
+// between VVRAM-DIAG (inside graph_compute) and GET_TENSOR. A set of freed
+// base pointers (with a mutex) shared across cleanup()/free_buffer()/get_tensor.
+namespace {
+static std::mutex g_vvram_close_free_mtx;
+static std::unordered_set<void *> g_vvram_close_freed_bases;
+static bool g_vvram_close_recording = true; // set false once discriminator done
+}
+static void vvram_close_record_free(ggml_backend_buffer_t buffer) {
+    if (!buffer || !g_vvram_close_recording) return;
+    void * base = (void *) ggml_backend_buffer_get_base(buffer);
+    std::lock_guard<std::mutex> lock(g_vvram_close_free_mtx);
+    g_vvram_close_freed_bases.insert(base);
+}
+static bool vvram_close_was_freed(ggml_backend_buffer_t buffer) {
+    if (!buffer) return false;
+    void * base = (void *) ggml_backend_buffer_get_base(buffer);
+    std::lock_guard<std::mutex> lock(g_vvram_close_free_mtx);
+    return g_vvram_close_freed_bases.count(base) > 0;
+}
+// [VVRAM-CLOSE] diagnostics gate (defined here, forward-declared above so
+// free_buffer/get_tensor — earlier in the file — can use it). Default OFF.
+static bool rpc_vvram_close_debug() {
+    static bool cached = []() {
+        const char * e = std::getenv("GGML_VVRAM_CLOSE_DEBUG");
+        return e && e[0] == '1';
+    }();
+    return cached;
+}
+
 // VVRAM LRU: staging budget as a percentage of total VRAM (env
 // GGML_RPC_VVRAM_LRU_BUDGET_PCT, default 60). Cached. Shared by:
 //   - vvram_compute_graph_layered — the logical LRU staging budget (max bytes
@@ -4635,8 +4735,18 @@ static int rpc_vvram_lru_budget_pct() {
 static size_t rpc_vvram_staging_headroom(size_t vram_total) {
     const int budget_pct = rpc_vvram_lru_budget_pct();
     size_t headroom_pct = (budget_pct < 100) ? (size_t)(100 - budget_pct) : 0;
-    if (headroom_pct > 6) {
-        headroom_pct = 6;
+    // [VVRAM-DIVERGE] the 6% cap keeps the 35B on the direct path (it fits in
+    // VRAM with ~2 GiB spare). To force the layered >VRAM path for the
+    // divergence test, raise the cap via GGML_VVRAM_DIVERGE_HEADROOM_CAP.
+    int cap = 6;
+    const char * cap_env = std::getenv("GGML_VVRAM_DIVERGE_HEADROOM_CAP");
+    if (cap_env && cap_env[0]) {
+        cap = atoi(cap_env);
+        if (cap < 0) cap = 0;
+        if (cap > 100) cap = 100;
+    }
+    if (headroom_pct > (size_t) cap) {
+        headroom_pct = (size_t) cap;
     }
     return vram_total * headroom_pct / 100;
 }
@@ -4754,8 +4864,28 @@ struct vvram_staging_entry {
     size_t nbytes;                 // tensor size
     int layer;                     // layer number (-1 for shared)
     uint64_t last_use;             // monotonic counter for LRU
-    struct ggml_tensor * tensor;    // the tensor this entry tracks
+    // L0-T2 (defect A): EVERY tensor redirected to this stage is tracked here,
+    // not just the first one. Alias views (e.g. "cache_k_l0" leaf and
+    // "cache_k_l0 (view)" node output — same RAM buffer + offset) all get
+    // redirected to the same stage, and eviction/cleanup must restore ALL of
+    // them to their RAM pointers. Restoring only the first leaves the aliases
+    // dangling into the freed stage (use-after-free -> reads return another
+    // tensor's data). The first staged tensor is tensors.front().
+    std::vector<ggml_tensor *> tensors;
 };
+
+// L0-T2 (defect A): restore EVERY tensor redirected to a stage back to its RAM
+// pointer. Alias views (same RAM buffer + offset, different tensor object) are
+// all tracked in the entry's tensors[]; eviction AND the layered-compute exit
+// cleanup must restore all of them, or the aliases keep dangling pointers into
+// the freed staging buffer (use-after-free -> reads return another tensor's
+// data). Shared by vvram_stage_tensor_lru and vvram_compute_graph_layered.
+static void vvram_entry_restore(vvram_staging_entry & e) {
+    for (auto * t : e.tensors) {
+        t->buffer = e.ram_buf;
+        t->data = (char *) ggml_backend_buffer_get_base(e.ram_buf) + e.ram_offset;
+    }
+}
 
 // VVRAM LRU eviction: stage a single tensor with LRU eviction.
 // Maintains a VRAM budget; evicts least-recently-used staging buffers when full.
@@ -4774,18 +4904,33 @@ static ggml_backend_buffer_t vvram_stage_tensor_lru(
     size_t offset = (size_t)src->data - (size_t)ggml_backend_buffer_get_base(src->buffer);
     int layer = vvram_extract_layer(src->name);
 
-    // Check if already staged (dedup by buffer+offset). NOTE: the caller only
-    // invokes us for tensors whose buffer is still in the RAM-tier set, so this
-    // fires for aliases of an already-staged tensor (same RAM buffer + offset,
-    // different tensor object) — never for the same object twice.
+    // Check if already staged (dedup by buffer+offset+nbytes). NOTE: the caller
+    // only invokes us for tensors whose buffer is still in the RAM-tier set, so
+    // this fires for aliases of an already-staged tensor (same RAM buffer +
+    // offset, different tensor object) — never for the same object twice.
+    // L0-T2 (defect A): the dedup key must include nbytes. Two alias views of
+    // the same base can have DIFFERENT extents (e.g. a subview); mapping the
+    // larger one to a stage sized for the smaller lets reads/writes run past
+    // the end of the staging buffer into a neighbour's stage. With the key
+    // fixed, a hit only happens for byte-identical aliases, for which sharing
+    // the stage is correct — and every redirected alias is added to the entry's
+    // tensors[] so eviction/cleanup restores ALL of them (not just the first).
     for (auto & e : lru_cache) {
-        if (e.ram_buf == src->buffer && e.ram_offset == offset) {
+        if (e.ram_buf == src->buffer && e.ram_offset == offset && e.nbytes == nbytes) {
             e.last_use = ++lru_counter;
             GGML_LOG_DEBUG("[VVRAM-LRU] hit tensor %s (layer %d) — already staged\n",
                 src->name, layer);
             // Redirect tensor to existing staging buffer.
             src->buffer = e.stage;
             src->data = ggml_backend_buffer_get_base(e.stage);
+            // Track the alias so eviction/cleanup restores it too.
+            bool known = false;
+            for (auto * t : e.tensors) {
+                if (t == src) { known = true; break; }
+            }
+            if (!known) {
+                e.tensors.push_back(src);
+            }
             return e.stage;
         }
     }
@@ -4814,7 +4959,20 @@ static ggml_backend_buffer_t vvram_stage_tensor_lru(
         size_t lru_idx = (size_t) -1;
         uint64_t lru_time = UINT64_MAX;
         for (size_t i = 0; i < lru_cache.size(); i++) {
-            if (lru_cache[i].layer >= batch_layer) {
+            // The batch guard (below) protects the CURRENT batch's staged
+            // tensors from being evicted mid-staging: evicting them leaves the
+            // batch's subgraph computing against restored RAM pointers.
+            // L0-T2 (defect B): during the shared batch (layer -1) there are no
+            // strictly-older entries, so the guard would make eviction
+            // impossible and any stage-over-budget must fail. When the shared
+            // batch's staging exceeds the (physical-free-aware) budget, fall
+            // back to evicting the least-recently-used entry of ANY batch —
+            // the shared batch's staged leaves are not written by its own
+            // compute (KV writes happen in the per-layer batches), so a later
+            // re-stage from RAM is correct, and the per-layer batches that do
+            // write+read the same staged tensor still cannot evict their own
+            // in-flight entries (guard applies for layer >= 0).
+            if (batch_layer >= 0 && lru_cache[i].layer >= batch_layer) {
                 continue;
             }
             if (lru_cache[i].last_use < lru_time) {
@@ -4826,11 +4984,11 @@ static ggml_backend_buffer_t vvram_stage_tensor_lru(
             return false;
         }
         auto & evict = lru_cache[lru_idx];
-        GGML_LOG_DEBUG("[VVRAM-LRU] evict tensor %s (%zu MiB, layer %d) to free VRAM\n",
-            evict.tensor->name, evict.nbytes / (1024*1024), evict.layer);
-        // Restore the evicted tensor's pointer to RAM.
-        evict.tensor->buffer = evict.ram_buf;
-        evict.tensor->data = (char *)ggml_backend_buffer_get_base(evict.ram_buf) + evict.ram_offset;
+        GGML_LOG_DEBUG("[VVRAM-LRU] evict tensor %s (%zu MiB, layer %d, %zu redirects) to free VRAM\n",
+            evict.tensors.front()->name, evict.nbytes / (1024*1024), evict.layer,
+            evict.tensors.size());
+        // Restore every redirected tensor's pointer to RAM.
+        vvram_entry_restore(evict);
         lru_vram_used -= evict.nbytes;
         ggml_backend_buffer_free(evict.stage);
         lru_cache.erase(lru_cache.begin() + lru_idx);
@@ -4888,7 +5046,7 @@ static ggml_backend_buffer_t vvram_stage_tensor_lru(
     // layered-compute exit path restore tensors through this field. Entries are
     // tagged with batch_layer: the eviction guard only reclaims strictly-older
     // batches (see evict_one above).
-    lru_cache.push_back({stage, ram_buf, offset, nbytes, batch_layer, ++lru_counter, src});
+    lru_cache.push_back({stage, ram_buf, offset, nbytes, batch_layer, ++lru_counter, {src}});
     lru_vram_used += nbytes;
 
     GGML_LOG_DEBUG("[VVRAM-LRU] staged tensor %s (%zu MiB, layer %d) RAM -> VRAM (vram_used=%zu/%zu MiB)\n",
@@ -4976,8 +5134,19 @@ static bool vvram_compute_graph_layered(
     if (dev) ggml_backend_dev_memory(dev, &vram_free, &vram_total);
     const int budget_pct = rpc_vvram_lru_budget_pct();
     size_t vram_budget = (vram_total * (size_t) budget_pct) / 100;
-    GGML_LOG_INFO("[VVRAM-LAYERED] VRAM budget = %zu MiB (total=%zu MiB, %d%%)\n",
-        vram_budget / (1024*1024), vram_total / (1024*1024), budget_pct);
+    // L0-T2 (defect B): the logical budget must never exceed the PHYSICALLY
+    // available VRAM. At low headroom caps the weights fill VRAM and the
+    // 60%-of-total budget (14.7 GiB on the 7900) far exceeds what cudaMalloc
+    // can satisfy — the shared layer's 4 GiB KV staging OOMed against
+    // weight-filled VRAM (CAP=10: cache_k_l15, CAP=20: cache_v_l19) even though
+    // lru_vram_used was far below the logical budget. Capping the budget at the
+    // free VRAM (measured at pass start) makes the eviction loop engage while
+    // there is still something to reclaim instead of failing the first alloc.
+    if (vram_free < vram_budget) {
+        vram_budget = vram_free;
+    }
+    GGML_LOG_INFO("[VVRAM-LAYERED] VRAM budget = %zu MiB (total=%zu MiB free=%zu MiB, %d%%)\n",
+        vram_budget / (1024*1024), vram_total / (1024*1024), vram_free / (1024*1024), budget_pct);
 
     // --- Layer classification ------------------------------------------------
     // Assign each node the MAXIMUM layer number across its source tensors.
@@ -5099,8 +5268,17 @@ static bool vvram_compute_graph_layered(
     // from dangling (freed) staging buffers.
     auto cleanup = [&]() {
         for (auto & e : lru_cache) {
-            e.tensor->buffer = e.ram_buf;
-            e.tensor->data = (char *) ggml_backend_buffer_get_base(e.ram_buf) + e.ram_offset;
+            // L0-T2 (defect A): restore ALL tensors redirected to this stage,
+            // not just the first — alias views would otherwise keep dangling
+            // pointers into the freed staging buffer.
+            vvram_entry_restore(e);
+            // N7: gated behind GGML_VVRAM_CLOSE_DEBUG=1 (default OFF).
+            if (rpc_vvram_close_debug()) {
+                fprintf(stderr, "[VVRAM-CLOSE-FREE] cleanup-free stage base=%p size=%zu name=%s layer=%d redirects=%zu\n",
+                        (void*)ggml_backend_buffer_get_base(e.stage), ggml_backend_buffer_get_size(e.stage),
+                        e.tensors.front()->name, e.layer, e.tensors.size());
+            }
+            vvram_close_record_free(e.stage);
             ggml_backend_buffer_free(e.stage);
         }
         lru_cache.clear();
@@ -5128,7 +5306,16 @@ static bool vvram_compute_graph_layered(
                 batch_weight_bytes += ggml_nbytes(src);
             }
         }
-        if (batch_weight_bytes > vram_budget) {
+        if (batch_weight_bytes > vram_budget && layer >= 0) {
+            // L0-T2 (defect B): the guard now runs against the PHYSICAL-FREE
+            // aware budget (min of pct×total and free VRAM). At low headroom
+            // caps the budget is far smaller than any single batch's weights,
+            // and for the shared batch (-1) the eviction-during--1 mechanism
+            // exists precisely to stage+churn a batch larger than the budget
+            // (KV cache, shared weights). The guard is kept only for per-layer
+            // batches (>= 0), where the batch guard forbids evicting the
+            // batch's own tensors — there a batch larger than the budget is
+            // genuinely unstageable and failing fast beats an OOM loop.
             GGML_LOG_ERROR("[VVRAM-LAYERED] layer %d weights (%zu MiB) exceed VRAM budget (%zu MiB) — cannot stage safely\n",
                 layer, batch_weight_bytes / (1024*1024), vram_budget / (1024*1024));
             cleanup();
@@ -5180,12 +5367,15 @@ static bool vvram_compute_graph_layered(
     }
 
     // TEMP DIAG: dump the final output tensor (logits) values after the layered pass.
-    if (graph->n_nodes > 0) {
+    // N6: gated behind GGML_VVRAM_CLOSE_DEBUG=1 (diagnosis complete; no default prints).
+    if (graph->n_nodes > 0 && rpc_vvram_close_debug()) {
         struct ggml_tensor * last = graph->nodes[graph->n_nodes - 1];
         if (last && last->data && last->type == GGML_TYPE_F32) {
             float * dp = (float *) last->data;
-            fprintf(stderr, "[VVRAM-DIAG] last node=%s op=%d ne0=%" PRId64 " ne1=%" PRId64 " data[0..8]=",
-                    last->name, (int) last->op, last->ne[0], last->ne[1]);
+            bool last_in_ram = (last->buffer && ram_buffers.count(last->buffer)) ? true : false;
+            bool last_buf_host = last->buffer ? ggml_backend_buffer_is_host(last->buffer) : false;
+            fprintf(stderr, "[VVRAM-DIAG] last node=%s op=%d ne0=%" PRId64 " ne1=%" PRId64 " buf_host=%d in_ram_set=%d data=%p data[0..8]=",
+                    last->name, (int) last->op, last->ne[0], last->ne[1], (int)last_buf_host, (int)last_in_ram, (void*)last->data);
             int n = last->ne[0] < 9 ? (int) last->ne[0] : 9;
             for (int j = 0; j < n; ++j) {
                 fprintf(stderr, "%s%g", j ? "," : "", dp[j]);
