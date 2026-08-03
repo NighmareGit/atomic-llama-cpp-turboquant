@@ -1805,6 +1805,36 @@ void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgra
         }
     }
 
+    // pass 3.5 (BUG-001): GDN ops carry a per-token recurrent state tensor that
+    // lives in the KV cache on the LAYER device (src[5] == state). Pin the op to
+    // the state's backend: a cross-device state copy (e.g. when the op follows an
+    // offloaded QKV projection to the GPU while the KV layer is on CPU) is both
+    // wasteful and — for the async CPU<->GPU copy path — non-deterministic at
+    // n_threads>1, which garbles GDN output. This makes the fused op follow the
+    // layer device in every config (CPU/CUDA/HIP/RPC), so the auto-fused check in
+    // llama-context.cpp no longer sees a device mismatch and the non-fused chunked
+    // fallback (itself non-deterministic) is never selected.
+    // See .scratch/research/bug-001-cpu-diagnosis.md.
+    for (int i = 0; i < graph->n_nodes; i++) {
+        struct ggml_tensor * node = graph->nodes[i];
+        if (node->op != GGML_OP_GATED_DELTA_NET) {
+            continue;
+        }
+        // state is the last input (src[5]); it may be a view chain rooted at the
+        // KV-cache tensor (a graph leaf, assigned in pass 1)
+        ggml_tensor * state = node->src[5];
+        int state_bid = tensor_backend_id(state);
+        ggml_tensor * chain = state;
+        while (state_bid == -1 && chain->view_src) {
+            chain = chain->view_src;
+            state_bid = tensor_backend_id(chain);
+        }
+        if (state_bid != -1 && ggml_backend_supports_op(sched->backends[state_bid], node)) {
+            tensor_backend_id(node) = state_bid;
+            SET_CAUSE(node, "3.5.gdn-state");
+        }
+    }
+
     // pass 4: assign backends to remaining src from dst and view_src
     for (int i = 0; i < graph->n_nodes; i++) {
         struct ggml_tensor * node = graph->nodes[i];

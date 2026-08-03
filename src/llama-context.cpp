@@ -403,7 +403,13 @@ llama_context::llama_context(
 
     cparams.n_outputs_max = params.n_outputs_max == 0 || llama_model_has_encoder(&model) ? cparams.n_batch : params.n_outputs_max;
 
-    cparams.op_offload = params.op_offload;
+    cparams.op_offload = params.op_offload && model.n_gpu_layers() > 0;
+    // BUG-001 (fix): op_offload moves ops with host-resident weights (QKV
+    // projections, lm_head) to the GPU even at -ngl 0, producing CPU<->GPU
+    // async splits that race at n_threads>1 and garble GDN output
+    // (non-deterministic, see .scratch/research/bug-001-cpu-diagnosis.md).
+    // The offload only makes sense when layers are actually on a non-CPU
+    // device; at ngl=0 the graph must stay fully on CPU.
     cparams.kv_unified = params.kv_unified;
 
     // initialized later
@@ -788,7 +794,7 @@ void llama_context::sched_reserve() {
                 ggml_backend_dev_t device_kv = model.dev_layer(il);
                 if (device_gdn != device_kv) {
                     LLAMA_LOG_WARN("%s: layer %d is assigned to device %s but the fused Gated Delta Net tensor "
-                            "is assigned to device %s (usually due to missing support)\n",
+                            "is assigned to device %s (scheduler placement artifact — fused kernel is portable)\n",
                             __func__, il, ggml_backend_dev_name(device_kv), ggml_backend_dev_name(device_gdn));
                     gdn_device_mismatch = true;
                     break;
@@ -796,8 +802,15 @@ void llama_context::sched_reserve() {
             }
 
             if (gdn_device_mismatch) {
-                cparams.fused_gdn_ar = false;
-                LLAMA_LOG_WARN("%s: fused Gated Delta Net (autoregressive) not supported, set to disabled\n", __func__);
+                // BUG-001 (fix): the fused GDN kernel is portable — CPU/CUDA/HIP/RPC all
+                // implement it — so a scheduler placement mismatch (op assigned to a
+                // different device than the KV layer) is a placement artifact, not a
+                // missing-support condition. Disabling fused would select the non-fused
+                // decomposition, which is non-deterministic and garbles (chunked prompt
+                // path at n_threads>1 — see .scratch/research/bug-001-cpu-diagnosis.md).
+                // Keep fused enabled; the scheduler's copy machinery moves the state
+                // tensors to the device the op is assigned to.
+                LLAMA_LOG_WARN("%s: fused Gated Delta Net (autoregressive) device mismatch — kept enabled (BUG-001 fix)\n", __func__);
             } else {
                 LLAMA_LOG_INFO("%s: fused Gated Delta Net (autoregressive) enabled\n", __func__);
             }
@@ -829,7 +842,7 @@ void llama_context::sched_reserve() {
                 ggml_backend_dev_t device_kv = model.dev_layer(il);
                 if (device_gdn != device_kv) {
                     LLAMA_LOG_WARN("%s: layer %d is assigned to device %s but the fused Gated Delta Net tensor "
-                            "is assigned to device %s (usually due to missing support)\n",
+                            "is assigned to device %s (scheduler placement artifact — fused kernel is portable)\n",
                             __func__, il, ggml_backend_dev_name(device_kv), ggml_backend_dev_name(device_gdn));
                     gdn_device_mismatch = true;
                     break;
@@ -837,8 +850,10 @@ void llama_context::sched_reserve() {
             }
 
             if (gdn_device_mismatch) {
-                cparams.fused_gdn_ch = false;
-                LLAMA_LOG_WARN("%s: fused Gated Delta Net (chunked) not supported, set to disabled\n", __func__);
+                // BUG-001 (fix): see the autoregressive block above — keep fused enabled
+                // on a placement mismatch; the non-fused chunked fallback is the
+                // non-deterministic path that garbles GDN prompt eval at n_threads>1.
+                LLAMA_LOG_WARN("%s: fused Gated Delta Net (chunked) device mismatch — kept enabled (BUG-001 fix)\n", __func__);
             } else {
                 LLAMA_LOG_INFO("%s: fused Gated Delta Net (chunked) enabled\n", __func__);
             }
