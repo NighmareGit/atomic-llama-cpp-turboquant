@@ -192,3 +192,7 @@ rpc-patch/deploy/
 
 # BUG-010: staging dirs are build artifacts (rpc-server image staging)
 staging*/
+
+# rocprof / benchmark telemetry
+results.*
+results.db
