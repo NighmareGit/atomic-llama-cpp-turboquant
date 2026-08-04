@@ -4934,25 +4934,6 @@ struct vvram_staging_entry {
 // the freed staging buffer (use-after-free -> reads return another tensor's
 // data). Shared by vvram_stage_tensor_lru and vvram_compute_graph_layered.
 static void vvram_entry_restore(vvram_staging_entry & e) {
-    // L1 writeback (vvram-decode-deadlock-rootcause): copy VRAM -> RAM before
-    // redirecting the pointer. For read-only tensors (weights) this is a no-op
-    // in practice (VRAM==RAM); for read-write tensors (KV cache) this preserves
-    // the GPU's attention-layer writes. Without it, evicting a KV-cache staging
-    // buffer silently discards the GPU's writes -> stale KV -> garbage logits
-    // (argmax 220 space vs CPU's 13 period). One ggml_backend_tensor_get per
-    // eviction; evictions only fire under budget/physical-free pressure.
-    if (e.stage && e.ram_buf && e.nbytes > 0) {
-        struct ggml_tensor tmp{};
-        tmp.type = GGML_TYPE_F32;
-        tmp.ne[0] = (int64_t)((e.nbytes + sizeof(float) - 1) / sizeof(float));
-        tmp.ne[1] = 1; tmp.ne[2] = 1; tmp.ne[3] = 1;
-        tmp.nb[0] = sizeof(float);
-        tmp.buffer = e.stage;
-        tmp.data = ggml_backend_buffer_get_base(e.stage);
-        ggml_backend_tensor_get(&tmp,
-            (char *) ggml_backend_buffer_get_base(e.ram_buf) + e.ram_offset,
-            0, e.nbytes);
-    }
     for (auto * t : e.tensors) {
         t->buffer = e.ram_buf;
         t->data = (char *) ggml_backend_buffer_get_base(e.ram_buf) + e.ram_offset;
