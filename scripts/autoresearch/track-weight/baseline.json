@@ -4,7 +4,7 @@
   "tg128": 69.2,
   "ppl": 7.599,
   "ppl_threshold": 0.1,
-  "ppl_file": "/mnt/ai/data/wikitext-2-raw/wiki.test.raw",
+  "ppl_file": "<model-mount>/data/wikitext-2-raw/wiki.test.raw",
   "target_file": "ggml/src/ggml-cuda/mmvq-tq.cu",
   "no_convert": true,
   "coherence_prompts": [

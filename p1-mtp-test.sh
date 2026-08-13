@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # MTP matrix test - self-contained, internal timeouts
 set -u
-cd /home/hunter/projects/path-d-gpipeline-assembly-line
+cd <user-home>/projects/path-d-gpipeline-assembly-line
 
 export GGML_PIPELINE_PLUS=1
 export LD_LIBRARY_PATH=$PWD/build-hip/bin:/opt/rocm/lib
@@ -22,7 +22,7 @@ rm -f "$LOG"
 echo "=== COMBO $COMBO (GPipe=$GPPIPE MTP=$MTP) port $PORT ==="
 echo "=== $(date) starting server ==="
 ./build-hip/bin/llama-server \
-  -m /mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf --rpc 127.0.0.1:50051 \
+  -m <model-mount>/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf --rpc 127.0.0.1:50051 \
   -ngl 99 -sm layer -ts 2,98 -c 4096 -ctk q8_0 -ctv turbo3 -fa on --jinja \
   "${SPEC_ARGS[@]}" \
   --host 127.0.0.1 --port "$PORT" --metrics -sp \

@@ -1,2 +1,0 @@
-PASS config-e-smoke-9b-v2
-PASS config-e-27b

@@ -8,7 +8,7 @@ This index documents scripts created in the current feature branch (Path-D-Gpipe
 - [b6-gate-6gpu-frontier-spike.sh](#b6-gate-6gpu-frontier-spike-sh)
 - [b6-gate-b14-n384-compare.sh](#b6-gate-b14-n384-compare-sh)
 - [b6-gate-phase1c-assembly-line.sh](#b6-gate-phase1c-assembly-line-sh)
-- [romulus-pathb/docker-compose.yml](#romulus-pathb-docker-compose-yml)
+- [gpu-host-pathb/docker-compose.yml](#gpu-host-pathb-docker-compose-yml)
 
 ## Validation Tools
 - [validate-apps.sh](#validate-apps-sh)
@@ -24,11 +24,11 @@ This index documents scripts created in the current feature branch (Path-D-Gpipe
 
 ## Diagnostics & Profiling
 - [llama-pipeline-diagnose.sh](#llama-pipeline-diagnose-sh)
-- [romulus-local-build.sh](#romulus-local-build-sh)
-- [romulus-build-profiler.sh](#romulus-build-profiler-sh)
+- [gpu-host-local-build.sh](#gpu-host-local-build-sh)
+- [gpu-host-build-profiler.sh](#gpu-host-build-profiler-sh)
 
 ## RPC & Cluster Tools
-- [b6-gate-triton-remote.sh](#b6-gate-triton-remote-sh)
+- [b6-gate-gpu-host-remote.sh](#b6-gate-gpu-host-remote-sh)
 - [b6-gate-cluster-gpu-inventory.sh](#b6-gate-cluster-gpu-inventory-sh)
 - [gpu-telemetry-collect.sh](#gpu-telemetry-collect-sh)
 

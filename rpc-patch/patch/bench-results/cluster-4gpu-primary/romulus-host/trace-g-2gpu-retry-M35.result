@@ -1,3 +1,0 @@
-run=1 prompt=fox P=42.7 G=48.2 preview=' study\n\n\n\n\n\n study\n study \n\n\n\n\n\n\n\n\n\n\n study study study \n\n'
-run=2 prompt=fox P=16.6 G=46.5 preview='\n\n\n\n\n\n\n\nHereHereHere  \nHereHereHere\nHereHereHere  \n\nHereHere  \nHere  \n\n  \n\n  \n\n  \n\nHereHereHereHere  \n\n  \n\n  \n\n  \n\nHereHereHereHere  \n\n  \n\n  \n\n  \n\nHereHereHereHere  \n\n  \n\n  \n\n  \n\nHereHereHereHere  \n\n '
-run=3 prompt=fox P=17.5 G=46.4 preview='\n\n\n\n\n\n\n\n\n\nHereHere\n\n  \n\n\n\n\nHereHereHere  \n\nHere  \n\n!HereHereHereHere  \n\n  \n\n  \n\nHereHereHereHere  \n\n  \n\n  \n\n  \n\nHereHereHereHere  \n\n  \n\n  \n\n  \n\nHereHereHereHere  \n\n  \n\n  \n\n  \n\nHereHereHereHere  \n\n  \n\n'

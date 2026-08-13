@@ -58,7 +58,7 @@ RUN cmake -B /tmp/build \
 # ---- Runtime stage: known-good CUDA/CPU/core libs + new UDP transport ----
 # Inherit the working CUDA + CPU + core ggml libs from the previous image and
 # overlay the newly-built rpc-server binary + UDP-enabled libggml-rpc.so.
-FROM atomic-llama-romulus-pathd-rpc:stale-20260723
+FROM atomic-llama-gpu-host-pathd-rpc:stale-20260723
 
 # Remove the old (UDP-less) RPC transport library; replaced by the COPY below.
 RUN rm -f /usr/local/lib/libggml-rpc.so* /usr/local/bin/rpc-server

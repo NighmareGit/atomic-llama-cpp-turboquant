@@ -1,2 +1,0 @@
-run=1 prompt=fox P=12.6 G=20.9 preview='That’s the classic pangram—every letter of the English alphabet appears at least once! 🦊🦊  \nIt’s often used to test typewriters'
-run=2 prompt=fox P=10.4 G=19.3 preview='Ah, the classic pangram! 😊  \nThis sentence—**“The quick brown fox jumps over the lazy dog.”**—contains every letter of the'

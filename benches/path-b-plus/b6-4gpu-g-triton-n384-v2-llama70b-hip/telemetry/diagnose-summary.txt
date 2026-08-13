@@ -1,6 +1,0 @@
-=== llama-pipeline-diagnose ===
-diagnose.json -> /home/hunter/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-4gpu-g-triton-n384-v2-llama70b-hip/telemetry/diagnose.json
-gate_s5=PASS gate_b6=FAIL overlap_pct=0.2
-stall_ratio=0.6445 straggler=backend1 (29.373 ms/tok)
-overlap_efficiency=1.179200
-gpu_smells=CLOCK_THROTTLE
