@@ -1,6 +1,0 @@
-=== trace summary ===
-dir=/home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton/telemetry
-
-[rpc] missing /home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton/telemetry/rpc-trace.jsonl
-
-[sched] missing /home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton/telemetry/sched-trace.jsonl

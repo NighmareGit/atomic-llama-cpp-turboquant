@@ -1,3 +1,0 @@
-run=1 prompt=fox P=23.6 G=43.4 preview=' following\n\n\n\n\n\n the instructions instructions theHere**This### final the the next following\n\n    steps token### token next3  ### for '
-run=2 prompt=fox P=19.8 G=45.5 preview="!\n\n\n\n\n\n\n  !The```HereWait ! ! ! !,!,, ! ! ! !\n\n I that that ! ! ! ! ! !'s's ! ! ! ! that!'t' ! ! ! ! !sss ' ! ! ! ! !!\n\n ! ! ! !```(\n\n! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! "
-run=3 prompt=fox P=20.0 G=45.7 preview='\n\n\n\n\n\n\n</think>Here\n\n##### \n \n    **** \n2   ** \n\n   \n\n  1AnswerSummary1    ******** ** **  \n**\n\n\n      \n     \n    *   \n   \n     11111  1....1111\n\n ** \n1.1.        \n     \n\n\n\n\n \n\n\n         \n          \n '

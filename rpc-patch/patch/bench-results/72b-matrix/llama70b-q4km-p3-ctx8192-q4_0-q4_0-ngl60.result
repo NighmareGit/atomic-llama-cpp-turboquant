@@ -1,2 +1,0 @@
-run=1 prompt=fox P=14.8 G=4.7 preview="A classic! This sentence is known as a pangram, a phrase that uses all the letters of the alphabet at least once. It's often used as a"
-run=2 prompt=fox P=4.8 G=4.8 preview='The classic pangram!\n\n"The quick brown fox jumps over the lazy dog" is a well-known sentence that uses all 26 letters of the alphabet at least once'
