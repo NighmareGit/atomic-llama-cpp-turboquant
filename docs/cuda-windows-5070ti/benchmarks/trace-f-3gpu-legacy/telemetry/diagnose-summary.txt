@@ -1,6 +1,0 @@
-=== llama-pipeline-diagnose ===
-diagnose.json -> C:\Users\nightmare\.grok\worktrees\atomic-llama-cpp-5070ti-atomic-llama-cpp-turboquant\path-b-plus-5070ti-triton\docs\cuda-windows-5070ti\benchmarks\trace-f-3gpu-legacy\telemetry\diagnose.json
-gate_s5=PASS gate_b6=FAIL overlap_pct=0.1
-stall_ratio=0.9045 straggler=backend2 (12.83 ms/tok)
-overlap_efficiency=None
-gpu_smells=none

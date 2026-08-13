@@ -3,7 +3,7 @@
   "generated_at": "2026-07-14T01:57:24Z",
   "git_sha": "f2d627a6a",
   "model": {
-    "path": "/mnt/models/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf",
+    "path": "<model-mount>/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf",
     "n_layers": 40,
     "param_count_b": 35.5053,
     "ctx_size": 4096

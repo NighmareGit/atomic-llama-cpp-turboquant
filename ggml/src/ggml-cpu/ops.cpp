@@ -9564,7 +9564,7 @@ static void ggml_compute_forward_ssm_scan_f32(
 
                 // n_head
                 for (int h = ih0; h < ih1; ++h) {
-                    // ref: https://github.com/state-spaces/mamba/blob/62db608da60f6fc790b8ed9f4b3225e95ca15fde/mamba_ssm/ops/triton/softplus.py#L16
+                    // ref: https://github.com/state-spaces/mamba/blob/62db608da60f6fc790b8ed9f4b3225e95ca15fde/mamba_ssm/ops/gpu-host/softplus.py#L16
                     const float dt_soft_plus = ggml_compute_softplus_f32(dt[h]);
                     const float dA = expf(dt_soft_plus * A[h]);
                     const int g = h / (nh / ng); // repeat_interleave
@@ -9661,7 +9661,7 @@ static void ggml_compute_forward_ssm_scan_f32(
 
                 // n_head
                 for (int h = ih0; h < ih1; ++h) {
-                    // ref: https://github.com/state-spaces/mamba/blob/62db608da60f6fc790b8ed9f4b3225e95ca15fde/mamba_ssm/ops/triton/softplus.py#L16
+                    // ref: https://github.com/state-spaces/mamba/blob/62db608da60f6fc790b8ed9f4b3225e95ca15fde/mamba_ssm/ops/gpu-host/softplus.py#L16
                     const float dt_soft_plus = ggml_compute_softplus_f32(dt[h]);
                     const int g = h / (nh / ng); // repeat_interleave
 

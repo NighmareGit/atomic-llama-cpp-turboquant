@@ -1,6 +1,0 @@
-label	overlap_pct	drain_flush_ms	blocking_rpc	stall_ratio	straggler	straggler_ms	assembly_overlap	G_tps	backend_ms_tok	path	verdict
-b6-2gpu-f-triton-n384-no-defer	0.2	1776.34	790	0.8695	1	8.186	877	128.834	NA	/home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-n384-no-defer	STRAGGLER_DOMINANT
-b6-2gpu-f-triton-n384-no-partial	0.2	1740.54	808	0.9036	1	5.637	886	198.602	NA	/home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-n384-no-partial	MIXED
-b6-2gpu-f-triton-n384-no-async-copy	0.2	1721.39	808	0.9058	1	5.622	924	200.393	NA	/home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-n384-no-async-copy	MIXED
-b6-2gpu-f-triton-n384-b8-partial	0.2	1716.8	790	0.8629	1	8.242	883	128.8	NA	/home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-n384-b8-partial	STRAGGLER_DOMINANT
-b6-2gpu-f-triton-guard-n128	0.9	788.12	1	0.6357	1	13.661	459	116.003	NA	/home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-guard-n128	MIXED

@@ -1,2 +1,0 @@
-label	gen_tokens	overlap_pct	stall_ratio	input_wait_copy_ms	graph_compute_ms	sync_copy_fallback_ms	copy_async_ok_count	blocking_ms	drain_ms	copy_issue	copy_tensor_rpc	copy_peer_rpc	get_tensor_rpc	set_hash_rpc	event_record_rpc	local_sync_gap_ms	c_full	verdict
-b6-2gpu-f-triton-n384-romulus-native	384	0.2	0.838	2805.9	306.7	0.0	2310	208.7	207.0	1155	0.0	0.0	66.4	0.0	140.6	2805.9	yes	COPY_ASYNC_OK_ONLY,GET_TENSOR_GT_COPY,WAIT_DOMINATES_COMPUTE

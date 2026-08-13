@@ -2184,7 +2184,7 @@ static void flush_pending_relays() {
     flush_pending_relays_for_dst(nullptr, 0);
 }
 
-// Same-host isolated RPC endpoints (e.g. triton :50054 + :50055 docker): client pulls
+// Same-host isolated RPC endpoints (e.g. gpu-host :50054 + :50055 docker): client pulls
 // from src worker and pushes to dst. COPY_TENSOR_PEER fails across separate processes.
 static bool rpc_issue_relay_copy_tensor(const ggml_tensor * src, ggml_tensor * dst, bool defer_response) {
     ggml_backend_buffer_t src_buffer = src->buffer;
