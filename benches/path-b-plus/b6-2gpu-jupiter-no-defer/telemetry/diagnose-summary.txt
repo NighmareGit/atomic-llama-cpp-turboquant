@@ -1,6 +1,0 @@
-=== llama-pipeline-diagnose ===
-diagnose.json -> /src/benches/path-b-plus/b6-2gpu-jupiter-no-defer/telemetry/diagnose.json
-gate_s5=PASS gate_b6=FAIL overlap_pct=0.2
-stall_ratio=0.9028 straggler=backend1 (6.813 ms/tok)
-overlap_efficiency=0.814700
-gpu_smells=none

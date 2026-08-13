@@ -1,3 +1,0 @@
-run=1 prompt=fox P=46.2 G=41.8 preview=" following\n\n\n\n the the is the</think>TheTheHere\n\n the the is's is is the following the the a a the a the the the the the is is an the the the the the and are one the the the the first single only sing"
-run=2 prompt=fox P=16.7 G=43.3 preview='azel\n\n\n\n\nb! (...!</think>\n'
-run=3 prompt=fox P=18.0 G=43.3 preview='TextLabel\n\n\n\n\n\n\n\n:!****Text **\n\n\n\n\n\n::Text:Text:**.\n\n\n\n\n\n\n\n:. .\n\n\n```'

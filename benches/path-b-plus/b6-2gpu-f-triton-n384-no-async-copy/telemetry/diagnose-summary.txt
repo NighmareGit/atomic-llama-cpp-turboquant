@@ -1,6 +1,0 @@
-=== llama-pipeline-diagnose ===
-diagnose.json -> /home/hunter/projects/atomic-llama-cpp-turboquant/atomic-llama-cpp-turboquant/benches/path-b-plus/b6-2gpu-f-triton-n384-no-async-copy/telemetry/diagnose.json
-gate_s5=PASS gate_b6=FAIL overlap_pct=0.2
-stall_ratio=0.9058 straggler=backend1 (5.622 ms/tok)
-overlap_efficiency=1.135
-gpu_smells=['ORCHESTRATION_STALL', 'LOW_DUTY_CYCLE']

@@ -1,6 +1,0 @@
-=== llama-pipeline-diagnose ===
-diagnose.json -> /src/benches/path-b-plus/b6-2gpu-jupiter-bisect-no-moe/telemetry/diagnose.json
-gate_s5=PASS gate_b6=FAIL overlap_pct=0.7
-stall_ratio=0.8586 straggler=backend1 (7.979 ms/tok)
-overlap_efficiency=0.826500
-gpu_smells=none

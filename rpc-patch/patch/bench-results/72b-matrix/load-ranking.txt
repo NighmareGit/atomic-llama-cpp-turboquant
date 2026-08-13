@@ -1,6 +1,0 @@
-llama70b fitoff ngl=60 ncmoe=none avg_G=4.9
-qwen72b fitoff ngl=60 ncmoe=none avg_G=4.8
-kimi72b fitoff ngl=60 ncmoe=none avg_G=5.3
-qwen-next-80b fiton ngl=0 ncmoe=8 avg_G=16.9
-coder-next fitoff ngl=60 ncmoe=8 avg_G=0.4
-coder-next-q4 fitoff ngl=60 ncmoe=8 avg_G=16.4

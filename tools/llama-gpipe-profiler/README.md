@@ -86,7 +86,7 @@ binary profiles local-only configurations.
 ```sh
 GGML_RPC_SERVER_TELEMETRY=1 \
 ./build-rocm-docker/bin/llama-gpipe-profiler \
-  -m /mnt/models/Qwen3.5-9B-MTP-Q4_K_M.gguf \
+  -m <model-mount>/Qwen3.5-9B-MTP-Q4_K_M.gguf \
   --rpc 127.0.0.1:50051 \
   --tensor-split 50,50 \
   --server-telemetry \
@@ -99,7 +99,7 @@ GGML_RPC_SERVER_TELEMETRY=1 \
 
 This is the canonical Romulus dual-GPU profile (7900 XTX local + 3060 Ti RPC).
 Telemetry is returned in the `GRAPH_COMPUTE` response from the single-device
-RPC server (`rpc-server -d CUDA0`). See [docs/D4.6-romulus-rpc-multidevice-test.md](../../docs/D4.6-romulus-rpc-multidevice-test.md).
+RPC server (`rpc-server -d CUDA0`). See [docs/D4.6-gpu-host-rpc-multidevice-test.md](../../docs/D4.6-gpu-host-rpc-multidevice-test.md).
 
 ### Multi-GPU RPC server (2+ GPUs on one endpoint)
 
@@ -326,7 +326,7 @@ llama-gpipe-profiler  (exe)
 
 - [ADR-0004b: Profiler Binary Architecture](../../docs/adr/0004b-profiler-architecture.md)
 - [D4.7: Profiler Research](../../docs/wayfinder/D4.7-profiler-research.md)
-- [D4.6: Romulus RPC Multi-Device Test](../../docs/D4.6-romulus-rpc-multidevice-test.md)
+- [D4.6: Romulus RPC Multi-Device Test](../../docs/D4.6-gpu-host-rpc-multidevice-test.md)
 - [RPC Server Telemetry in ggml-rpc.cpp](../../ggml/src/ggml-rpc/ggml-rpc.cpp) (`collect_telemetry`, `rpc_write_server_telemetry_jsonl`, server handler)
 - [PIPELINE.md: Pipeline overlap documentation](../../PIPELINE.md)
 - [docs/llama-pipeline-profiler/OVERVIEW.md: Existing profiler doc map](../../docs/llama-pipeline-profiler/OVERVIEW.md)

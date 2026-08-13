@@ -118,7 +118,7 @@ No changes to RPC protocol. Use existing `RPC_CMD_EVENT_RECORD` (proto 4.2.2+) w
 | Metric | Target | Method |
 |--------|--------|--------|
 | `global_3bk_pct` | >= 25% | Profiler trace analysis |
-| G (t/s) | Within 5% of Path-B+ baseline | `b6-2gpu-f-romulus-local` comparison |
+| G (t/s) | Within 5% of Path-B+ baseline | `b6-2gpu-f-gpu-host-local` comparison |
 | Overlap_pct | >= 5% | `assembly_overlap_count` analysis |
 
 ### 5.3 Regression Tests
@@ -170,11 +170,11 @@ The current Mode A (2-stage GPipe: compute + gather) is the foundation. This sec
 
 ### 10.1 Phase D4 — Path C Stepping Stone
 
-**Goal:** Prove server-side scheduling on triton's co-localized dual-GPU before deeper client-side pipelining. See [section 12](#12-path-c--server-side-scheduling) for the full spec.
+**Goal:** Prove server-side scheduling on gpu-host's co-localized dual-GPU before deeper client-side pipelining. See [section 12](#12-path-c--server-side-scheduling) for the full spec.
 
 | Step | What | Output | Status |
 |------|------|--------|--------|
-| Research | C1 baseline: per-device RPC splits, RTT count, server GPU util | `D4.1-triton-baseline-analysis.md` | Prep ready (cluster access needed) |
+| Research | C1 baseline: per-device RPC splits, RTT count, server GPU util | `D4.1-gpu-host-baseline-analysis.md` | Prep ready (cluster access needed) |
 | Design | ADR-004: Server-side scheduling model | `docs/adr/0004-server-side-scheduling.md` | **ACCEPTED** (Option B+) |
 | Spec | Path C spec section | `docs/path-d-spec.md` (section 12) | ✅ Complete |
 | Prototype | Throwaway: test `GRAPH_COMPUTE_ALL` concept | Findings for implement | Pending |
@@ -372,7 +372,7 @@ Per-sequence KV-ready release follows ADR-0002: a sequence's next token cannot s
 
 ## 12. Path C — Server-Side Scheduling
 
-Path C extends Path D by moving multi-GPU RPC dispatch from the client to the server. For co-localized GPUs (triton 3090+3070), the server runs an internal `ggml_backend_sched` to distribute a single graph across its GPUs, eliminating per-device client RTTs.
+Path C extends Path D by moving multi-GPU RPC dispatch from the client to the server. For co-localized GPUs (gpu-host 3090+3070), the server runs an internal `ggml_backend_sched` to distribute a single graph across its GPUs, eliminating per-device client RTTs.
 
 ADR-0004: **Accepted (Option B+)** — Server-side `GRAPH_COMPUTE_ALL` with client-driven weighted weight placement. Full decision at `docs/adr/0004-server-side-scheduling.md`.
 
@@ -386,12 +386,12 @@ Mode A (section 10) overlaps compute **across tokens** but cannot overlap **with
 - **Sequential server GPU duty cycle**: GPU 1 idle while GPU 0 computes
 - **Client-mediated tensor copies**: cross-GPU transfers route through client (`RPC_CMD_COPY_TENSOR`)
 
-Path C targets co-localized GPUs first (triton) where PCIe latency is negligible. Cross-host multi-GPU (remus) deferred to C2+.
+Path C targets co-localized GPUs first (gpu-host) where PCIe latency is negligible. Cross-host multi-GPU (gpu-host) deferred to C2+.
 
-**Why triton first:**
+**Why gpu-host first:**
 - 3090 + 3070 on same node, shared PCIe root complex
 - Lower latency validates architecture before tackling cross-host
-- C1 baseline already shows 4 splits on Config F; triton is simpler (2 GPUs)
+- C1 baseline already shows 4 splits on Config F; gpu-host is simpler (2 GPUs)
 
 ---
 
@@ -400,7 +400,7 @@ Path C targets co-localized GPUs first (triton) where PCIe latency is negligible
 #### Current Flow (per-device RPC)
 
 ```
-Client                                         RPC Server (triton)
+Client                                         RPC Server (gpu-host)
   |-- SET_TENSOR (embeddings) ---------------->|
   |-- GRAPH_COMPUTE (device 0) --------------->|  layers 0-19 on 3090
   |<-- (fire-and-forget) ----------------------|
@@ -417,7 +417,7 @@ Client                                         RPC Server (triton)
 #### Target Flow (GRAPH_COMPUTE_ALL)
 
 ```
-Client                                         RPC Server (triton)
+Client                                         RPC Server (gpu-host)
   |-- SET_TENSOR_BATCH ----------------------->|
   |-- GRAPH_COMPUTE_ALL (full graph) -------->|  server schedules internally
   |<-- (result + output_device) --------------|
@@ -629,11 +629,11 @@ Path C server-side scheduling is **orthogonal** to Mode A client-side pipelining
 |--------|-------------|----------------------|------------------------|-------------|
 | RTTs per token (2-GPU RPC) | 5 (est.) | 3 | **3** (combined compute+sync) | Wire protocol capture |
 | Server GPU duty cycle | ~50% (serial) | ~90% (parallel) | **~95%** (balanced compute) | `nvidia-smi` utilization |
-| G (triton 2-GPU, equal split) | ~222 t/s (est.) | >=222 t/s (non-regression) | — | `b6-2gpu-f-triton` |
-| G (triton 2-GPU, weighted 64/36) | — | — | **~296 t/s (+33% est.)** | `b6-2gpu-f-triton` |
-| G (triton 2-GPU, weighted + inline sync) | — | — | **~314 t/s (+41%, stretch)** | Same |
+| G (gpu-host 2-GPU, equal split) | ~222 t/s (est.) | >=222 t/s (non-regression) | — | `b6-2gpu-f-gpu-host` |
+| G (gpu-host 2-GPU, weighted 64/36) | — | — | **~296 t/s (+33% est.)** | `b6-2gpu-f-gpu-host` |
+| G (gpu-host 2-GPU, weighted + inline sync) | — | — | **~314 t/s (+41%, stretch)** | Same |
 
-**Note:** C1 baseline G values are model-based estimates for 35B MoE on 3090+3070. Actual D4.1 cluster measurement will replace estimates. The 42.8 t/s value from trace-f-3gpu-plus was cross-host (remus Config F) and is NOT the triton baseline.
+**Note:** C1 baseline G values are model-based estimates for 35B MoE on 3090+3070. Actual D4.1 cluster measurement will replace estimates. The 42.8 t/s value from trace-f-3gpu-plus was cross-host (gpu-host Config F) and is NOT the gpu-host baseline.
 
 **Non-regression gate:** Path C must not decrease throughput vs measured C1 baseline (D4.1). Weighted partition target: >= +25% uplift over equal-split baseline.
 
@@ -655,7 +655,7 @@ For 3090+3070 with 1.75x speed ratio (full analysis at `docs/wayfinder/D4-perfor
 
 #### From D4.1 (Research)
 
-- [ ] Per-device RPC splits documented for triton topology
+- [ ] Per-device RPC splits documented for gpu-host topology
 - [ ] RTT count measured: baseline 5 for 2-GPU config
 - [ ] Server GPU utilization profiled: serial duty cycle confirmed
 
@@ -673,7 +673,7 @@ For 3090+3070 with 1.75x speed ratio (full analysis at `docs/wayfinder/D4-perfor
 
 #### From D4.4 (Prototype)
 
-- [ ] Throwaway: `GRAPH_COMPUTE_ALL` handler runs on triton 2-GPU
+- [ ] Throwaway: `GRAPH_COMPUTE_ALL` handler runs on gpu-host 2-GPU
 - [ ] Output matches per-device compute bit-exact
 - [ ] Findings documented for implement phase
 
@@ -687,7 +687,7 @@ For 3090+3070 with 1.75x speed ratio (full analysis at `docs/wayfinder/D4-perfor
 
 #### From D4.6 (Test)
 
-- [ ] RTTs reduced: 5 -> 3 on triton 2-GPU
+- [ ] RTTs reduced: 5 -> 3 on gpu-host 2-GPU
 - [ ] Server GPU duty cycle: measurable improvement
 - [ ] G non-regression: >= C1 baseline (42.8 t/s)
 - [ ] Correctness: token sequence matches per-device compute
@@ -895,8 +895,8 @@ same token is done, AND (b) the next sub-stage of the previous token is done
 
 | Metric | 2-stage (current) | 3-stage (target) | 5-stage (stretch, cluster) |
 |--------|:----------------:|:----------------:|:--------------------------:|
-| Cycle time (romulus dual-GPU) | 15.7 ms | 10.0 ms (-36%) | N/A |
-| Per-token latency (romulus) | 15.7 ms | 10.0 ms | N/A |
+| Cycle time (gpu-host dual-GPU) | 15.7 ms | 10.0 ms (-36%) | N/A |
+| Per-token latency (gpu-host) | 15.7 ms | 10.0 ms | N/A |
 | Cycle time (production 5-GPU) | ~12.8 ms est. | ~8.8 ms (-31%) | ~4.0 ms (-69%) |
 | global_3bk_pct | <1% | TBD | >=25% (target) |
 | overlap_pct | 0.1-0.2% | TBD | >=5% (target) |
@@ -910,7 +910,7 @@ same token is done, AND (b) the next sub-stage of the previous token is done
 - [ ] Stage 0 split into embed + per-backend sub-stages
 - [ ] Event signaling correct: each sub-stage records/waits on correct event
 - [ ] Straggler isolation: fast backends not blocked by straggler
-- [ ] Dual-GPU (romulus): 3 sub-stages active (embed + RPC0 + ROCm+gather)
+- [ ] Dual-GPU (gpu-host): 3 sub-stages active (embed + RPC0 + ROCm+gather)
 - [ ] Single-GPU: falls back to 2-stage (current behavior)
 - [ ] `GGML_SCHED_GPIPE=1` enables n_stages > 2 automatically
 
@@ -935,7 +935,7 @@ same token is done, AND (b) the next sub-stage of the previous token is done
 - `docs/adr/0003-adaptive-pipeline-depth.md` — depth decision (Option C)
 - `docs/wayfinder/D0.5-implementation-seam.md` — implementation seam (section 7)
 - `docs/hot-paths-analysis.md` — tensor deployment map
-- `docs/wayfinder/D4.1-romulus-baseline-analysis.md` — D4 baseline
+- `docs/wayfinder/D4.1-gpu-host-baseline-analysis.md` — D4 baseline
 
 ---
 
