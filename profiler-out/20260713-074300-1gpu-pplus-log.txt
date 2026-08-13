@@ -3,7 +3,7 @@ ggml_cuda_init: found 1 ROCm devices (Total VRAM: 24560 MiB):
 >>> collect_client_devices: 2 total devices registered
 >>>   dev[0]: name=ROCm0 desc=Radeon RX 7900 XTX type=1
 >>>   dev[1]: name=CPU desc=Intel(R) Core(TM) i7-14700K type=0
-llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from /mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
+llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from <model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = llama
 llama_model_loader: - kv   1:                               general.type str              = model
@@ -697,7 +697,7 @@ load_tensors:        ROCm0 model buffer size =  5115.49 MiB
 >>> task=pp reps=3
 >>> rep 1/3 trace=0
 >>> GPipe enabled: n_stages=2
-llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from /mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
+llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from <model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = llama
 llama_model_loader: - kv   1:                               general.type str              = model
@@ -1471,7 +1471,7 @@ ggml_backend_cuda_graph_compute: CUDA graph warmup complete
 >>> wall_ms=37.66 tps=1699.23 n_eval=1 n_reused=1
 >>> rep 2/3 trace=0
 >>> GPipe enabled: n_stages=2
-llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from /mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
+llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from <model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = llama
 llama_model_loader: - kv   1:                               general.type str              = model
@@ -2245,7 +2245,7 @@ ggml_backend_cuda_graph_compute: CUDA graph warmup complete
 >>> wall_ms=37.29 tps=1716.07 n_eval=1 n_reused=1
 >>> rep 3/3 trace=1
 >>> GPipe enabled: n_stages=2
-llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from /mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
+llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from <model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = llama
 llama_model_loader: - kv   1:                               general.type str              = model
@@ -3020,7 +3020,7 @@ ggml_backend_cuda_graph_compute: CUDA graph warmup complete
 >>> task=pp reps=3
 >>> rep 1/3 trace=0
 >>> GPipe enabled: n_stages=2
-llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from /mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
+llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from <model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = llama
 llama_model_loader: - kv   1:                               general.type str              = model
@@ -3794,7 +3794,7 @@ ggml_backend_cuda_graph_compute: CUDA graph warmup complete
 >>> wall_ms=37.27 tps=1717.08 n_eval=1 n_reused=1
 >>> rep 2/3 trace=0
 >>> GPipe enabled: n_stages=2
-llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from /mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
+llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from <model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = llama
 llama_model_loader: - kv   1:                               general.type str              = model
@@ -4568,7 +4568,7 @@ ggml_backend_cuda_graph_compute: CUDA graph warmup complete
 >>> wall_ms=37.25 tps=1717.98 n_eval=1 n_reused=1
 >>> rep 3/3 trace=1
 >>> GPipe enabled: n_stages=2
-llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from /mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
+llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from <model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = llama
 llama_model_loader: - kv   1:                               general.type str              = model
@@ -5343,7 +5343,7 @@ ggml_backend_cuda_graph_compute: CUDA graph warmup complete
 >>> task=tg reps=3
 >>> rep 1/3 trace=0
 >>> GPipe enabled: n_stages=2
-llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from /mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
+llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from <model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = llama
 llama_model_loader: - kv   1:                               general.type str              = model
@@ -6371,7 +6371,7 @@ CUDA Graph id 165 reused
 >>> wall_ms=2502.14 tps=102.31 n_eval=1 n_reused=256
 >>> rep 2/3 trace=0
 >>> GPipe enabled: n_stages=2
-llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from /mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
+llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from <model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = llama
 llama_model_loader: - kv   1:                               general.type str              = model
@@ -7399,7 +7399,7 @@ CUDA Graph id 186 reused
 >>> wall_ms=2499.30 tps=102.43 n_eval=1 n_reused=256
 >>> rep 3/3 trace=1
 >>> GPipe enabled: n_stages=2
-llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from /mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
+llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from <model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = llama
 llama_model_loader: - kv   1:                               general.type str              = model
@@ -8440,13 +8440,13 @@ Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
 warning: 30	../sysdeps/unix/sysv/linux/wait4.c: No such file or directory
 #0  0x000075eef7910813 in __GI___wait4 (pid=991094, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
 30	in ../sysdeps/unix/sysv/linux/wait4.c
-#1  0x000075eef7b22a33 in ggml_print_backtrace () from /home/hunter/projects/path-d-gpipeline-assembly-line/build-rocm-docker/bin/libggml-base.so.0
-#2  0x000075eef7b361bf in ggml_uncaught_exception() () from /home/hunter/projects/path-d-gpipeline-assembly-line/build-rocm-docker/bin/libggml-base.so.0
+#1  0x000075eef7b22a33 in ggml_print_backtrace () from <user-home>/projects/path-d-gpipeline-assembly-line/build-rocm-docker/bin/libggml-base.so.0
+#2  0x000075eef7b361bf in ggml_uncaught_exception() () from <user-home>/projects/path-d-gpipeline-assembly-line/build-rocm-docker/bin/libggml-base.so.0
 #3  0x000075eef7cbb0da in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
 #4  0x000075eef7ca5a55 in std::terminate() () from /lib/x86_64-linux-gnu/libstdc++.so.6
 #5  0x000075eef7cbb391 in __cxa_throw () from /lib/x86_64-linux-gnu/libstdc++.so.6
-#6  0x000075eef7f53642 in write_heatmap_json(std::filesystem::__cxx11::path const&, heatmap_data const&) [clone .cold] () from /home/hunter/projects/path-d-gpipeline-assembly-line/build-rocm-docker/bin/libllama-gpipe-profiler-impl.so
-#7  0x000075eef7f5e649 in llama_gpipe_profiler(int, char**) () from /home/hunter/projects/path-d-gpipeline-assembly-line/build-rocm-docker/bin/libllama-gpipe-profiler-impl.so
+#6  0x000075eef7f53642 in write_heatmap_json(std::filesystem::__cxx11::path const&, heatmap_data const&) [clone .cold] () from <user-home>/projects/path-d-gpipeline-assembly-line/build-rocm-docker/bin/libllama-gpipe-profiler-impl.so
+#7  0x000075eef7f5e649 in llama_gpipe_profiler(int, char**) () from <user-home>/projects/path-d-gpipeline-assembly-line/build-rocm-docker/bin/libllama-gpipe-profiler-impl.so
 #8  0x000075eef782a1ca in __libc_start_call_main (main=main@entry=0x59fcb5600270 <main>, argc=argc@entry=26, argv=argv@entry=0x7ffc44323e18) at ../sysdeps/nptl/libc_start_call_main.h:58
 warning: 58	../sysdeps/nptl/libc_start_call_main.h: No such file or directory
 #9  0x000075eef782a28b in __libc_start_main_impl (main=0x59fcb5600270 <main>, argc=26, argv=0x7ffc44323e18, init=<optimized out>, fini=<optimized out>, rtld_fini=<optimized out>, stack_end=0x7ffc44323e08) at ../csu/libc-start.c:360

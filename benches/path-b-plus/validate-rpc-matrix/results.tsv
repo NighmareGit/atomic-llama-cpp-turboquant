@@ -1,5 +1,0 @@
-cell	client	binary	endpoint	ts	status	elapsed_s	notes	sha	stamp
-A	romulus	rocm-profiler	192.168.8.23:50054	50,50	PASS	1		c64aefb69	2026-07-01T10:50:29Z
-B	remus-docker	cuda-docker-profiler	192.168.8.23:50054	50,50	FAIL	12		c64aefb69	2026-07-01T10:50:29Z
-C	remus-docker	cuda-docker-profiler	192.168.8.176:50051	50,50	FAIL	13		c64aefb69	2026-07-01T10:50:29Z
-D	romulus	rocm-profiler	192.168.8.176:50051,127.0.0.1:50051,192.168.8.21:50053	25,12,25,38	FAIL	46	4gpu endpoints	c64aefb69	2026-07-01T10:50:29Z

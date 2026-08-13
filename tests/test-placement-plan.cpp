@@ -30,7 +30,7 @@ static const char * k_good_plan = R"json({
   "split_mode": "layer",
   "model": { "n_layer": 8, "path": "toy.gguf" },
   "assignments": [
-    { "layer_start": 0, "layer_end": 2, "backend_id": "rpc://192.168.8.23:50055#0" },
+    { "layer_start": 0, "layer_end": 2, "backend_id": "rpc://<lan-ip>:50055#0" },
     { "layer_start": 2, "layer_end": 8, "backend_id": "local:ROCm0" }
   ],
   "overrides": [],
@@ -57,8 +57,8 @@ static void test_parse_and_validate_ok() {
     err.clear();
     EXPECT_TRUE(placement_plan_expand_layers(plan, 8, layers, err));
     EXPECT_TRUE(layers.size() == 8);
-    EXPECT_EQ_STR(layers[0], "rpc://192.168.8.23:50055#0");
-    EXPECT_EQ_STR(layers[1], "rpc://192.168.8.23:50055#0");
+    EXPECT_EQ_STR(layers[0], "rpc://<lan-ip>:50055#0");
+    EXPECT_EQ_STR(layers[1], "rpc://<lan-ip>:50055#0");
     EXPECT_EQ_STR(layers[2], "local:ROCm0");
     EXPECT_EQ_STR(layers[7], "local:ROCm0");
 

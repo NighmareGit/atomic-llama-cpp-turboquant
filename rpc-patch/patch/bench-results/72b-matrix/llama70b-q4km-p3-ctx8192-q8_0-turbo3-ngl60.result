@@ -1,2 +1,0 @@
-run=1 prompt=fox P=16.3 G=4.8 preview="A classic!\n\nYou've just typed out a well-known pangram, a sentence that uses all the letters of the alphabet at least once. This particular sentence is"
-run=2 prompt=fox P=4.8 G=4.8 preview="You've typed out the famous pangram sentence!\n\nA pangram is a sentence that uses all the letters of the alphabet at least once. The sentence you typed"

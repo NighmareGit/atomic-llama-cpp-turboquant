@@ -12,7 +12,7 @@ Target: close the gap to q8_0 KV (~200+ t/s).
 `ggml/src/ggml-cuda/fattn-vec.cuh` — ONLY modify this file.
 
 ## Model & Benchmark
-- Model: `/mnt/ai/models/huggingface/qwen3.5-35b-a3b-GGUF/Qwen_Qwen3.5-35B-A3B-Q4_K_M.gguf`
+- Model: `<model-mount>/models/huggingface/qwen3.5-35b-a3b-GGUF/Qwen_Qwen3.5-35B-A3B-Q4_K_M.gguf`
 - Benchmark: `llama-bench -ngl 99 -p 512 -n 128 -r 3 --cache-type-k turbo3 --cache-type-v turbo3`
 - Correctness: PPL must stay within 0.1 of baseline
 - Also test: `--cache-type-k turbo4 --cache-type-v turbo4` and `--cache-type-k turbo2 --cache-type-v turbo2`

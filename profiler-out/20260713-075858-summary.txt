@@ -1,6 +1,6 @@
 === Large Model Multi-GPU Test ===
 Timestamp: 20260713-075858
-RPC: 127.0.0.1:50051,192.168.8.22:50052
+RPC: 127.0.0.1:50051,<lan-ip>:50052
 
   FAIL: model load failed
 qwen27b-dense-3gpu: LOAD_FAILED

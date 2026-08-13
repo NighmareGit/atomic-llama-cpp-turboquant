@@ -1,6 +1,0 @@
-=== llama-pipeline-diagnose ===
-diagnose.json -> benches/path-b-plus/b6-4gpu-g-n384-config-g-retry-M35/telemetry/diagnose.json
-gate_s5=PASS gate_b6=FAIL overlap_pct=0.2
-stall_ratio=0.6668 straggler=backend1 (7.132 ms/tok)
-overlap_efficiency=1.122000
-gpu_smells=CLOCK_THROTTLE

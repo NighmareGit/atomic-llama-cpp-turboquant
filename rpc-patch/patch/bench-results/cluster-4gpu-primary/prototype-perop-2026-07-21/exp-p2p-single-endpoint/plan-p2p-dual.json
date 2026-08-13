@@ -1,9 +1,0 @@
-{
-  "schema_version": 1,
-  "n_layer": 26,
-  "split_mode": "layer",
-  "assignments": [
-    {"layer_start":  0, "layer_end": 21, "backend_id": "rpc://192.168.8.23:50052#0"},
-    {"layer_start": 21, "layer_end": 26, "backend_id": "rpc://192.168.8.23:50052#1"}
-  ]
-}

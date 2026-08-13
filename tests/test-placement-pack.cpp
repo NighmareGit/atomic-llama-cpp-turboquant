@@ -51,7 +51,7 @@ static placement_inventory make_hetero_inv() {
     }
     {
         placement_capacity_record r;
-        r.backend_id = "rpc://192.168.8.23:50054#0";
+        r.backend_id = "rpc://<lan-ip>:50054#0";
         r.kind = PLACEMENT_KIND_RPC_DEVICE;
         r.total_mib = 24123;
         r.free_mib = 23000;
