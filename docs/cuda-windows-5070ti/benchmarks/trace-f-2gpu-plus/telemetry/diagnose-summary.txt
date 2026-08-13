@@ -1,6 +1,0 @@
-=== llama-pipeline-diagnose ===
-diagnose.json -> docs\cuda-windows-5070ti\benchmarks\trace-f-2gpu-plus\telemetry\diagnose.json
-gate_s5=PASS gate_b6=FAIL overlap_pct=0.6
-stall_ratio=0.6774 straggler=backend1 (20.412 ms/tok)
-overlap_efficiency=null
-gpu_smells=none

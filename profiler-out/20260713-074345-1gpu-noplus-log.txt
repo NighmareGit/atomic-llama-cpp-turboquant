@@ -3,7 +3,7 @@ ggml_cuda_init: found 1 ROCm devices (Total VRAM: 24560 MiB):
 >>> collect_client_devices: 2 total devices registered
 >>>   dev[0]: name=ROCm0 desc=Radeon RX 7900 XTX type=1
 >>>   dev[1]: name=CPU desc=Intel(R) Core(TM) i7-14700K type=0
-llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from /mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
+llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from <model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = llama
 llama_model_loader: - kv   1:                               general.type str              = model
@@ -697,7 +697,7 @@ load_tensors:        ROCm0 model buffer size =  5115.49 MiB
 >>> task=pp reps=3
 >>> rep 1/3 trace=0
 >>> GPipe enabled: n_stages=2
-llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from /mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
+llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from <model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = llama
 llama_model_loader: - kv   1:                               general.type str              = model
@@ -1471,7 +1471,7 @@ ggml_backend_cuda_graph_compute: CUDA graph warmup complete
 >>> wall_ms=37.22 tps=1719.39 n_eval=1 n_reused=1
 >>> rep 2/3 trace=0
 >>> GPipe enabled: n_stages=2
-llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from /mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
+llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from <model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = llama
 llama_model_loader: - kv   1:                               general.type str              = model
@@ -2245,7 +2245,7 @@ ggml_backend_cuda_graph_compute: CUDA graph warmup complete
 >>> wall_ms=37.08 tps=1726.16 n_eval=1 n_reused=1
 >>> rep 3/3 trace=1
 >>> GPipe enabled: n_stages=2
-llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from /mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
+llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from <model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = llama
 llama_model_loader: - kv   1:                               general.type str              = model
@@ -3020,7 +3020,7 @@ ggml_backend_cuda_graph_compute: CUDA graph warmup complete
 >>> task=pp reps=3
 >>> rep 1/3 trace=0
 >>> GPipe enabled: n_stages=2
-llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from /mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
+llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from <model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = llama
 llama_model_loader: - kv   1:                               general.type str              = model
@@ -3794,7 +3794,7 @@ ggml_backend_cuda_graph_compute: CUDA graph warmup complete
 >>> wall_ms=37.41 tps=1710.98 n_eval=1 n_reused=1
 >>> rep 2/3 trace=0
 >>> GPipe enabled: n_stages=2
-llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from /mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
+llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from <model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = llama
 llama_model_loader: - kv   1:                               general.type str              = model
@@ -4568,7 +4568,7 @@ ggml_backend_cuda_graph_compute: CUDA graph warmup complete
 >>> wall_ms=37.03 tps=1728.51 n_eval=1 n_reused=1
 >>> rep 3/3 trace=1
 >>> GPipe enabled: n_stages=2
-llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from /mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
+llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from <model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = llama
 llama_model_loader: - kv   1:                               general.type str              = model
@@ -5343,7 +5343,7 @@ ggml_backend_cuda_graph_compute: CUDA graph warmup complete
 >>> task=tg reps=3
 >>> rep 1/3 trace=0
 >>> GPipe enabled: n_stages=2
-llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from /mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
+llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from <model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = llama
 llama_model_loader: - kv   1:                               general.type str              = model
@@ -6371,7 +6371,7 @@ CUDA Graph id 165 reused
 >>> wall_ms=2509.18 tps=102.03 n_eval=1 n_reused=256
 >>> rep 2/3 trace=0
 >>> GPipe enabled: n_stages=2
-llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from /mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
+llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from <model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = llama
 llama_model_loader: - kv   1:                               general.type str              = model
@@ -7399,7 +7399,7 @@ CUDA Graph id 186 reused
 >>> wall_ms=2502.84 tps=102.28 n_eval=1 n_reused=256
 >>> rep 3/3 trace=1
 >>> GPipe enabled: n_stages=2
-llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from /mnt/models/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
+llama_model_loader: loaded meta data with 33 key-value pairs and 292 tensors from <model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf (version GGUF V3 (latest))
 llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 llama_model_loader: - kv   0:                       general.architecture str              = llama
 llama_model_loader: - kv   1:                               general.type str              = model

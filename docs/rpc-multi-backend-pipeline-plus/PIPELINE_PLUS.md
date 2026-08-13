@@ -197,7 +197,7 @@ export GGML_PIPELINE_PLUS=0
 | `ggml/src/ggml-backend.cpp` | 50-155 | Flag gate definitions, pipeline_barrier() |
 | `ggml/src/ggml-rpc/ggml-rpc.cpp` | 293-370, 2128-2145 | RPC flag gates, defer logic |
 | `src/llama-context.cpp` | 34-45, 955-994, 1590-1630 | llama-level Plus checks |
-| `scripts/romulus-local-up.sh` | 142 | Production launcher default |
+| `scripts/gpu-host-local-up.sh` | 142 | Production launcher default |
 | `tools/llama-pipeline-profiler/llama-pipeline-profiler.cpp` | 174, 372+ | Profiler integration |
 
 See also:

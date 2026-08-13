@@ -1,5 +1,0 @@
-tip=b145d6fce
-binary=version: 10143 (b145d6fce)
-built with GNU 13.3.0 for Linux x86_64
-out=/tmp/d7-133-ref-validate-20260719163550
-date=2026-07-19T16:35:50+02:00

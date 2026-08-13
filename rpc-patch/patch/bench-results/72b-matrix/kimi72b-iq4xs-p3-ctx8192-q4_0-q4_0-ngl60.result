@@ -1,2 +1,0 @@
-run=1 prompt=fox P=12.4 G=5.3 preview='◁think▷Okay, I need to figure out how to generate a response that\'s not just a restatement but adds value. The user provided the sentence "'
-run=2 prompt=fox P=5.3 G=5.4 preview='◁think▷Okay, let\'s tackle this problem. The user provided the sentence "The quick brown fox jumps over the lazy dog." and mentioned that it\'s'

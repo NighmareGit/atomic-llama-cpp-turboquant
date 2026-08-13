@@ -133,7 +133,7 @@ static placement_inventory make_hetero_inv() {
     }
     {
         placement_capacity_record r;
-        r.backend_id = "rpc://192.168.8.23:50054#0";
+        r.backend_id = "rpc://<lan-ip>:50054#0";
         r.kind = PLACEMENT_KIND_RPC_DEVICE;
         r.total_mib = 24123;
         r.free_mib = 23000;
@@ -167,7 +167,7 @@ static void test_full_heat_assigns_hot_layers_to_fastest_backend() {
     EXPECT_TRUE(placement_plan_validate(plan, 8, true, err));
 
     // The hottest layers (0, 1 with 5ms each) should end up on the fastest backend.
-    // Fastest backend by usable_weight: local:ROCm0 (23000) > rpc://192.168.8.23:50054#0 (22000) > 50051 (7000).
+    // Fastest backend by usable_weight: local:ROCm0 (23000) > rpc://<lan-ip>:50054#0 (22000) > 50051 (7000).
     // With 8 layers and 3 backends, both large backends should get more layers than the 8 GB one.
     // local:ROCm0 should get the hot layers (0,1) since it's sorted first.
 

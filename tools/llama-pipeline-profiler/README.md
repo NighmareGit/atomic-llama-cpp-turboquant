@@ -65,7 +65,7 @@ when set.
 
 ```bash
 ./build/bin/llama-pipeline-profiler -m /path/to/model.gguf \
-  -rpc 192.168.8.176:50051 -ts 50,50 \
+  -rpc <lan-ip>:50051 -ts 50,50 \
   -n 128 --mode trace --out-dir ./out
 ```
 
@@ -78,7 +78,7 @@ Diagnose runs automatically when `--trace` is on. Offline re-run:
 ### Plus A/B (T1)
 
 ```bash
-BENCH_RPC_ENDPOINT=192.168.8.176:50051 BENCH_TS=50,50 \
+BENCH_RPC_ENDPOINT=<lan-ip>:50051 BENCH_TS=50,50 \
   ./scripts/bench-pipeline-plus-ab.sh my-cell
 ```
 
@@ -86,7 +86,7 @@ Or direct:
 
 ```bash
 ./build/bin/llama-pipeline-profiler -m /path/to/model.gguf \
-  -rpc 192.168.8.176:50051 -ts 50,50 \
+  -rpc <lan-ip>:50051 -ts 50,50 \
   -n 128 --mode ab-plus --trace --out-dir ./plus-ab-run
 ```
 
@@ -94,14 +94,14 @@ Or direct:
 
 ```bash
 ./build/bin/llama-pipeline-profiler -m /path/to/model.gguf \
-  -rpc 192.168.8.176:50051 -ts 50,50 \
+  -rpc <lan-ip>:50051 -ts 50,50 \
   -n 128 -r 3 --mode trace-observer --out-dir ./observer-run
 ```
 
 ### 4-GPU cluster client
 
 ```bash
-BENCH_RPC_ENDPOINT="192.168.8.176:50051,127.0.0.1:50051,192.168.8.21:50053" \
+BENCH_RPC_ENDPOINT="<lan-ip>:50051,127.0.0.1:50051,<lan-ip>:50053" \
 BENCH_TS="36,24,24,16" \
   ./scripts/llama-pipeline-profiler-cluster.sh profiler-4gpu-primary
 ```
@@ -109,7 +109,7 @@ BENCH_TS="36,24,24,16" \
 Preflight only (R5):
 
 ```bash
-BENCH_RPC_ENDPOINT="192.168.8.176:50051,127.0.0.1:50051,192.168.8.21:50053" \
+BENCH_RPC_ENDPOINT="<lan-ip>:50051,127.0.0.1:50051,<lan-ip>:50053" \
 BENCH_TS="36,24,24,16" \
   ./scripts/llama-pipeline-r5-validate.sh
 ```
@@ -118,7 +118,7 @@ BENCH_TS="36,24,24,16" \
 
 ```bash
 ./build/bin/llama-pipeline-profiler -m /path/to/model.gguf \
-  -rpc 192.168.8.176:50051 -ts 50,50 \
+  -rpc <lan-ip>:50051 -ts 50,50 \
   -n 128 -r 5 --mode throughput -o jsonl
 ```
 
@@ -161,7 +161,7 @@ Cluster and matrix wrappers are conveniences only; the binary is self-contained.
 | `scripts/llama-pipeline-r5-validate.sh` | R5 RPC preflight |
 | `scripts/llama-pipeline-profiler-cluster.sh` | SSH/local cluster runner + preflight |
 | `scripts/bench-pipeline-plus-ab.sh` | T1 Plus A/B matrix |
-| `scripts/gpu-telemetry-collect.sh` | Remote ROCm/remus SSH sampler (optional) |
+| `scripts/gpu-telemetry-collect.sh` | Remote ROCm/gpu-host SSH sampler (optional) |
 | `scripts/llama-pipeline-import-baseline.sh` | Seed regression from offline telemetry |
 
 Legacy bash diagnose/regression scripts remain for reference; the binary uses C++.
