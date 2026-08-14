@@ -1,0 +1,6 @@
+=== Large Model Multi-GPU Test ===
+Timestamp: 20260713-075959
+RPC: 127.0.0.1:50051,<lan-ip>:50052
+
+  FAIL: model did not fully offload
+qwen27b-dense-3gpu: OFFLOAD_FAILED

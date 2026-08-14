@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-14T02:45:48Z",
+  "git_sha": "f2d627a6a",
+  "model": {
+    "path": "<model-mount>/Qwen3.6-35B-A3B-APEX-MTP-I-Quality.gguf",
+    "n_layers": 40,
+    "param_count_b": 35.5053,
+    "ctx_size": 4096
+  },
+  "tasks": {
+    "tg": {
+      "n_gen_tokens": 128,
+      "wall_ms": 1481.52,
+      "tps": 86.398,
+      "layers": [],
+      "kv_source": "estimated"
+    }
+  },
+  "gpu_metadata": [
+    { "id": 0, "name": "ROCm0", "backend": "Radeon RX 7900 XTX", "vram_total_mib": 24560, "pci_link_gen": 0, "pci_link_width": 0, "source": "client", "compute_avg_us": 0, "compute_max_us": 0, "compute_min_us": 0 }
+  ],
+  "summary": {
+    "kv_source": "estimated"
+  }
+}

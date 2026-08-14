@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-14T02:34:53Z",
+  "git_sha": "f2d627a6a",
+  "model": {
+    "path": "<model-mount>/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf",
+    "n_layers": 32,
+    "param_count_b": 8.03026,
+    "ctx_size": 2048
+  },
+  "tasks": {
+    "pp": {
+      "n_prompt_tokens": 64,
+      "wall_ms": 44.3734,
+      "tps": 1442.31,
+      "layers": [],
+      "kv_source": "estimated"
+    },
+    "tg": {
+      "n_gen_tokens": 256,
+      "wall_ms": 1878.47,
+      "tps": 136.281,
+      "layers": [],
+      "kv_source": "estimated"
+    }
+  },
+  "gpu_metadata": [
+    { "id": 0, "name": "ROCm0", "backend": "Radeon RX 7900 XTX", "vram_total_mib": 24560, "pci_link_gen": 0, "pci_link_width": 0, "source": "client", "compute_avg_us": 0, "compute_max_us": 0, "compute_min_us": 0 }
+  ],
+  "summary": {
+    "kv_source": "estimated"
+  }
+}
